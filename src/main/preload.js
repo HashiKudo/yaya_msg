@@ -248,6 +248,7 @@ function removeCacheValueSync(key) {
 }
 
 window.desktop = {
+    Buffer,
     appDir,
     platform,
     storagePaths,
@@ -295,3 +296,4 @@ window.desktop = {
 };
 
 window.ipcRenderer = window.desktop.ipcRenderer;
+window.Buffer = Buffer;

@@ -1826,8 +1826,8 @@
         </div>
         <div style="color:#333; line-height:1.4; word-break: break-all;">
             ${safeTxt}
-            ${extraHtml} 
-        </div> 
+            ${extraHtml}
+        </div>
     </div>`;
                     }).join('');
 
@@ -1928,8 +1928,8 @@
                     .template-media { max-width: 600px; border-radius: 6px; margin-top: 5px; }
                     .template-image-express-image { max-width: 85px; }
                     .template-pre { white-space: pre-wrap; word-break: break-all; margin-bottom: 8px; }
-                    .avatar-5 { width: 32px; height: 32px; } 
-                    .color-bg-accent { background-color: #f6f8fa; } 
+                    .avatar-5 { width: 32px; height: 32px; }
+                    .color-bg-accent { background-color: #f6f8fa; }
                     .color-fg-accent { color: #0969da; text-decoration: none; }
                 `;
             const buildExportKey = (message, exportUserId, rawBody) => {
@@ -1985,7 +1985,7 @@
                     userHtml = `
                 <div class="mb-2">
                     <img class="avatar avatar-5 mr-2" src="${avatarUrl}" loading="lazy"/>
-                    <span data-userid="${exportUserId}" data-roleid="${exportRoleId}">${nickName}</span> 
+                    <span data-userid="${exportUserId}" data-roleid="${exportRoleId}">${nickName}</span>
                 </div>
             `;
                     let body = m.bodys || m.msgContent;
@@ -2331,8 +2331,9 @@
                 }
 
                 const customPath = readStoredSettingStringFallback(`yaya_path_${dlType}`, '');
+                const { fs, path, Buffer } = window.desktop || {};
 
-                if (customPath && typeof fs !== 'undefined' && typeof path !== 'undefined') {
+                if (customPath && fs && path && Buffer) {
                     let finalDir = customPath;
 
                     if (subFolder) {
@@ -2454,16 +2455,16 @@
                 <div style="display: grid; grid-template-columns: 80px 1fr; gap: 8px;">
                     <span style="color:var(--text-sub);">IP 地址:</span>
                     <span style="font-weight:bold; color:var(--primary); font-size: 16px;">${data.query}</span>
-                    
+
                     <span style="color:var(--text-sub);">所在地:</span>
                     <span>${data.country} ${data.regionName} ${data.city}</span>
-                    
+
                     <span style="color:var(--text-sub);">运营商:</span>
                     <span>${data.isp}</span>
-                    
+
                     <span style="color:var(--text-sub);">ASN组织:</span>
                     <span>${data.as}</span>
-                    
+
                     <span style="color:var(--text-sub);">时区:</span>
                     <span>${data.timezone}</span>
                 </div>

@@ -1046,7 +1046,7 @@ body {
 
 .home-card {
     min-height: 0;
-    aspect-ratio: 1 / 1;
+    /* aspect-ratio: 1 / 1; */
     width: 84px;
     padding: 8px;
     border-radius: 12px;
@@ -1063,7 +1063,7 @@ body {
     cursor: pointer;
     text-align: center;
     transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
-    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.08);
+    /* box-shadow: 0 10px 22px rgba(0, 0, 0, 0.08); */
     position: relative;
     overflow: hidden;
 }
@@ -1096,7 +1096,7 @@ body {
     width: 18px;
     height: 2px;
     border-radius: 999px;
-    background: color-mix(in srgb, var(--home-accent) 70%, transparent);
+    /* background: color-mix(in srgb, var(--home-accent) 70%, transparent); */
     opacity: 0.8;
     pointer-events: none;
 }
@@ -7802,13 +7802,13 @@ audio::-webkit-media-controls-panel {
     background-color: transparent !important;
 }
 
-.msg-item .template-pre,
+/* .msg-item .template-pre,
 #followed-chat-title {
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-}
+} */
 
 .yklz-btn {
-    background: rgba(255, 255, 255, 0.05) !important; 
+    background: rgba(255, 255, 255, 0.05) !important;
     border: 1px solid rgba(255, 255, 255, 0.2) !important;
     color: #e0e0e0 !important;
     padding: 4px 12px;
