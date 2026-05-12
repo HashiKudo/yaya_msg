@@ -50,6 +50,12 @@ app.whenReady().then(() => {
     ensureWasmLoaded();
 });
 
+app.on('activate', () => {
+    if (getMainWindow() === null || getMainWindow().isDestroyed()) {
+        createWindow();
+    }
+});
+
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         app.quit();

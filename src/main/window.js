@@ -47,6 +47,11 @@ function createWindow() {
         }
         return { action: 'deny' };
     });
+
+    mainWindow.on('closed', () => {
+        mainWindow = null;
+    });
+
     return mainWindow;
 }
 
