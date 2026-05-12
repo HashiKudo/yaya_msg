@@ -353,7 +353,7 @@
                 const cursorStyle = isCustomSort ? 'cursor: grab;' : 'cursor: pointer;';
 
                 return `
-        <div class="session-card ${isActive}" id="session-card-${escapeHtml(item.channelId)}" data-channelid="${escapeHtml(item.channelId)}" data-owner-name="${escapeHtml(item.bigDisplayName)}" data-server-id="${escapeHtml(item.serverId)}" ${draggableAttr} style="padding: 12px 16px; border-bottom: 1px solid var(--border); transition: 0.2s; ${cursorStyle}">
+        <div class="session-card ${isActive}" id="session-card-${escapeHtml(item.channelId)}" data-channelid="${escapeHtml(item.channelId)}" data-owner-name="${escapeHtml(item.bigDisplayName)}" data-server-id="${escapeHtml(item.serverId)}" data-member-id="${escapeHtml(item.id || item.userId)}" ${draggableAttr} style="padding: 12px 16px; border-bottom: 1px solid var(--border); transition: 0.2s; ${cursorStyle}">
             <div class="session-info" style="flex: 1; min-width: 0; pointer-events: none;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
                     <div style="display: flex; align-items: center; min-width: 0; flex: 1;">
@@ -381,6 +381,7 @@
                 card.addEventListener('click', () => {
                     window.openFollowedChat(card.dataset.ownerName, card.dataset.channelid, card.dataset.serverId);
                 });
+                card.addEventListener('contextmenu', handleRoomContextMenu);
             });
 
             if (isCustomSort) {
@@ -393,6 +394,71 @@
                     card.addEventListener('dragend', handleDragEnd);
                 });
             }
+        }
+
+        let contextMenuEl = null;
+
+        function handleRoomContextMenu(e) {
+            e.preventDefault();
+            const card = e.currentTarget;
+            const memberId = card.dataset.memberId;
+            const ownerName = card.dataset.ownerName;
+
+            if (!contextMenuEl) {
+                contextMenuEl = document.createElement('div');
+                contextMenuEl.className = 'room-context-menu';
+                contextMenuEl.style.cssText = 'display:none; position:fixed; z-index:9999; background:var(--bg-card, #fff); border:1px solid var(--border, #eee); border-radius:8px; padding:4px 0; box-shadow:0 4px 12px rgba(0,0,0,0.15); min-width:120px;';
+                document.body.appendChild(contextMenuEl);
+
+                document.addEventListener('click', () => {
+                    contextMenuEl.style.display = 'none';
+                });
+            }
+
+            contextMenuEl.innerHTML = `
+                <div class="menu-item" style="padding:8px 16px; cursor:pointer; color:#ff4d4f; font-size:14px; transition:background 0.2s;">
+                    取消关注
+                </div>
+            `;
+            
+            const item = contextMenuEl.querySelector('.menu-item');
+            item.addEventListener('mouseenter', () => item.style.background = 'rgba(128,128,128,0.1)');
+            item.addEventListener('mouseleave', () => item.style.background = 'transparent');
+            
+            item.addEventListener('click', async (evt) => {
+                evt.stopPropagation();
+                contextMenuEl.style.display = 'none';
+                if (confirm(`确定要取消关注 ${ownerName} 吗？`)) {
+                    const token = getAppToken();
+                    const pa = window.getPA ? window.getPA() : null;
+                    if (!token || !memberId) return showToast('⚠️ 无法获取成员信息');
+
+                    showToast(`正在取消关注 ${ownerName}...`);
+                    try {
+                        const res = await ipcRenderer.invoke('unfollow-member', { token, pa, memberId });
+                        if (res.success) {
+                            showToast(`✅ 已取消关注 ${ownerName}`);
+                            setTimeout(loadFollowedRooms, 500);
+                        } else {
+                            showToast(`❌ 失败: ${res.msg}`);
+                        }
+                    } catch (err) {
+                        showToast(`❌ 错误: ${err.message}`);
+                    }
+                }
+            });
+
+            // Simple boundary adjustment
+            let left = e.clientX;
+            let top = e.clientY;
+            
+            contextMenuEl.style.display = 'block';
+            const rect = contextMenuEl.getBoundingClientRect();
+            if (left + rect.width > window.innerWidth) left = window.innerWidth - rect.width - 5;
+            if (top + rect.height > window.innerHeight) top = window.innerHeight - rect.height - 5;
+            
+            contextMenuEl.style.left = `${left}px`;
+            contextMenuEl.style.top = `${top}px`;
         }
 
         function handleDragStart(e) {
