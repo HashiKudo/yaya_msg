@@ -14,7 +14,8 @@
             playLiveStream,
             replaceTencentEmoji,
             showToast,
-            switchView
+            switchView,
+            downloadMediaFileIconMode
         } = deps;
 
         let followedAutoRefreshEnabled = false;
@@ -206,11 +207,30 @@
             container.querySelectorAll('.preview-media-placeholder').forEach(el => {
                 const type = el.getAttribute('data-type');
                 const src = el.getAttribute('data-src');
+                const filename = el.getAttribute('data-filename') || (Date.now() + (type === 'audio' ? '.mp3' : '.mp4'));
+                
                 if (src) {
+                    let player = null;
                     if (type === 'audio' && typeof createCustomAudioPlayer === 'function') {
-                        el.appendChild(createCustomAudioPlayer(src));
+                        player = createCustomAudioPlayer(src);
+                        el.appendChild(player);
                     } else if (type === 'video' && typeof createCustomVideoPlayer === 'function') {
-                        el.appendChild(createCustomVideoPlayer(src));
+                        player = createCustomVideoPlayer(src);
+                        el.appendChild(player);
+                    }
+
+                    if (player) {
+                        const dlBtn = document.createElement('div');
+                        dlBtn.className = 'media-dl-btn-overlay';
+                        dlBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
+                        dlBtn.title = "下载媒体文件";
+                        dlBtn.onclick = (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            downloadMediaFileIconMode(src, filename, dlBtn, dlBtn.innerHTML, 'media', `【口袋房间】${activeFollowedName}`);
+                        };
+                        player.style.position = 'relative';
+                        player.appendChild(dlBtn);
                     }
                 }
                 el.classList.remove('preview-media-placeholder');
@@ -632,7 +652,13 @@
                                     txt = `<p class="mb-2 template-pre">${safeStr(json.text || json.bodys || body)}</p>`;
                                 } else if (msgType === 'IMAGE') {
                                     const url = json.url.startsWith('http') ? json.url : `https://source3.48.cn${json.url}`;
-                                    txt = `<div class="mb-2"><img class="template-media" src="${url}" loading="lazy" style="max-height: 250px; border-radius: 8px; cursor: zoom-in;" onclick="openImageModal('${url}')"></div>`;
+                                    const dlFilename = `IMAGE_${m.msgTime}_${activeFollowedName}.jpg`;
+                                    txt = `<div class="mb-2" style="position:relative; display:inline-block;">
+                                            <img class="template-media" src="${url}" loading="lazy" style="max-height: 250px; border-radius: 8px; cursor: zoom-in;" onclick="openImageModal('${url}')">
+                                            <div class="media-dl-btn-overlay image-dl" onclick="event.stopPropagation(); downloadMediaFileIconMode('${url}', '${dlFilename}', this, this.innerHTML, 'media', '【口袋房间】${activeFollowedName}')">
+                                                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                            </div>
+                                           </div>`;
                                 } else if (msgType === 'EXPRESSIMAGE') {
                                     const url = json.expressImgInfo ? json.expressImgInfo.emotionRemote : json.url;
                                     txt = `<div class="mb-2"><img class="template-image-express-image" src="${url.startsWith('http') ? url : 'https://source3.48.cn' + url}"></div>`;
@@ -647,10 +673,12 @@
                                            </blockquote>`;
                                 } else if (msgType === 'AUDIO') {
                                     let mediaUrl = json.url.startsWith('http') ? json.url : `https://mp4.48.cn${json.url.startsWith('/') ? '' : '/'}${json.url}`;
-                                    txt = `<div class="mb-2 preview-media-placeholder" data-type="audio" data-src="${mediaUrl}"></div>`;
+                                    const dlFilename = `AUDIO_${m.msgTime}_${activeFollowedName}.mp3`;
+                                    txt = `<div class="mb-2 preview-media-placeholder" data-type="audio" data-src="${mediaUrl}" data-filename="${dlFilename}"></div>`;
                                 } else if (msgType === 'VIDEO') {
                                     let mediaUrl = json.url.startsWith('http') ? json.url : `https://mp4.48.cn${json.url.startsWith('/') ? '' : '/'}${json.url}`;
-                                    txt = `<div class="mb-2 preview-media-placeholder" data-type="video" data-src="${mediaUrl}"></div>`;
+                                    const dlFilename = `VIDEO_${m.msgTime}_${activeFollowedName}.mp4`;
+                                    txt = `<div class="mb-2 preview-media-placeholder" data-type="video" data-src="${mediaUrl}" data-filename="${dlFilename}"></div>`;
                                 } else if (jsonType === 'GIFT_TEXT' || msgType === 'GIFT_TEXT') {
                                     const info = json.giftInfo || json;
                                     txt = renderFollowedPocketGiftCard(info);

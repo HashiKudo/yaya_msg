@@ -2283,7 +2283,10 @@
                 : undefined,
             replaceTencentEmoji: value => typeof replaceTencentEmoji === 'function' ? replaceTencentEmoji(value) : value,
             showToast: (...args) => showToast(...args),
-            switchView
+            switchView,
+            downloadMediaFileIconMode: (...args) => typeof downloadMediaFileIconMode === 'function'
+                ? downloadMediaFileIconMode(...args)
+                : undefined
         }));
         window.backToFollowedRoomList = backToFollowedRoomList;
         window.flushFollowedPendingMessages = flushFollowedPendingMessages;
@@ -2341,6 +2344,8 @@
         window.selectQuickFollowMember = selectQuickFollowMember;
         window.sortFollowedRooms = sortFollowedRooms;
         window.toggleFollowedSortDropdown = toggleFollowedSortDropdown;
+        window.startFollowedRoomsPolling = startFollowedRoomsPolling;
+        window.stopFollowedRoomsPolling = stopFollowedRoomsPolling;
 
         ({
             loadMemberAvatar,

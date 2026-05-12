@@ -185,9 +185,9 @@
                 return;
             }
 
-            const refreshBtn = document.querySelector('button[onclick="loadFollowedRooms()"]');
+            const refreshBtn = document.querySelector('.btn-refresh-icon');
             if (refreshBtn && !silent) {
-                refreshBtn.innerText = '刷新';
+                refreshBtn.classList.add('is-fetching');
                 refreshBtn.disabled = true;
             }
 
@@ -254,23 +254,22 @@
 
                 const currentSearchId = document.getElementById('quick-follow-id')?.value;
                 const currentSearchName = document.getElementById('quick-follow-input')?.value;
-                if (currentSearchId) {
+                if (currentSearchName && currentSearchId) {
                     selectQuickFollowMember(currentSearchName, currentSearchId);
                 }
             } catch (e) {
                 if (silent) {
-                    console.warn('口袋房间列表自动刷新失败:', e);
+                    console.warn('口袋房间列表刷新失败:', e);
                 } else {
                     container.innerHTML = `<div class="empty-state">❌ ${escapeHtml(e.message)}</div>`;
                 }
             } finally {
                 if (refreshBtn && !silent) {
-                    refreshBtn.innerText = '刷新';
+                    refreshBtn.classList.remove('is-fetching');
                     refreshBtn.disabled = false;
                 }
             }
         }
-
         function stopFollowedRoomsPolling() {
             followedRoomsAutoRefreshEnabled = false;
             if (followedRoomsAutoRefreshTimer) {

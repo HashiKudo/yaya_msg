@@ -520,6 +520,13 @@
                                         </div>
                                     </div>
                                 </div>
+                                <button class="btn btn-secondary btn-refresh-icon" onclick="loadFollowedRooms()"
+                                    title="刷新" style="height: 26px; width: 26px; padding: 0; display: flex; align-items: center; justify-content: center;">
+                                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M23 4v6h-6"></path>
+                                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                                    </svg>
+                                </button>
                             </div>
                         </div>
                         <div style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
@@ -1845,9 +1852,9 @@
                                 style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px;">
                             </div>
 
-                            <div id="video-list-grid" style="display: grid; 
-            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); 
-            gap: 15px; 
+                            <div id="video-list-grid" style="display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 15px;
             padding-bottom: 40px;
             align-content: start;">
                             </div>
@@ -1893,12 +1900,12 @@
                                     </div>
                                 </div>
 
-                                <div id="music-list-grid" style="width: 100%; 
-            display: grid; 
-            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); 
-            gap: 15px; 
-            padding-bottom: 20px; 
-            min-height: 500px; 
+                                <div id="music-list-grid" style="width: 100%;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 15px;
+            padding-bottom: 20px;
+            min-height: 500px;
             align-content: start;"> </div>
                             </div>
                         </div>
