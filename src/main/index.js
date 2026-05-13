@@ -16,6 +16,8 @@ registerBilibiliIpc();
 registerPocketIpc();
 registerSystemIpc();
 
+let isQuitting = false;
+
 const MEDIA_KEY_SHORTCUTS = [
     ['MediaPlayPause', 'play-pause'],
     ['MediaNextTrack', 'next'],
@@ -51,8 +53,11 @@ app.whenReady().then(() => {
 });
 
 app.on('activate', () => {
-    if (getMainWindow() === null || getMainWindow().isDestroyed()) {
+    const win = getMainWindow();
+    if (!win || win.isDestroyed()) {
         createWindow();
+    } else {
+        win.show();
     }
 });
 
@@ -63,6 +68,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+    app.isQuitting = true;
     cleanupMediaTasks();
 });
 

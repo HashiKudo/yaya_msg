@@ -1,4 +1,4 @@
-const { BrowserWindow, shell } = require('electron');
+const { BrowserWindow, shell, app } = require('electron');
 const path = require('path');
 
 let mainWindow = null;
@@ -46,6 +46,13 @@ function createWindow() {
             shell.openExternal(url);
         }
         return { action: 'deny' };
+    });
+
+    mainWindow.on('close', (event) => {
+        if (process.platform === 'darwin' && !app.isQuitting) {
+            event.preventDefault();
+            mainWindow.hide();
+        }
     });
 
     mainWindow.on('closed', () => {
