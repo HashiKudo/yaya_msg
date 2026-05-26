@@ -85,13 +85,43 @@
         }
 
         .db-app .db-header {
-            position: static !important;
-            top: auto !important;
-            z-index: auto !important;
+            position: sticky !important;
+            top: 0 !important;
+            z-index: 40 !important;
             background: transparent !important;
-            border: none !important;
+            backdrop-filter: none !important;
+            border-bottom: none !important;
             box-shadow: none !important;
-            margin-bottom: 18px;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease !important;
+        }
+
+        .dark .db-app .db-header {
+            background: transparent !important;
+        }
+
+        .db-scrolled .db-header {
+            transform: translateY(-100%);
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .db-search-sticky {
+            position: sticky !important;
+            top: calc(var(--header-height, 70px) + 8px) !important;
+            z-index: 30 !important;
+            background: #ffffff !important;
+            backdrop-filter: none !important;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05) !important;
+            transition: top 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s ease, box-shadow 0.3s ease !important;
+        }
+
+        .dark .db-search-sticky {
+            background: #161b22 !important;
+        }
+
+        .db-scrolled .db-search-sticky {
+            top: 12px !important;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.08) !important;
         }
 
         .db-tabs-shell {
@@ -100,11 +130,15 @@
             gap: 10px;
             width: 100%;
             padding: 12px 16px 0;
-            border-radius: 16px;
-            background: var(--db-card);
+            background: #ffffff !important;
             border: 1px solid var(--db-border);
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
-            backdrop-filter: blur(12px);
+            backdrop-filter: none !important;
+            transition: background-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .dark .db-tabs-shell {
+            background: #161b22 !important;
         }
 
         .db-app .bg-white,
@@ -246,7 +280,9 @@
             }
 
             .db-app .db-header {
-                margin-bottom: 12px;
+                margin-bottom: 12px !important;
+                padding-top: 10px !important;
+                padding-bottom: 10px !important;
             }
 
             .db-tabs-shell {
@@ -1083,46 +1119,72 @@
                 const cleanTrendStr = trendStr.replace(/[^\d.新人-]/g, "").trim();
 
                 if (trendStr.includes('↑') || trendStr.includes('+') || trendStr.includes('上升') || trendStr.includes('▲')) {
-                    return <div className="flex items-center text-red-500 dark:text-red-400 font-bold text-xs"><TrendingUp className="w-3 h-3 mr-0.5" />{cleanTrendStr || trendStr}</div>;
+                    return <div className="flex items-center text-red-500 dark:text-red-400 font-bold text-sm"><TrendingUp className="w-4 h-4 mr-0.5" />{cleanTrendStr || trendStr}</div>;
                 }
                 if (trendStr.includes('↓') || trendStr.includes('-') || trendStr.includes('下降') || trendStr.includes('▼')) {
-                    return <div className="flex items-center text-green-500 dark:text-green-400 font-bold text-xs"><TrendingDown className="w-3 h-3 mr-0.5" />{cleanTrendStr || trendStr}</div>;
+                    return <div className="flex items-center text-green-500 dark:text-green-400 font-bold text-sm"><TrendingDown className="w-4 h-4 mr-0.5" />{cleanTrendStr || trendStr}</div>;
                 }
 
                 if (trendStr.trim() !== "") {
-                    return <div className="flex items-center text-gray-400 text-xs">{trendStr}</div>;
+                    return <div className="flex items-center text-gray-400 text-sm font-bold">{trendStr}</div>;
                 }
                 return null;
             };
 
             return (
-                <div className={`rounded-xl border ${borderColor} ${bgColor} p-4 flex items-center justify-between shadow-sm hover:shadow-md transition-all duration-300 animate-content group`}>
-                    <div className="flex items-center gap-4">
-                        <div className={`w-12 h-12 flex-shrink-0 flex items-center justify-center rounded-full font-bold ${displayRank.length > 2 ? 'text-sm' : 'text-lg'} ${rankColor} bg-white dark:bg-gray-800 shadow-sm border border-gray-100 dark:border-gray-700`}>
+                <div className={`rounded-2xl border ${borderColor} ${bgColor} p-5 flex flex-col justify-between shadow-sm hover:shadow-md transition-all duration-300 animate-content group`}>
+                    {/* Row 1: Name and Rank Circle */}
+                    <div className="flex justify-between items-center gap-4">
+                        {/* Left: Name */}
+                        <h3 className="font-bold text-gray-800 dark:text-gray-100 text-2xl sm:text-3xl tracking-tight whitespace-nowrap truncate leading-none">
+                            {data.成员}
+                        </h3>
+
+                        {/* Right: Rank Circle */}
+                        <div className={`w-12 h-12 flex-shrink-0 flex items-center justify-center rounded-full font-bold text-lg ${rankColor} bg-white dark:bg-gray-800 shadow-md border border-gray-100 dark:border-gray-700`}>
                             {displayRank}
                         </div>
-                        <div>
-                            <div className="flex items-center gap-2">
-                                <h3 className="font-bold text-gray-800 dark:text-gray-100 text-lg">{data.成员}</h3>
-                                {data.排名升降 && (
-                                    <div className="scale-90 origin-left">
-                                        {getRankTrend(data.排名升降)}
-                                    </div>
-                                )}
-                            </div>
-                            <div className="flex gap-2 mt-1">
-                                {showEdition && (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-gray-200 bg-gray-100 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">{data.届数}选</span>
-                                )}
-                                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${getGroupStyle(data.分团)}`}>{data.分团}</span>
-                                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${getTeamStyle(data.队伍)}`}>{data.队伍}</span>
-                            </div>
-                        </div>
                     </div>
-                    <div className="text-right">
-                        <div className="text-xs text-gray-400 mb-0.5">得票数</div>
-                        <div className="font-mono font-bold text-pink-500 dark:text-pink-400 text-lg">
-                            {data.得票数 ? parseFloat(data.得票数).toFixed(1) : '-'}
+
+                    {/* Row 2: Trend and "得票数" Label */}
+                    <div className="flex justify-between items-center gap-4 mt-5">
+                        {/* Left: Trend */}
+                        {data.排名升降 && getRankTrend(data.排名升降) ? (
+                            <div className="flex items-center gap-1.5 text-sm font-bold text-gray-400 dark:text-gray-500 whitespace-nowrap">
+                                <span>排名升降</span>
+                                <div className="flex-shrink-0 scale-95 origin-left">
+                                    {getRankTrend(data.排名升降)}
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="text-sm font-bold text-transparent select-none whitespace-nowrap">占位</div>
+                        )}
+
+                        {/* Right: 得票数 Label */}
+                        <div className="text-sm font-bold text-gray-400 dark:text-gray-500 whitespace-nowrap">得票数</div>
+                    </div>
+
+                    {/* Row 3: Tags and Vote Value */}
+                    <div className="flex justify-between items-end gap-4 mt-2">
+                        {/* Left: Tags */}
+                        <div className="flex gap-1.5 flex-wrap items-center">
+                            {showEdition && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded border border-gray-200 bg-gray-100 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 whitespace-nowrap">{data.届数}选</span>
+                            )}
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap ${getGroupStyle(data.分团)}`}>{data.分团}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap ${getTeamStyle(data.队伍)}`}>{data.队伍}</span>
+                        </div>
+
+                        {/* Right: Vote Value */}
+                        <div className="font-mono font-bold text-pink-500 dark:text-pink-400 text-2xl sm:text-2.5xl whitespace-nowrap leading-none text-right">
+                            {data.得票数 ? (
+                                typeof data.得票数 === 'string' && data.得票数.includes(',')
+                                    ? data.得票数
+                                    : (() => {
+                                        const num = parseFloat(String(data.得票数).replace(/,/g, ''));
+                                        return isNaN(num) ? data.得票数 : num.toLocaleString('zh-CN', { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+                                      })()
+                                ) : '-'}
                         </div>
                     </div>
                 </div>
@@ -1437,6 +1499,52 @@
             const [albumTypeFilter, setAlbumTypeFilter] = useState(() => persistedUiState.albumTypeFilter || 'ALL');
             const [fxzpError, setFxzpError] = useState(null);
             const [currentLyricSong, setCurrentLyricSong] = useState(null);
+            const headerRef = useRef(null);
+            const [isAtTop, setIsAtTop] = useState(true);
+
+            useEffect(() => {
+                let lastIsAtTop = true;
+                const handleScroll = (e) => {
+                    const target = e.target;
+                    const isViewDatabase = target && target.id === 'view-database';
+                    const isDocument = target === document || target === window || target === document.documentElement || target === document.body;
+
+                    if (!isViewDatabase && !isDocument) return;
+
+                    const scrollTop = isViewDatabase ? target.scrollTop : (window.scrollY || document.documentElement.scrollTop || document.body.scrollTop);
+                    const scrolled = scrollTop > 15;
+                    const nextIsAtTop = !scrolled;
+                    if (nextIsAtTop !== lastIsAtTop) {
+                        lastIsAtTop = nextIsAtTop;
+                        setIsAtTop(nextIsAtTop);
+                    }
+                };
+
+                window.addEventListener('scroll', handleScroll, { passive: true, capture: true });
+                return () => {
+                    window.removeEventListener('scroll', handleScroll, { capture: true });
+                };
+            }, []);
+
+            useEffect(() => {
+                if (!headerRef.current) return;
+                const updateHeight = () => {
+                    if (headerRef.current) {
+                        const height = headerRef.current.offsetHeight;
+                        document.documentElement.style.setProperty('--header-height', `${height}px`);
+                    }
+                };
+                updateHeight();
+                const observer = new ResizeObserver(() => {
+                    updateHeight();
+                });
+                observer.observe(headerRef.current);
+                window.addEventListener('resize', updateHeight);
+                return () => {
+                    observer.disconnect();
+                    window.removeEventListener('resize', updateHeight);
+                };
+            }, [activeTab]);
             const [datasetStatus, setDatasetStatus] = useState({
                 members: { status: 'loading', count: 0, error: '' },
                 elections: { status: 'loading', count: 0, error: '' },
@@ -1907,10 +2015,10 @@
             }, [fxzpData, albumSearch, albumGroupFilter, albumTypeFilter]);
 
             return (
-                <div className="db-app min-h-screen bg-gray-50 font-sans text-gray-900 transition-colors duration-300 dark:bg-gray-950 dark:text-gray-100 flex flex-col">
-                    <header className="db-header transition-colors duration-300">
+                <div className={`db-app min-h-screen bg-gray-50 font-sans text-gray-900 transition-colors duration-300 dark:bg-gray-950 dark:text-gray-100 flex flex-col ${!isAtTop ? 'db-scrolled' : ''}`}>
+                    <header ref={headerRef} className="db-header transition-colors duration-300">
                         <div className="db-page-shell mx-auto px-4 sm:px-6 lg:px-8">
-                            <div className="db-tabs-shell">
+                            <div className="db-tabs-shell rounded-xl">
                             <div className="grid w-full grid-cols-4 gap-3 -mb-px">
                                 <button
                                     onClick={() => setActiveTab('members')}
@@ -1989,7 +2097,7 @@
                                             <StatsCard title="在团人数" value={stats.activeCount} icon={CheckCircle2} colorClass="text-green-500 bg-green-500" />
                                             <StatsCard title="当前显示" value={displayedCount} icon={Filter} colorClass="text-pink-500 bg-pink-500" />
                                         </div>
-                                        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6 space-y-4 transition-colors duration-300 dark:bg-gray-900 dark:border-gray-800">
+                                        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6 space-y-4 transition-colors duration-300 dark:bg-gray-900 dark:border-gray-800 db-search-sticky">
                                             <div className="flex flex-col lg:flex-row gap-4">
                                                 <div className="flex-1 relative group">
                                                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
@@ -2074,7 +2182,7 @@
                                     />
                                 ) : (
                                     <>
-                                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6 space-y-4 transition-colors duration-300 dark:bg-gray-900 dark:border-gray-800">
+                                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6 space-y-4 transition-colors duration-300 dark:bg-gray-900 dark:border-gray-800 db-search-sticky">
                                     <div className="flex flex-col sm:flex-row gap-4">
                                         <div className="flex-1 relative group">
                                             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
@@ -2162,7 +2270,7 @@
                                     />
                                 ) : (
                                     <>
-                                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6 space-y-4 transition-colors duration-300 dark:bg-gray-900 dark:border-gray-800">
+                                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6 space-y-4 transition-colors duration-300 dark:bg-gray-900 dark:border-gray-800 db-search-sticky">
                                     <div className="flex flex-col lg:flex-row gap-4">
                                         <div className="flex-1 relative group">
                                             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
@@ -2230,7 +2338,7 @@
                                     />
                                 ) : (
                                     <>
-                                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6 space-y-4 transition-colors duration-300 dark:bg-gray-900 dark:border-gray-800">
+                                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6 space-y-4 transition-colors duration-300 dark:bg-gray-900 dark:border-gray-800 db-search-sticky">
                                     <div className="flex flex-col lg:flex-row gap-4">
                                         <div className="flex-1 relative group">
                                             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
