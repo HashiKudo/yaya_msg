@@ -48,6 +48,71 @@
                 .replace(/'/g, '&#39;');
         }
 
+        function findMemberInfo(senderId, displayName) {
+            const list = typeof getMemberData === 'function' ? getMemberData() : [];
+            if (!Array.isArray(list)) return null;
+            // 1. Try matching userId
+            let found = list.find(m => m.userId && String(m.userId) === String(senderId));
+            if (found) return found;
+            // 2. Try matching id
+            found = list.find(m => m.id && String(m.id) === String(senderId));
+            if (found) return found;
+            // 3. Try matching memberId
+            found = list.find(m => m.memberId && String(m.memberId) === String(senderId));
+            if (found) return found;
+            // 4. Try matching ownerName (displayName)
+            found = list.find(m => m.ownerName && String(m.ownerName) === String(displayName));
+            if (found) return found;
+            return null;
+        }
+
+        async function showMemberProfile(memberInfo, senderId) {
+            if (!memberInfo) {
+                memberInfo = findMemberInfo(senderId, '');
+            }
+            if (!memberInfo) {
+                // Try creating a minimal member object if we only have senderId
+                memberInfo = {
+                    id: String(senderId),
+                    ownerName: '未知用户',
+                    team: '-'
+                };
+            }
+
+            if (typeof window.showDatabaseMemberDetail !== 'function') {
+                if (typeof window.mountDatabaseView === 'function') {
+                    if (typeof showToast === 'function') {
+                        showToast('正在加载并初始化成员档案...', 1500);
+                    }
+                    try {
+                        await window.mountDatabaseView();
+                        // Wait up to 2 seconds for React to finish mounting and register the helper
+                        for (let i = 0; i < 20; i++) {
+                            if (typeof window.showDatabaseMemberDetail === 'function') {
+                                break;
+                            }
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                        }
+                    } catch (e) {
+                        console.error('Failed to mount database view', e);
+                    }
+                }
+            }
+
+            if (typeof window.showDatabaseMemberDetail === 'function') {
+                window.showDatabaseMemberDetail(memberInfo);
+            } else {
+                const memberId = memberInfo.id || memberInfo.userId || memberInfo.memberId;
+                if (memberId && typeof window.showMemberProfileModal === 'function') {
+                    window.showMemberProfileModal(memberId);
+                } else {
+                    if (typeof showToast === 'function') {
+                        showToast('无法启动成员档案查看器');
+                    }
+                }
+            }
+        }
+
         function normalizeFollowedPocketMediaUrl(mediaPath) {
             const rawPath = String(mediaPath || '').trim();
             if (!rawPath) return '';
@@ -815,17 +880,25 @@
 
                         const timeStr = fallbackTimeStr;
 
-                        const nameColorVar = String(senderId) === '121569667'
+                        const myUserId = typeof currentPocketUserId !== 'undefined' ? String(currentPocketUserId).trim() : '';
+                        const nameColorVar = (myUserId && String(senderId) === myUserId)
                             ? '#056de8'
                             : (isMember ? 'var(--msg-name-member)' : 'var(--msg-name-fan)');
 
+                        const clickableClass = isMember ? 'chat-member-name-clickable' : '';
+                        const clickableAvatarClass = isMember ? 'chat-member-avatar-clickable' : '';
+                        const cursorStyle = isMember ? 'cursor: pointer;' : '';
+
                         return `
     <div class="msg-item" data-msgid="${msgId}" style="display: flex; padding: 8px 0; border-bottom: 1px solid var(--border);">
-        <img src="${avatarUrl}" class="avatar" 
-             style="width: 34px; height: 34px; border-radius: 50%; margin-right: 12px; margin-top: 2px; flex-shrink: 0; object-fit: cover; border: 1px solid rgba(0,0,0,0.05);">
+        <img src="${avatarUrl}" class="avatar ${clickableAvatarClass}" 
+             ${isMember ? `data-sender-id="${senderId}" data-display-name="${escapeFollowedHtml(displayName)}"` : ''}
+             style="width: 34px; height: 34px; border-radius: 50%; margin-right: 12px; margin-top: 2px; flex-shrink: 0; object-fit: cover; border: 1px solid rgba(0,0,0,0.05); ${cursorStyle}">
         <div style="flex: 1; min-width: 0;">
             <div style="display: flex; align-items: center; margin-bottom: 2px;">
-                <span style="color: ${nameColorVar}; font-weight: bold; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 75%;">
+                <span class="${clickableClass}" 
+                      ${isMember ? `data-sender-id="${senderId}" data-display-name="${escapeFollowedHtml(displayName)}"` : ''}
+                      style="color: ${nameColorVar}; font-weight: bold; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 75%; ${cursorStyle}">
                     ${safeStr(displayName)}
                 </span>
                 
@@ -919,6 +992,16 @@
 
                     if (this.scrollTop < 100) {
                         loadFollowedChatPage(true);
+                    }
+                });
+
+                followedMsgBox.addEventListener('click', function (event) {
+                    const target = event.target.closest('.chat-member-name-clickable, .chat-member-avatar-clickable');
+                    if (target) {
+                        const senderId = target.getAttribute('data-sender-id');
+                        const displayName = target.getAttribute('data-display-name');
+                        const memberInfo = findMemberInfo(senderId, displayName);
+                        showMemberProfile(memberInfo, senderId);
                     }
                 });
             }
