@@ -264,7 +264,7 @@ async function buildWebDatabaseRuntime(databaseTemplatePath) {
         "document.getElementById('database-root')"
     );
     const transformed = Babel.transform(databaseSource, {
-        presets: ['react'],
+        presets: [['react', { runtime: 'classic' }]],
         sourceType: 'module'
     }).code;
 

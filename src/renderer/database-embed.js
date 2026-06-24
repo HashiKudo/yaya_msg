@@ -179,7 +179,7 @@
                 const transformed = window.Babel.transform(
                     rewriteDatabaseSource(appScript.textContent || ''),
                     {
-                        presets: ['react'],
+                        presets: [['react', { runtime: 'classic' }]],
                         sourceType: 'module'
                     }
                 ).code;
