@@ -481,16 +481,20 @@ async function fetchRoomMessages({ channelId, serverId, token, pa, nextTime = 0,
             ? 'https://pocketapi.48.cn/im/api/v1/team/message/list/all'
             : 'https://pocketapi.48.cn/im/api/v1/team/message/list/homeowner';
 
-        const response = await axios.post(
-            url,
-            {
-                channelId: parseInt(channelId, 10),
-                serverId: parseInt(finalServerId, 10),
-                nextTime,
-                limit: 50
-            },
-            { headers }
-        );
+        const body = {
+            channelId: parseInt(channelId, 10),
+            serverId: parseInt(finalServerId, 10),
+            nextTime,
+            limit: 50
+        };
+        console.log(`[pocket-service] fetchRoomMessages 请求 → ${url}`, body);
+
+        const response = await axios.post(url, body, { headers });
+
+        console.log(`[pocket-service] fetchRoomMessages 响应 ← status=${response.status} apiStatus=${response.data?.status} msgCount=${response.data?.content?.messageList?.length ?? response.data?.content?.message?.length ?? '?'}`);
+        if (response.status !== 200 || response.data?.status !== 200) {
+            console.warn(`[pocket-service] fetchRoomMessages 失败详情:`, JSON.stringify(response.data));
+        }
 
         if (response.status === 200 && response.data && response.data.status === 200) {
             return { success: true, data: response.data, usedServerId: finalServerId };
@@ -498,6 +502,7 @@ async function fetchRoomMessages({ channelId, serverId, token, pa, nextTime = 0,
 
         return apiError(response);
     } catch (error) {
+        console.error(`[pocket-service] fetchRoomMessages 异常 channelId=${channelId} serverId=${finalServerId}:`, error.message);
         return { success: false, msg: error.message };
     }
 }

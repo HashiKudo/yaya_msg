@@ -273,7 +273,7 @@
                 const type = el.getAttribute('data-type');
                 const src = el.getAttribute('data-src');
                 const filename = el.getAttribute('data-filename') || (Date.now() + (type === 'audio' ? '.mp3' : '.mp4'));
-                
+
                 if (src) {
                     let player = null;
                     if (type === 'audio' && typeof createCustomAudioPlayer === 'function') {
@@ -534,6 +534,7 @@
 
             if (!isFollowedSmallRoomMode) {
                 const smallRoomId = memberInfo ? memberInfo.yklzId : null;
+                console.log(`[关注房间] 切换小房间 name=${activeFollowedName} yklzId=${smallRoomId} memberId=${memberInfo?.id}`);
                 if (!smallRoomId) {
                     showToast(`⚠️ 未在数据中找到 ${activeFollowedName} 的小房间 ID`);
                     return;
@@ -541,6 +542,7 @@
                 isFollowedSmallRoomMode = true;
                 activeFollowedChannel = smallRoomId;
             } else {
+                console.log(`[关注房间] 切换回大房间 name=${activeFollowedName} channel=${activeFollowedMainChannel}`);
                 isFollowedSmallRoomMode = false;
                 activeFollowedChannel = activeFollowedMainChannel;
             }
@@ -623,6 +625,9 @@
 
             try {
                 const fetchNextTime = isAutoRefresh ? 0 : activeFollowedNextTime;
+                if (!isAutoRefresh) {
+                    console.log(`[关注房间] loadFollowedChatPage isLoadMore=${isLoadMore} channel=${activeFollowedChannel} server=${activeFollowedServer} nextTime=${fetchNextTime} smallRoom=${isFollowedSmallRoomMode}`);
+                }
 
                 const res = await ipcRenderer.invoke('fetch-room-messages', {
                     token: token,
@@ -633,10 +638,15 @@
                     fetchAll: isFollowedChatAllMode
                 });
 
+                if (!isAutoRefresh) {
+                    console.log(`[关注房间] fetch-room-messages 响应: success=${res?.success} hasData=${!!res?.data} hasContent=${!!res?.data?.content} usedServerId=${res?.usedServerId}`, res?.success ? undefined : res);
+                }
+
                 if (res.success && res.data.content) {
                     if (res.usedServerId) activeFollowedServer = res.usedServerId;
                     const content = res.data.content;
                     let list = content.messageList || content.message || [];
+                    if (!isAutoRefresh) console.log(`[关注房间] 消息列表长度=${list.length} nextTime=${content.nextTime}`);
 
                     if (!isAutoRefresh && !isLoadMore) {
                         activeFollowedNextTime = content.nextTime;
@@ -787,7 +797,7 @@
                                     const tStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
                                     const escapedTitle = liveTitle.replace(/'/g, "\\'");
                                     const escapedName = safeStr(displayName).replace(/'/g, "\\'");
-                                    txt = `<div class="vod-card-row" style="margin-top: 8px; width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--border); box-shadow: none; ${liveId ? 'cursor: pointer;' : 'cursor: default;'}" 
+                                    txt = `<div class="vod-card-row" style="margin-top: 8px; width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--border); box-shadow: none; ${liveId ? 'cursor: pointer;' : 'cursor: default;'}"
                                          ${liveId ? `onclick="event.stopPropagation(); playSharedLiveFromMessage('${liveId}', '${escapedName}', '${tStr}', '${escapedTitle}')"` : ''}>
                                         <div class="vod-row-cover-container" style="width: 100px; height: 56px; border-radius: 6px;">
                                             <img src="${cover}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 6px;">
@@ -891,12 +901,12 @@
 
                         return `
     <div class="msg-item" data-msgid="${msgId}" style="display: flex; padding: 8px 0; border-bottom: 1px solid var(--border);">
-        <img src="${avatarUrl}" class="avatar ${clickableAvatarClass}" 
+        <img src="${avatarUrl}" class="avatar ${clickableAvatarClass}"
              ${isMember ? `data-sender-id="${senderId}" data-display-name="${escapeFollowedHtml(displayName)}"` : ''}
              style="width: 34px; height: 34px; border-radius: 50%; margin-right: 12px; margin-top: 2px; flex-shrink: 0; object-fit: cover; border: 1px solid rgba(0,0,0,0.05); ${cursorStyle}">
         <div style="flex: 1; min-width: 0;">
             <div style="display: flex; align-items: center; margin-bottom: 2px;">
-                <span class="${clickableClass}" 
+                <span class="${clickableClass}"
                       ${isMember ? `data-sender-id="${senderId}" data-display-name="${escapeFollowedHtml(displayName)}"` : ''}
                       style="color: ${nameColorVar}; font-weight: bold; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 75%; ${cursorStyle}">
                     ${safeStr(displayName)}

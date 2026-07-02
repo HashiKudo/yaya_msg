@@ -111,9 +111,20 @@
             return allMembers.filter(Boolean);
         }
 
+        // 本地手动修正：key 为 ownerName，value 为需要覆盖的字段
+        const LOCAL_MEMBER_PATCHES = {
+            '方琪': { yklzId: '39604595', serverId: '1148118' }
+        };
+
         function applyMemberDataList(list) {
             const normalized = Array.isArray(list) ? list.filter(Boolean) : [];
             if (!normalized.length) return false;
+
+            for (const patch of Object.entries(LOCAL_MEMBER_PATCHES)) {
+                const [name, fields] = patch;
+                const member = normalized.find(m => m.ownerName === name);
+                if (member) Object.assign(member, fields);
+            }
 
             memberData = normalized;
             window.memberData = normalized;
@@ -332,7 +343,7 @@
             color: rgb(var(--team-rgb)) !important;
             border: 1px solid rgba(var(--team-rgb), 0.5) !important;
             text-shadow: none !important;
-            font-weight: 700 !important; 
+            font-weight: 700 !important;
         }
 
 
