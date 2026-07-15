@@ -38,6 +38,7 @@
         let followedPendingCount = 0;
         let followedPendingMessageIds = new Set();
         let followedGiftCacheSaveTimer = null;
+        const followedServerDetailCache = new Map();
 
         function escapeFollowedHtml(value) {
             return String(value == null ? '' : value)
@@ -403,6 +404,67 @@
             invalidateFollowedAutoScrollJobs();
         }
 
+        function getFollowedChannelTitle(detail, channelId) {
+            const content = detail?.content || detail || {};
+            const channels = Array.isArray(content.channelInfoList) ? content.channelInfoList : [];
+            const matchedChannel = channels.find(channel => String(channel.channelId) === String(channelId));
+            return matchedChannel?.channelName || '';
+        }
+
+        function getFollowedFallbackTitle(ownerName = activeFollowedName) {
+            const name = String(ownerName || '').trim();
+            return name ? `${name} 的房间` : '成员房间';
+        }
+
+        function hideFollowedChatTitle() {
+            const titleEl = document.getElementById('followed-chat-title');
+            if (!titleEl) return;
+            titleEl.innerText = ' ';
+            titleEl.style.visibility = 'hidden';
+        }
+
+        function showFollowedChatTitle(title) {
+            const titleEl = document.getElementById('followed-chat-title');
+            if (!titleEl) return;
+            titleEl.innerText = title;
+            titleEl.style.visibility = 'visible';
+        }
+
+        function updateFollowedChatTitleFromDetail(detail) {
+            const title = getFollowedChannelTitle(detail, activeFollowedChannel) || getFollowedFallbackTitle();
+            showFollowedChatTitle(title);
+        }
+
+        async function refreshFollowedChatTitle() {
+            const serverId = String(activeFollowedServer || '').trim();
+            if (!serverId) return;
+
+            const cachedDetail = followedServerDetailCache.get(serverId);
+            if (cachedDetail) {
+                updateFollowedChatTitleFromDetail(cachedDetail);
+                return;
+            }
+
+            const requestServerId = serverId;
+            try {
+                const token = getAppToken();
+                const pa = window.getPA ? window.getPA() : null;
+                const res = await ipcRenderer.invoke('fetch-seine-server-detail', {
+                    token,
+                    pa,
+                    serverId: requestServerId
+                });
+
+                if (!res?.success || !res.content) return;
+                followedServerDetailCache.set(requestServerId, res.content);
+                if (String(activeFollowedServer || '') === requestServerId) {
+                    updateFollowedChatTitleFromDetail(res.content);
+                }
+            } catch (error) {
+                console.warn('获取频道名失败:', error);
+            }
+        }
+
         async function playSharedLiveFromMessage(liveId, nickname, timeStr, title) {
             if (!liveId) return;
 
@@ -468,8 +530,9 @@
 
             const header = document.getElementById('followed-chat-header');
             header.style.visibility = 'visible';
-            document.getElementById('followed-chat-title').innerText = `${ownerName} 的房间`;
+            showFollowedChatTitle(getFollowedFallbackTitle(ownerName));
             document.getElementById('followed-chat-subtitle').innerText = `Channel ID: ${channelId}`;
+            refreshFollowedChatTitle();
 
             const avatarImg = document.getElementById('followed-chat-avatar');
             const memberInfo = getMemberData().find(m => String(m.channelId) === String(channelId));
@@ -536,7 +599,7 @@
                 const smallRoomId = memberInfo ? memberInfo.yklzId : null;
                 console.log(`[关注房间] 切换小房间 name=${activeFollowedName} yklzId=${smallRoomId} memberId=${memberInfo?.id}`);
                 if (!smallRoomId) {
-                    showToast(`⚠️ 未在数据中找到 ${activeFollowedName} 的小房间 ID`);
+                    showToast(`未在数据中找到 ${activeFollowedName} 的小房间 ID`);
                     return;
                 }
                 isFollowedSmallRoomMode = true;
@@ -555,6 +618,8 @@
             }
 
             document.getElementById('followed-chat-subtitle').innerText = `Channel ID: ${activeFollowedChannel} ${isFollowedSmallRoomMode ? '' : ''}`;
+            showFollowedChatTitle(getFollowedFallbackTitle());
+            refreshFollowedChatTitle();
 
             activeFollowedNextTime = 0;
             followedStickToBottom = true;
@@ -643,7 +708,10 @@
                 }
 
                 if (res.success && res.data.content) {
-                    if (res.usedServerId) activeFollowedServer = res.usedServerId;
+                    if (res.usedServerId) {
+                        activeFollowedServer = res.usedServerId;
+                        refreshFollowedChatTitle();
+                    }
                     const content = res.data.content;
                     let list = content.messageList || content.message || [];
                     if (!isAutoRefresh) console.log(`[关注房间] 消息列表长度=${list.length} nextTime=${content.nextTime}`);

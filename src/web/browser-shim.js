@@ -40,6 +40,7 @@
         'fetch-room-messages',
         'fetch-private-message-list',
         'fetch-private-message-info',
+        'delete-private-message',
         'send-private-message-reply',
         'fetch-flip-list',
         'fetch-star-archives',
@@ -61,6 +62,7 @@
         'fetch-unread-message-count',
         'edit-user-info',
         'upload-user-avatar',
+        'upload-private-message-image',
         'fetch-user-rename-count',
         'fetch-user-picture-frames',
         'fetch-client-group-team-star-update',
@@ -76,7 +78,18 @@
         'fetch-friends-ids',
         'fetch-last-messages',
         'follow-member',
-        'unfollow-member'
+        'unfollow-member',
+        'fetch-area48-newest',
+        'fetch-area48-recommend',
+        'fetch-area48-topic-info',
+        'fetch-area48-topic-hot-posts',
+        'fetch-area48-topic-newest-posts',
+        'fetch-area48-comments',
+        'fetch-area48-post-details',
+        'add-area48-comment',
+        'delete-area48-comment',
+        'create-area48-post',
+        'fetch-pocket-mask-words'
     ]);
 
     function readStore(key) {
@@ -347,19 +360,24 @@
         return new Error('网页版不支持直接访问本地文件系统');
     }
 
-    function waitForPaReady(timeoutMs = 5000) {
-        if (typeof window.getPA !== 'function') {
-            return Promise.resolve(null);
-        }
-        const firstPa = window.getPA();
-        if (firstPa) {
-            return Promise.resolve(firstPa);
-        }
-
+    function waitForPaReady(timeoutMs = 15000) {
         return new Promise(resolve => {
             const startedAt = Date.now();
+            const readPa = () => {
+                try {
+                    return typeof window.getPA === 'function' ? window.getPA() : null;
+                } catch (error) {
+                    console.warn('生成登录签名失败:', error);
+                    return null;
+                }
+            };
+            const firstPa = readPa();
+            if (firstPa) {
+                resolve(firstPa);
+                return;
+            }
             const timer = setInterval(() => {
-                const pa = typeof window.getPA === 'function' ? window.getPA() : null;
+                const pa = readPa();
                 if (pa || Date.now() - startedAt >= timeoutMs) {
                     clearInterval(timer);
                     resolve(pa || null);
@@ -430,6 +448,12 @@
             const pa = await waitForPaReady();
             if (pa) {
                 nextPayload.pa = pa;
+            } else if (channel === 'login-by-code' || channel === 'login-check-token') {
+                return {
+                    status: 503,
+                    success: false,
+                    message: '登录签名模块加载失败，请刷新页面后重试'
+                };
             }
         }
 
