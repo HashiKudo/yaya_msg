@@ -381,6 +381,47 @@ async function postPocketContent(url, payload, options = {}) {
     }
 }
 
+function normalizePocketApiPath(value) {
+    const apiPath = String(value || '').trim();
+    if (!apiPath.startsWith('/') || apiPath.includes('://') || apiPath.includes('..')) {
+        throw new Error('无效的 Pocket API 路径');
+    }
+    return apiPath;
+}
+
+function normalizePocketApiPostData(value) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return value;
+    }
+
+    try {
+        const parsed = JSON.parse(String(value || '{}'));
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (error) {
+        return {};
+    }
+}
+
+async function fetchPocketApiPath({ path: apiPath, postData } = {}) {
+    try {
+        const response = await axios.post(
+            `https://pocketapi.48.cn${normalizePocketApiPath(apiPath)}`,
+            normalizePocketApiPostData(postData),
+            { headers: createModernHeaders() }
+        );
+        return response.data || { status: 500, content: {}, message: 'Pocket API 返回为空' };
+    } catch (error) {
+        const response = error && error.response;
+        const data = response && response.data;
+        if (data && typeof data === 'object') return data;
+        return {
+            status: response && response.status ? response.status : 500,
+            content: {},
+            message: getApiMessage(data) || error.message || 'Pocket API 请求失败'
+        };
+    }
+}
+
 function parseMaskWordsText(text) {
     return String(text || '')
         .replace(/^\uFEFF/, '')
@@ -2635,6 +2676,7 @@ module.exports = {
     deleteArea48Comment,
     createArea48Post,
     fetchPocketMaskWords,
+    fetchPocketApiPath,
     fetchScoreOfficialBundle,
     runScoreOfficialAction
 };

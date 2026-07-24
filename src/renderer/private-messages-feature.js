@@ -1546,7 +1546,10 @@
 
         function setPrivateMessageImageButtonText(text) {
             const btn = document.getElementById('btn-send-private-message-image');
-            if (btn) btn.textContent = text || '图片';
+            if (!btn) return;
+            const label = text || '图片';
+            btn.title = label;
+            btn.setAttribute('aria-label', label === '图片' ? '发送图片' : label);
         }
 
         async function handlePrivateMessageImageSelected(file) {

@@ -6,7 +6,7 @@
             const savedBg = settingsApi && typeof settingsApi.getBackgroundUrlSync === 'function'
                 ? settingsApi.getBackgroundUrlSync()
                 : localStorage.getItem('custom_bg_data');
-            const DEFAULT_BACKGROUND_URL = 'https://yaya-data.pages.dev/assets/default-background.jpg';
+            const DEFAULT_BACKGROUND_URL = 'https://data.gnz.hk/assets/default-background.jpg';
             const THEME_STYLE_ID = 'yaya-theme-init-style';
             const BG_STYLE_ID = 'yaya-custom-bg-style';
 

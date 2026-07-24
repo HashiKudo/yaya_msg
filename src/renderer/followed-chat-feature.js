@@ -37,6 +37,7 @@
         let followedPendingCount = 0;
         let followedPendingMessageIds = new Set();
         let followedGiftCacheSaveTimer = null;
+        let activeFollowedFallbackAvatarUrl = '';
         const followedServerDetailCache = new Map();
 
         function escapeFollowedHtml(value) {
@@ -59,6 +60,19 @@
             return rawPath.startsWith('/')
                 ? `https://source3.48.cn${rawPath}`
                 : `https://source3.48.cn/${rawPath}`;
+        }
+
+        function normalizeFollowedSourceUrl(mediaPath) {
+            const rawPath = String(mediaPath || '').trim();
+            if (!rawPath) return '';
+            if (/^https?:\/\//i.test(rawPath)) return rawPath;
+            if (rawPath.includes('48.cn')) {
+                return `https://${rawPath.replace(/^\/+/, '')}`;
+            }
+
+            return rawPath.startsWith('/')
+                ? `https://source.48.cn${rawPath}`
+                : `https://source.48.cn/${rawPath}`;
         }
 
         function scheduleFollowedGiftCacheSave() {
@@ -350,13 +364,60 @@
             showFollowedChatTitle(title);
         }
 
+        function setFollowedChatAvatarUrl(avatarUrl) {
+            const avatarImg = document.getElementById('followed-chat-avatar');
+            if (!avatarImg) return;
+
+            const nextUrl = String(avatarUrl || '').trim();
+            if (!nextUrl) {
+                avatarImg.removeAttribute('src');
+                avatarImg.style.display = 'block';
+                avatarImg.style.visibility = 'hidden';
+                avatarImg.style.opacity = '0';
+                return;
+            }
+
+            if (avatarImg.getAttribute('src') !== nextUrl) {
+                avatarImg.src = nextUrl;
+            }
+            avatarImg.style.display = 'block';
+            avatarImg.style.visibility = 'visible';
+            avatarImg.style.opacity = '1';
+        }
+
+        function updateFollowedChatAvatarFromDetail(detail) {
+            const serverIcon = detail?.chatServerInfo?.serverIcon;
+            const avatarUrl = normalizeFollowedSourceUrl(serverIcon);
+            if (!avatarUrl) return false;
+
+            setFollowedChatAvatarUrl(avatarUrl);
+            return true;
+        }
+
+        function updateFollowedChatMetaFromDetail(detail) {
+            updateFollowedChatTitleFromDetail(detail);
+            if (!updateFollowedChatAvatarFromDetail(detail) && activeFollowedFallbackAvatarUrl) {
+                setFollowedChatAvatarUrl(activeFollowedFallbackAvatarUrl);
+            }
+        }
+
+        function getFollowedMemberAvatarUrl(channelId) {
+            const memberInfo = getMemberData().find(m => String(m.channelId) === String(channelId));
+            if (!memberInfo || !memberInfo.id) return '';
+            return window.globalAvatarCache[memberInfo.id] ||
+                (memberInfo.avatar ? normalizeFollowedSourceUrl(memberInfo.avatar) : '');
+        }
+
         async function refreshFollowedChatTitle() {
             const serverId = String(activeFollowedServer || '').trim();
-            if (!serverId) return;
+            if (!serverId) {
+                if (activeFollowedFallbackAvatarUrl) setFollowedChatAvatarUrl(activeFollowedFallbackAvatarUrl);
+                return;
+            }
 
             const cachedDetail = followedServerDetailCache.get(serverId);
             if (cachedDetail) {
-                updateFollowedChatTitleFromDetail(cachedDetail);
+                updateFollowedChatMetaFromDetail(cachedDetail);
                 return;
             }
 
@@ -370,13 +431,17 @@
                     serverId: requestServerId
                 });
 
-                if (!res?.success || !res.content) return;
+                if (!res?.success || !res.content) {
+                    if (activeFollowedFallbackAvatarUrl) setFollowedChatAvatarUrl(activeFollowedFallbackAvatarUrl);
+                    return;
+                }
                 followedServerDetailCache.set(requestServerId, res.content);
                 if (String(activeFollowedServer || '') === requestServerId) {
-                    updateFollowedChatTitleFromDetail(res.content);
+                    updateFollowedChatMetaFromDetail(res.content);
                 }
             } catch (error) {
                 console.warn('获取频道名失败:', error);
+                if (activeFollowedFallbackAvatarUrl) setFollowedChatAvatarUrl(activeFollowedFallbackAvatarUrl);
             }
         }
 
@@ -447,23 +512,13 @@
             header.style.visibility = 'visible';
             showFollowedChatTitle(getFollowedFallbackTitle(ownerName));
             document.getElementById('followed-chat-subtitle').innerText = `Channel ID: ${channelId}`;
-            refreshFollowedChatTitle();
+            activeFollowedFallbackAvatarUrl = getFollowedMemberAvatarUrl(channelId);
 
-            const avatarImg = document.getElementById('followed-chat-avatar');
-            const memberInfo = getMemberData().find(m => String(m.channelId) === String(channelId));
-
-            if (memberInfo && memberInfo.id) {
-                const avatarPath = window.globalAvatarCache[memberInfo.id] ||
-                    (memberInfo.avatar ? (memberInfo.avatar.startsWith('http') ? memberInfo.avatar : `https://source.48.cn${memberInfo.avatar}`) : null);
-
-                if (avatarPath) {
-                    avatarImg.src = avatarPath;
-                    avatarImg.style.display = 'block';
-                } else {
-                    avatarImg.style.display = 'none';
-                }
+            if (activeFollowedServer) {
+                setFollowedChatAvatarUrl('');
+                refreshFollowedChatTitle();
             } else {
-                avatarImg.style.display = 'none';
+                setFollowedChatAvatarUrl(activeFollowedFallbackAvatarUrl);
             }
 
             const msgBox = document.getElementById('followed-chat-messages');

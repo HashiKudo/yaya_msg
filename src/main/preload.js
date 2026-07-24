@@ -3,7 +3,7 @@ const fs = require('fs');
 const https = require('https');
 const readline = require('readline');
 const { pathToFileURL } = require('url');
-const { ipcRenderer, shell } = require('electron');
+const { ipcRenderer, shell, webFrame } = require('electron');
 const { ensureStoragePaths } = require('../common/storage-paths');
 
 const appDir = path.join(__dirname, '../../');
@@ -295,3 +295,34 @@ window.desktop = {
 };
 
 window.ipcRenderer = window.desktop.ipcRenderer;
+
+function resetRendererPageZoom() {
+    try {
+        webFrame.setZoomLevel(0);
+        webFrame.setZoomFactor(1);
+    } catch (error) {
+    }
+}
+
+resetRendererPageZoom();
+
+window.addEventListener('wheel', (event) => {
+    if (!event.ctrlKey && !event.metaKey) return;
+
+    event.preventDefault();
+    resetRendererPageZoom();
+}, { passive: false, capture: true });
+
+window.addEventListener('keydown', (event) => {
+    if (!event.ctrlKey && !event.metaKey) return;
+
+    const key = String(event.key || '').toLowerCase();
+    if (key === '+' || key === '=' || key === '-' || key === '_' || key === '0') {
+        event.preventDefault();
+        resetRendererPageZoom();
+    }
+}, { capture: true });
+
+window.addEventListener('DOMContentLoaded', resetRendererPageZoom, { once: true });
+window.addEventListener('pageshow', resetRendererPageZoom);
+window.addEventListener('focus', resetRendererPageZoom);

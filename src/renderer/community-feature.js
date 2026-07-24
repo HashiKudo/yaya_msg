@@ -393,7 +393,6 @@
                 try {
                     candidates.push(decodeURIComponent(raw));
                 } catch (_) {
-                    // Keep the original raw value when it is not URI encoded.
                 }
                 for (const candidate of candidates) {
                     for (const pattern of patterns) {

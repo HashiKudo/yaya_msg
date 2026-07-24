@@ -167,7 +167,6 @@
                         initials: pinyinArray.map(part => String(part || '').charAt(0)).join('').toLowerCase()
                     };
                 } catch (_) {
-                    // Fall through to the stored pinyin text below.
                 }
             }
 

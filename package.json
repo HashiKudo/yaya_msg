@@ -1,19 +1,22 @@
 {
   "name": "yaya_msg",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "description": "牙牙消息",
   "homepage": "https://github.com/yk1z/yaya_msg",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "web:build": "node scripts/build-web.js",
+    "database:build": "node scripts/build-web.js --database-runtime-only",
+    "start": "npm run database:build && electron .",
+    "web:build": "npm run database:build && node scripts/build-web.js",
     "web:dev": "npm run web:build && npx wrangler dev",
     "web:dev:lan": "npm run web:build && npx wrangler dev --ip 0.0.0.0 --port 8787",
     "web:deploy": "npm run web:build && npx wrangler deploy",
     "api:start": "node server/yaya-api.mjs",
     "search:start": "node server/search-api.mjs",
-    "pack": "node scripts/run-builder.js --dir",
-    "dist": "node scripts/run-builder.js"
+    "pack": "npm run database:build && node scripts/run-builder.js --dir",
+    "dist": "npm run database:build && node scripts/run-builder.js",
+    "seine:export-all": "node scripts/export-all-member-channels.js",
+    "seine:compare": "node scripts/compare-member-channels.js"
   },
   "author": {
     "name": "yk1z",

@@ -1,11 +1,11 @@
 (function () {
     const OFFICIAL_SITE_ORIGIN = 'https://www.snh48.com';
     const OFFICIAL_SITE_SCRIPT_BASE = `${OFFICIAL_SITE_ORIGIN}/js`;
-    const DATA_BASE_URL = 'https://yaya-data.pages.dev';
+    const DATA_BASE_URL = 'https://data.gnz.hk';
     const MUSIC_LYRICS_BASE_URL = `${DATA_BASE_URL}/lyrics`;
     const MUSIC_LYRICS_INDEX_URL = `${DATA_BASE_URL}/lyrics-index.json`;
     const R2_MUSIC_PUBLIC_ORIGIN = 'https://gnz.hk';
-    const R2_MUSIC_API_FALLBACK_ORIGIN = 'https://yaya-msg-web.yk1z.workers.dev';
+    const R2_MUSIC_API_FALLBACK_ORIGIN = 'https://gnz.hk';
     const FAVORITES_STORAGE_KEY = 'yaya_official_site_music_favorites';
     const PLAYER_STATE_STORAGE_KEY = 'yaya_official_site_music_player_state';
     const DURATION_STORAGE_KEY = 'yaya_official_site_music_durations';
@@ -713,7 +713,7 @@
     async function loadR2PerformanceMusicTracks() {
         const origins = typeof window.yayaWebApiUrl === 'function'
             ? ['']
-            : [R2_MUSIC_PUBLIC_ORIGIN, R2_MUSIC_API_FALLBACK_ORIGIN];
+            : [...new Set([R2_MUSIC_PUBLIC_ORIGIN, R2_MUSIC_API_FALLBACK_ORIGIN])];
         const errors = [];
 
         for (const origin of origins) {

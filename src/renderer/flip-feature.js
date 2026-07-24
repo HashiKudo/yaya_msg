@@ -542,6 +542,10 @@
         function toggleFlipDateDropdown() {
             const list = document.getElementById('flip-date-dropdown');
             if (!list) return;
+            if (list.dataset.keepOpenBound !== 'true') {
+                list.dataset.keepOpenBound = 'true';
+                list.addEventListener('click', event => event.stopPropagation());
+            }
             const willOpen = list.style.display !== 'block';
             list.style.display = willOpen ? 'block' : 'none';
             if (willOpen) {
@@ -590,6 +594,8 @@
             input.value = value;
             applyFlipTimeRangeFilter();
             renderFlipDateCalendar();
+            const list = document.getElementById('flip-date-dropdown');
+            if (list) list.style.display = 'block';
         }
 
         function clearActiveFlipDateField() {
@@ -598,6 +604,8 @@
             input.value = '';
             applyFlipTimeRangeFilter();
             renderFlipDateCalendar();
+            const list = document.getElementById('flip-date-dropdown');
+            if (list) list.style.display = 'block';
         }
 
         function pickTodayForFlipDate() {

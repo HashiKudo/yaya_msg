@@ -3,7 +3,7 @@
         let memberDataLoadPromise = null;
         let currentSelectedMemberName = '';
         let currentLiveListRaw = [];
-        const MEMBER_DATA_URL = 'https://yaya-data.pages.dev/members.json';
+        const MEMBER_DATA_URL = 'https://data.gnz.hk/members.json';
         const MEMBER_DATA_CACHE_KEY = 'yaya_member_data_cache_v1';
 
         function showShield(status = '正在处理', detail = '') {

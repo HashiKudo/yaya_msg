@@ -4,6 +4,24 @@ const path = require('path');
 let mainWindow = null;
 const preloadPath = path.join(__dirname, 'preload.js');
 const SAFE_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
+const PAGE_ZOOM_FACTOR = 1;
+
+function resetPageZoom(webContents) {
+    if (!webContents || webContents.isDestroyed()) return;
+
+    try {
+        webContents.setZoomLevel(0);
+        webContents.setZoomFactor(PAGE_ZOOM_FACTOR);
+    } catch (error) {
+    }
+}
+
+function isPageZoomShortcut(input) {
+    if (!input || (!input.control && !input.meta)) return false;
+
+    const key = String(input.key || '').toLowerCase();
+    return key === '+' || key === '=' || key === '-' || key === '_' || key === '0';
+}
 
 function isSafeExternalUrl(rawUrl) {
     try {
@@ -36,6 +54,20 @@ function createWindow() {
     });
 
     mainWindow.loadFile(path.join(__dirname, '../../index.html'));
+    resetPageZoom(mainWindow.webContents);
+    mainWindow.webContents.on('did-finish-load', () => {
+        resetPageZoom(mainWindow.webContents);
+    });
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+        if (!isPageZoomShortcut(input)) return;
+
+        event.preventDefault();
+        resetPageZoom(mainWindow.webContents);
+    });
+    mainWindow.webContents.on('zoom-changed', (event) => {
+        event.preventDefault();
+        resetPageZoom(mainWindow.webContents);
+    });
     mainWindow.webContents.on('will-navigate', (event, url) => {
         if (!url.startsWith('file://')) {
             event.preventDefault();
