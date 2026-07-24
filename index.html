@@ -1377,7 +1377,9 @@
                         </div>
                     </div>
                     <div class="premium-player-bar official-site-music-player" id="official-site-music-player">
-                        <div class="official-site-music-disc">
+                        <div class="official-site-music-disc" role="button" tabindex="0" title="切换歌词"
+                            aria-label="切换歌词" onclick="toggleOfficialSiteMusicLyricsPanel()"
+                            onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleOfficialSiteMusicLyricsPanel(); }">
                             <img id="official-site-music-cover" class="vinyl-spin vinyl-pause" src="./icon.png" alt="">
                         </div>
                         <div class="official-site-music-player-info">
