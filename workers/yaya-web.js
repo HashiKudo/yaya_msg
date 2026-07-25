@@ -321,6 +321,7 @@ async function shouldProxyIpcToBackend(request) {
             'login-send-sms',
             'login-by-code',
             'login-check-token',
+            'fetch-trip-list',
             'fetch-invoice-tips',
             'fetch-invoice-config',
             'fetch-invoice-order-list',
