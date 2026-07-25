@@ -21,6 +21,8 @@
             setCurrentFlipSort,
             setCurrentFlipTimeFrom,
             setCurrentFlipTimeTo,
+            getCurrentFlipMemberKeyword,
+            setCurrentFlipMemberKeyword,
             getCurrentSearchKeyword,
             setCurrentSearchKeyword,
             getIsFetchingFlips,
@@ -721,6 +723,72 @@
             renderLocalPage(0);
         }
 
+        function renderFlipMemberFilterDropdown() {
+            const input = document.getElementById('flipMemberFilterInput');
+            const dropdown = document.getElementById('flip-member-filter-dropdown');
+            if (!input || !dropdown) return;
+
+            dropdown.innerHTML = '';
+
+            const allItem = document.createElement('div');
+            allItem.className = 'suggestion-item';
+            allItem.innerHTML = '<span style="font-weight:bold">全部成员</span>';
+            allItem.onclick = () => selectFlipMemberFilter('all');
+            dropdown.appendChild(allItem);
+
+            const memberNames = Array.from(new Set(getFlipData()
+                .map(item => String(item?.baseUserInfo?.nickname || '').trim())
+                .filter(Boolean)))
+                .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+
+            memberNames.forEach(name => {
+                const item = document.createElement('div');
+                item.className = 'suggestion-item';
+                item.style.display = 'flex';
+                item.style.justifyContent = 'space-between';
+                item.style.alignItems = 'center';
+
+                const nameEl = document.createElement('span');
+                nameEl.style.fontWeight = 'bold';
+                nameEl.textContent = name;
+                item.appendChild(nameEl);
+
+                item.onclick = () => selectFlipMemberFilter(name);
+                dropdown.appendChild(item);
+            });
+        }
+
+        function toggleFlipMemberFilterDropdown() {
+            const dropdown = document.getElementById('flip-member-filter-dropdown');
+            if (!dropdown) return;
+
+            const shouldShow = dropdown.style.display !== 'block';
+            if (shouldShow) {
+                renderFlipMemberFilterDropdown();
+            }
+            dropdown.style.display = shouldShow ? 'block' : 'none';
+        }
+
+        function selectFlipMemberFilter(value) {
+            const input = document.getElementById('flipMemberFilterInput');
+            const dropdown = document.getElementById('flip-member-filter-dropdown');
+            const nextValue = value === 'all' ? '' : String(value || '').trim();
+
+            if (typeof setCurrentFlipMemberKeyword === 'function') {
+                setCurrentFlipMemberKeyword(nextValue);
+            }
+            if (input) {
+                input.value = nextValue || '全部成员';
+            }
+            if (dropdown) {
+                dropdown.style.display = 'none';
+            }
+            if (typeof setCurrentFlipPage === 'function') {
+                setCurrentFlipPage(0);
+            }
+            renderLocalPage(0);
+        }
+
         function applyFlipSearch() {
             const input = document.getElementById('flipSearchInput');
             if (!input) return;
@@ -747,6 +815,7 @@
             const currentFlipPrivacyFilter = typeof getCurrentFlipPrivacyFilter === 'function' ? getCurrentFlipPrivacyFilter() : '0';
             const currentFlipTimeFrom = typeof getCurrentFlipTimeFrom === 'function' ? getCurrentFlipTimeFrom() : '';
             const currentFlipTimeTo = typeof getCurrentFlipTimeTo === 'function' ? getCurrentFlipTimeTo() : '';
+            const currentFlipMemberKeyword = typeof getCurrentFlipMemberKeyword === 'function' ? getCurrentFlipMemberKeyword() : '';
             const currentSearchKeyword = typeof getCurrentSearchKeyword === 'function' ? getCurrentSearchKeyword() : '';
 
             if (currentFlipFilterType !== '0') {
@@ -775,16 +844,22 @@
                 });
             }
 
+            if (currentFlipMemberKeyword) {
+                const memberKey = currentFlipMemberKeyword.toLowerCase();
+                result = result.filter(item => {
+                    const memberName = ((item.baseUserInfo && item.baseUserInfo.nickname) || '').toLowerCase();
+                    return memberName.includes(memberKey);
+                });
+            }
+
             if (currentSearchKeyword) {
                 const lowerKey = currentSearchKeyword.toLowerCase();
                 result = result.filter(item => {
                     const qContent = (item.content || '').toLowerCase();
                     const aContent = (item.answerContent || '').toLowerCase();
-                    const memberName = ((item.baseUserInfo && item.baseUserInfo.nickname) || '').toLowerCase();
 
                     return qContent.includes(lowerKey) ||
-                        aContent.includes(lowerKey) ||
-                        memberName.includes(lowerKey);
+                        aContent.includes(lowerKey);
                 });
             }
 
@@ -819,7 +894,12 @@
             if (typeof setCurrentSearchKeyword === 'function') {
                 setCurrentSearchKeyword('');
             }
+            if (typeof setCurrentFlipMemberKeyword === 'function') {
+                setCurrentFlipMemberKeyword('');
+            }
 
+            const memberInput = document.getElementById('flipMemberFilterInput');
+            if (memberInput) memberInput.value = '全部成员';
             const input = document.getElementById('flipSearchInput');
             if (input) input.value = '';
 
@@ -854,6 +934,11 @@
             if (typeof setCurrentSearchKeyword === 'function') {
                 setCurrentSearchKeyword('');
             }
+            if (typeof setCurrentFlipMemberKeyword === 'function') {
+                setCurrentFlipMemberKeyword('');
+            }
+            const memberInput = document.getElementById('flipMemberFilterInput');
+            if (memberInput) memberInput.value = '全部成员';
             const input = document.getElementById('flipSearchInput');
             if (input) input.value = '';
 
@@ -945,6 +1030,7 @@
             const previousScrollTop = viewFlip ? viewFlip.scrollTop : 0;
 
             const currentFlipSort = typeof getCurrentFlipSort === 'function' ? getCurrentFlipSort() : null;
+            const currentFlipMemberKeyword = typeof getCurrentFlipMemberKeyword === 'function' ? getCurrentFlipMemberKeyword() : '';
             const currentSearchKeyword = typeof getCurrentSearchKeyword === 'function' ? getCurrentSearchKeyword() : '';
             let filteredData = getFilteredData();
 
@@ -1021,13 +1107,6 @@
             }
 
             statusText.appendChild(headerBtn);
-
-            if (currentSearchKeyword) {
-                const searchTip = document.createElement('span');
-                searchTip.style.cssText = 'margin-left: 10px; font-size: 12px; color: var(--text-sub); vertical-align: middle;';
-                searchTip.innerText = `(搜到 ${filteredData.length} 条)`;
-                statusText.appendChild(searchTip);
-            }
 
             container.innerHTML = '';
             if (pageData.length === 0) {
@@ -1565,6 +1644,7 @@
             loadFlipList,
             refreshFlipUserBalance,
             selectFlipAnswer,
+            selectFlipMemberFilter,
             selectFlipPrivacy,
             selectFlipSendMember,
             selectFlipType,
@@ -1580,6 +1660,7 @@
             shiftFlipDateCalendarMonth,
             toggleFlipAnswerDropdown,
             toggleFlipDateDropdown,
+            toggleFlipMemberFilterDropdown,
             toggleFlipPrivacyDropdown,
             toggleFlipTypeDropdown,
             toggleFlipVisibilityDropdown,

@@ -210,6 +210,9 @@ function registerPocketIpc() {
     handle('fetch-melee-year-rank-page', (payload) => pocketService.fetchMeleeYearRankPage(payload));
     handle('fetch-person-melee-rank-page', (payload) => pocketService.fetchPersonMeleeRankPage(payload));
     handle('fetch-post-image-list', (payload) => pocketService.fetchPostImageList(payload));
+    handle('fetch-post-video-list', (payload) => pocketService.fetchPostVideoList(payload));
+    handle('fetch-post-timeline-home', (payload) => pocketService.fetchPostTimelineHome(payload));
+    handle('fetch-post-timeline-home-new', (payload) => pocketService.fetchPostTimelineHomeNew(payload));
     handle('fetch-chatroom-homeowner-messages', (payload) => pocketService.fetchChatroomHomeownerMessages(payload));
     handle('fetch-member-weibo', (payload) => pocketService.fetchMemberWeiboMessages(payload));
     handle('fetch-member-dynamic', (payload) => pocketService.fetchMemberDynamicMessages(payload));
@@ -237,6 +240,7 @@ function registerPocketIpc() {
     handle('score-bind-sg', (payload) => pocketService.bindElectionSg(payload));
     handle('score-rare-treasure-list', (payload) => pocketService.fetchPageantryRareTreasures(payload));
     handle('score-buy-star-list', (payload) => pocketService.fetchPageantryBuyStarList(payload));
+    handle('fetch-pageantry-honor-card-info', (payload) => pocketService.fetchPageantryHonorCardInfo(payload));
     handle('fetch-score-official-bundle', (payload) => pocketService.fetchScoreOfficialBundle(payload));
     handle('score-official-action', (payload) => pocketService.runScoreOfficialAction(payload));
 }

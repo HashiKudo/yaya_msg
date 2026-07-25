@@ -74,6 +74,11 @@
             return typeof replaceTencentEmoji === 'function' ? replaceTencentEmoji(escaped) : escaped;
         }
 
+        function getCommunityMentionUserId(href) {
+            const match = String(href || '').trim().match(/^snh48:\/\/(\d+)/i);
+            return match ? match[1] : '';
+        }
+
         function normalizeRenderedText(value) {
             return String(value || '')
                 .replace(/\r\n/g, '\n')
@@ -108,8 +113,13 @@
                 }
                 if (element.tagName === 'A' && href.startsWith('snh48://')) {
                     const label = (element.textContent || '').trim();
+                    const mentionUserId = getCommunityMentionUserId(href);
                     if (label) {
-                        parts.push(`<span class="community-post-mention">${renderTextSegment(label)}</span>`);
+                        if (mentionUserId) {
+                            parts.push(`<button type="button" class="community-post-mention community-post-mention-btn" onclick="window.openFollowedUserProfile && window.openFollowedUserProfile('${escapeJsString(mentionUserId)}', '${escapeJsString(label)}', '', false)">${renderTextSegment(label)}</button>`);
+                        } else {
+                            parts.push(`<span class="community-post-mention">${renderTextSegment(label)}</span>`);
+                        }
                     }
                     return;
                 }

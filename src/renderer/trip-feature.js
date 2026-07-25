@@ -291,12 +291,20 @@
             }
         }
 
+        function ensureTripListLoaded() {
+            const container = document.getElementById('trip-result-container');
+            if (!container || tripLoading) return;
+            if (container.children.length > 0 || String(container.textContent || '').trim()) return;
+            void fetchTripList();
+        }
+
         bindTripSearchDismiss();
 
         return {
             handleTripSearch,
             selectTripMember,
-            fetchTripList
+            fetchTripList,
+            ensureTripListLoaded
         };
     };
 })();

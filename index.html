@@ -2241,8 +2241,22 @@
                                         </div>
                                     </div>
 
+                                    <div id="flip-member-filter-wrapper" style="position: relative; width: 140px;">
+                                        <input type="text" id="flipMemberFilterInput" class="input-control" value="全部成员"
+                                            readonly onclick="toggleFlipMemberFilterDropdown()"
+                                            style="cursor: pointer; text-align: left; padding-right: 25px;">
+
+                                        <div
+                                            style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-sub); font-size: 12px;">
+                                            ▼
+                                        </div>
+
+                                        <div id="flip-member-filter-dropdown" class="suggestion-box"
+                                            style="display: none; top: 42px; max-height: 300px;"></div>
+                                    </div>
+
                                     <input type="text" id="flipSearchInput" class="input-control" style="width: 180px;"
-                                        placeholder="搜索成员或内容..." oninput="applyFlipSearch()">
+                                        placeholder="搜索内容..." oninput="applyFlipSearch()">
 
                                     <button class="btn btn-secondary" style="padding: 0 20px;"
                                         onclick="updateLatestFlips()">
@@ -2897,6 +2911,17 @@
                 <span class="close-btn" onclick="closeContextModal()">×</span>
             </div>
             <div class="modal-body" id="contextListContainer" style="background: var(--bg); padding: 20px;"></div>
+        </div>
+    </div>
+    <div class="modal-overlay" id="followedUserProfileModal" onclick="if(event.target===this) closeFollowedUserProfile()">
+        <div class="modal-content followed-user-profile-modal">
+            <div class="modal-header">
+                <span class="modal-title">用户主页</span>
+                <span class="close-btn" onclick="closeFollowedUserProfile()">×</span>
+            </div>
+            <div class="modal-body followed-user-profile-body" id="followed-user-profile-body">
+                <div class="empty-state">正在加载...</div>
+            </div>
         </div>
     </div>
     <div class="modal-overlay" id="imageModal" onclick="closeImageModal()"

@@ -1174,14 +1174,22 @@
             }
         }
 
-        function openPrivateMessageDetail(targetUserId) {
-            const item = privateMessageListState.items.find(entry => String(entry.user?.userId || '') === String(targetUserId));
-            if (!item) return;
-            const user = item.user || {};
+        function openPrivateMessageDetail(targetUserId, fallback = {}) {
+            const normalizedTargetUserId = String(targetUserId || '').trim();
+            if (!normalizedTargetUserId) return;
+
+            const item = privateMessageListState.items.find(entry => String(entry.user?.userId || '') === normalizedTargetUserId);
+            const user = item?.user || {
+                userId: normalizedTargetUserId,
+                nickname: fallback.title || fallback.name || fallback.nickName || '',
+                nickName: fallback.title || fallback.name || fallback.nickName || '',
+                userName: fallback.title || fallback.name || fallback.nickName || '',
+                avatar: fallback.avatar || ''
+            };
             loadPrivateMessageDetail({
                 targetUserId: String(user.userId || ''),
-                title: getPrivateMessageDisplayName(user),
-                avatar: getPrivateMessageAvatar(user.avatar),
+                title: getPrivateMessageDisplayName(user) || fallback.title || fallback.name || '私信详情',
+                avatar: getPrivateMessageAvatar(user.avatar || fallback.avatar),
                 reset: true
             });
         }

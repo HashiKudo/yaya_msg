@@ -87,6 +87,8 @@
         let startFollowedRoomsPolling;
         let stopFollowedRoomsPolling;
         let resetFollowedRoomsState;
+        let closeFollowedProfileVideo;
+        let openFollowedProfileVideo;
         let resetPrivateMessageListState;
         let handleOpenLiveSearch;
         let selectOpenLiveMember;
@@ -118,6 +120,7 @@
         let handleTripSearch;
         let selectTripMember;
         let fetchTripList;
+        let ensureTripListLoaded;
         let handleRoomRadioSearch;
         let selectRoomRadioMember;
         let connectRoomRadio;
@@ -181,6 +184,7 @@
         let refreshFlipUserBalance;
         let resetClipTool;
         let selectFlipAnswer;
+        let selectFlipMemberFilter;
         let selectFlipPrivacy;
         let selectFlipSendMember;
         let selectFlipType;
@@ -198,6 +202,7 @@
         let toggleGiftPanel;
         let toggleFlipAnswerDropdown;
         let toggleFlipDateDropdown;
+        let toggleFlipMemberFilterDropdown;
         let toggleFlipPrivacyDropdown;
         let toggleFlipTypeDropdown;
         let toggleFlipVisibilityDropdown;
@@ -251,7 +256,14 @@
         let selectQuickFollowMember;
         let executeQuickAction;
         let backToFollowedRoomList;
+        let backFollowedUserProfile;
         let openFollowedChat;
+        let openFollowedProfilePrivateMessage;
+        let openFollowedProfileRoom;
+        let openFollowedUserProfile;
+        let closeFollowedUserProfile;
+        let switchFollowedUserProfileTab;
+        let toggleFollowedProfileFollow;
         let toggleFollowedRoomType;
         let jumpToFullRoom;
         let toggleFollowedChatMode;
@@ -1369,6 +1381,9 @@
                     setSidebarHomeMode(false);
                     toggleSidebarMode('login');
                     if (tripView) tripView.style.display = 'block';
+                    if (typeof ensureTripListLoaded === 'function') {
+                        setTimeout(() => ensureTripListLoaded(), 0);
+                    }
 
                 } else if (viewName === 'openlive') {
                     setGlobalSidebarVisible(false);
@@ -2294,12 +2309,21 @@
 
         ({
             backToFollowedRoomList,
+            backFollowedUserProfile,
+            closeFollowedUserProfile,
             flushFollowedPendingMessages,
             getActiveFollowedChannel,
             jumpToFullRoom,
             loadFollowedChatPage,
             openFollowedChat,
+            openFollowedProfilePrivateMessage,
+            openFollowedProfileRoom,
+            openFollowedProfileVideo,
+            openFollowedUserProfile,
             playSharedLiveFromMessage,
+            closeFollowedProfileVideo,
+            switchFollowedUserProfileTab,
+            toggleFollowedProfileFollow,
             toggleFollowedChatMode,
             toggleFollowedRoomType
         } = window.YayaRendererFeatures.createFollowedChatFeature({
@@ -2309,7 +2333,9 @@
             getAdaptivePollDelay: () => getAdaptivePollDelay(),
             getAppToken: () => getCurrentAppToken(),
             getMemberData: () => memberData || [],
+            getOptimizedThumbUrl,
             ipcRenderer,
+            loadMemberData,
             playArchiveFromMessage: (...args) => typeof playArchiveFromMessage === 'function'
                 ? playArchiveFromMessage(...args)
                 : undefined,
@@ -2321,10 +2347,19 @@
             switchView
         }));
         window.backToFollowedRoomList = backToFollowedRoomList;
+        window.backFollowedUserProfile = backFollowedUserProfile;
         window.flushFollowedPendingMessages = flushFollowedPendingMessages;
         window.jumpToFullRoom = jumpToFullRoom;
         window.loadFollowedChatPage = loadFollowedChatPage;
         window.openFollowedChat = openFollowedChat;
+        window.openFollowedProfilePrivateMessage = openFollowedProfilePrivateMessage;
+        window.openFollowedProfileRoom = openFollowedProfileRoom;
+        window.openFollowedProfileVideo = openFollowedProfileVideo;
+        window.openFollowedUserProfile = openFollowedUserProfile;
+        window.closeFollowedUserProfile = closeFollowedUserProfile;
+        window.closeFollowedProfileVideo = closeFollowedProfileVideo;
+        window.switchFollowedUserProfileTab = switchFollowedUserProfileTab;
+        window.toggleFollowedProfileFollow = toggleFollowedProfileFollow;
         window.playSharedLiveFromMessage = playSharedLiveFromMessage;
         window.toggleFollowedChatMode = toggleFollowedChatMode;
         window.toggleFollowedRoomType = toggleFollowedRoomType;
@@ -2797,7 +2832,8 @@
         ({
             handleTripSearch,
             selectTripMember,
-            fetchTripList
+            fetchTripList,
+            ensureTripListLoaded
         } = window.YayaRendererFeatures.createTripFeature({
             getAppToken: () => getCurrentAppToken(),
             getMemberData: () => window.memberData || [],
@@ -2817,6 +2853,7 @@
         window.handleTripSearch = handleTripSearch;
         window.selectTripMember = selectTripMember;
         window.fetchTripList = fetchTripList;
+        window.ensureTripListLoaded = ensureTripListLoaded;
 
         ({
             handleRoomRadioSearch,
@@ -2961,6 +2998,7 @@
             loadFlipList,
             refreshFlipUserBalance,
             selectFlipAnswer,
+            selectFlipMemberFilter,
             selectFlipPrivacy,
             selectFlipSendMember,
             selectFlipType,
@@ -2976,6 +3014,7 @@
             shiftFlipDateCalendarMonth,
             toggleFlipAnswerDropdown,
             toggleFlipDateDropdown,
+            toggleFlipMemberFilterDropdown,
             toggleFlipPrivacyDropdown,
             toggleFlipTypeDropdown,
             toggleFlipVisibilityDropdown,
@@ -3004,6 +3043,8 @@
             setCurrentFlipTimeFrom: value => { currentFlipTimeFrom = value; },
             getCurrentFlipTimeTo: () => currentFlipTimeTo,
             setCurrentFlipTimeTo: value => { currentFlipTimeTo = value; },
+            getCurrentFlipMemberKeyword: () => currentFlipMemberKeyword,
+            setCurrentFlipMemberKeyword: value => { currentFlipMemberKeyword = value; },
             getCurrentSearchKeyword: () => currentSearchKeyword,
             setCurrentSearchKeyword: value => { currentSearchKeyword = value; },
             getIsFetchingFlips: () => isFetchingFlips,
@@ -3032,6 +3073,7 @@
         window.loadFlipList = loadFlipList;
         window.refreshFlipUserBalance = refreshFlipUserBalance;
         window.selectFlipAnswer = selectFlipAnswer;
+        window.selectFlipMemberFilter = selectFlipMemberFilter;
         window.selectFlipPrivacy = selectFlipPrivacy;
         window.selectFlipSendMember = selectFlipSendMember;
         window.selectFlipType = selectFlipType;
@@ -3047,6 +3089,7 @@
         window.shiftFlipDateCalendarMonth = shiftFlipDateCalendarMonth;
         window.toggleFlipAnswerDropdown = toggleFlipAnswerDropdown;
         window.toggleFlipDateDropdown = toggleFlipDateDropdown;
+        window.toggleFlipMemberFilterDropdown = toggleFlipMemberFilterDropdown;
         window.toggleFlipPrivacyDropdown = toggleFlipPrivacyDropdown;
         window.toggleFlipTypeDropdown = toggleFlipTypeDropdown;
         window.toggleFlipVisibilityDropdown = toggleFlipVisibilityDropdown;
@@ -5998,6 +6041,7 @@
         let currentFlipSort = "latest_desc";
         let currentFlipTimeFrom = "";
         let currentFlipTimeTo = "";
+        let currentFlipMemberKeyword = "";
         let currentSearchKeyword = "";
         const FLIP_HISTORY_CACHE_KEY = 'yaya_flip_history_cache_v1';
 
@@ -6122,7 +6166,11 @@
             allFlipData = [];
             isFetchingFlips = false;
             flipCurrentPage = 0;
+            currentFlipMemberKeyword = "";
             currentSearchKeyword = "";
+
+            const memberFilterInput = document.getElementById('flipMemberFilterInput');
+            if (memberFilterInput) memberFilterInput.value = '全部成员';
 
             const searchInput = document.getElementById('flipSearchInput');
             if (searchInput) searchInput.value = '';
@@ -6277,6 +6325,7 @@
                 { wrapperId: 'message-date-wrapper', dropdownId: 'message-date-dropdown' },
                 { wrapperId: 'flip-date-wrapper', dropdownId: 'flip-date-dropdown' },
                 { wrapperId: 'flip-type-wrapper', dropdownId: 'flip-type-dropdown' },
+                { wrapperId: 'flip-member-filter-wrapper', dropdownId: 'flip-member-filter-dropdown' },
                 { wrapperId: 'flip-visibility-wrapper', dropdownId: 'flip-visibility-dropdown' },
                 { wrapperId: 'flip-sort-wrapper', dropdownId: 'flip-sort-dropdown' },
                 { wrapperId: 'live-group-wrapper', dropdownId: 'live-group-dropdown' },
