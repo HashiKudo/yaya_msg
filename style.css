@@ -10052,6 +10052,11 @@ html[data-theme="dark"] .maskword-result {
     cursor: default;
 }
 
+.private-message-avatar.is-clickable,
+.private-message-sender-avatar.is-clickable {
+    cursor: pointer;
+}
+
 .private-message-list-avatar {
     width: 40px;
     height: 40px;
