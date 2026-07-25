@@ -1927,11 +1927,22 @@ async function unfollowMember({ token, pa, memberId }) {
     return apiError(response);
 }
 
-async function fetchLiveList({ token, pa, groupId = 0, next = 0, record = false, debug = false }) {
+async function fetchLiveList({ token, pa, groupId = 0, userId = '', next = 0, record = false, debug = false }) {
+    const payload = {
+        debug: !!debug,
+        next: Number(next) || 0,
+        record: !!record
+    };
+    if (userId !== undefined && userId !== null && userId !== '') {
+        payload.userId = Number(userId) || String(userId);
+    } else {
+        payload.groupId = Number(groupId) || 0;
+    }
+
     return postPocketContent(
         'https://pocketapi.48.cn/live/api/v1/live/getLiveList',
-        { groupId: Number(groupId) || 0, debug: !!debug, next: Number(next) || 0, record: !!record },
-        { token, pa, errorMessage: '获取直播列表失败' }
+        payload,
+        { token, pa, headersFactory: createModernHeaders, errorMessage: '获取直播列表失败', largeNumbers: true }
     );
 }
 
