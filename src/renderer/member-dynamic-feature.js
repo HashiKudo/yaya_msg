@@ -43,6 +43,11 @@
             return (div.textContent || div.innerText || '').trim();
         }
 
+        function getDynamicMentionUserId(href) {
+            const match = String(href || '').trim().match(/^snh48:\/\/(\d+)/i);
+            return match ? match[1] : '';
+        }
+
         function renderDynamicPlainText(value) {
             return escapeHtml(value || '动态').replace(
                 /(^|[\s([（【「『，。！？、；：])(@[^\s@，。！？、；：,.!?()[\]（）【】「」『』]+)/g,
@@ -90,7 +95,12 @@
                 const href = element.getAttribute('href') || '';
                 const label = (element.textContent || '').trim();
                 if (element.tagName === 'A' && href.startsWith('snh48://') && label) {
-                    parts.push(`<span class="member-dynamic-mention">${escapeHtml(label)}</span>`);
+                    const mentionUserId = getDynamicMentionUserId(href);
+                    if (mentionUserId) {
+                        parts.push(`<button type="button" class="member-dynamic-mention member-dynamic-mention-btn" onclick="window.openFollowedUserProfile && window.openFollowedUserProfile('${escapeJsString(mentionUserId)}', '${escapeJsString(label)}', '', false)">${escapeHtml(label)}</button>`);
+                    } else {
+                        parts.push(`<span class="member-dynamic-mention">${escapeHtml(label)}</span>`);
+                    }
                     return;
                 }
                 element.childNodes.forEach(walk);

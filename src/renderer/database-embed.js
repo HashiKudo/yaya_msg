@@ -1,14 +1,9 @@
 (function initDatabaseEmbed() {
-    const DATABASE_TEMPLATE_PATH = 'src/renderer/database/index.html';
-    const WEB_DATABASE_TEMPLATE_PATH = '/database-template.txt';
+    const DATABASE_STYLES_PATH = 'src/renderer/database/styles.css';
+    const DESKTOP_DATABASE_RUNTIME_PATH = './database/runtime.js';
     const WEB_DATABASE_RUNTIME_PATH = '/src/renderer/database/runtime.js';
+    const WEB_DATABASE_STYLES_PATH = '/src/renderer/database/styles.css';
     const TAILWIND_URL = 'https://cdn.tailwindcss.com';
-    const BABEL_URL = 'https://unpkg.com/@babel/standalone/babel.min.js';
-    const REACT_URL = 'https://esm.sh/react@18.2.0';
-    const REACT_JSX_RUNTIME_URL = 'https://esm.sh/react@18.2.0/jsx-runtime';
-    const REACT_JSX_DEV_RUNTIME_URL = 'https://esm.sh/react@18.2.0/jsx-dev-runtime';
-    const REACT_DOM_URL = 'https://esm.sh/react-dom@18.2.0/client';
-    const LUCIDE_URL = 'https://esm.sh/lucide-react@0.292.0';
     const EMBED_SCRIPT_SRC = document.currentScript && document.currentScript.src ? document.currentScript.src : '';
 
     let runtimePromise = null;
@@ -23,13 +18,19 @@
     }
 
     function getWebDatabaseRuntimeUrl() {
+        return getVersionedRuntimeUrl(WEB_DATABASE_RUNTIME_PATH);
+    }
+
+    function getDesktopDatabaseRuntimeUrl() {
+        return getVersionedRuntimeUrl(DESKTOP_DATABASE_RUNTIME_PATH);
+    }
+
+    function getVersionedRuntimeUrl(runtimePath) {
         let version = '';
         try {
             version = new URL(EMBED_SCRIPT_SRC).searchParams.get('v') || '';
-        } catch (error) { }
-        return version
-            ? `${WEB_DATABASE_RUNTIME_PATH}?v=${encodeURIComponent(version)}`
-            : WEB_DATABASE_RUNTIME_PATH;
+        } catch (error) {}
+        return version ? `${runtimePath}?v=${encodeURIComponent(version)}` : runtimePath;
     }
 
     function setDatabaseState(html, className) {
@@ -97,20 +98,17 @@
             if (!document.getElementById('database-tailwind-runtime')) {
                 await loadExternalScript(TAILWIND_URL, 'database-tailwind-runtime');
             }
-            if (!isWebRuntime() && !window.Babel && !document.getElementById('database-babel-runtime')) {
-                await loadExternalScript(BABEL_URL, 'database-babel-runtime');
-            }
         })();
 
         return runtimePromise;
     }
 
-    async function readDatabaseTemplate() {
+    async function readDatabaseAsset(desktopPath, webPath) {
         const desktop = window.desktop;
         if (desktop && desktop.platform === 'web') {
-            const response = await fetch(WEB_DATABASE_TEMPLATE_PATH);
+            const response = await fetch(webPath);
             if (!response.ok) {
-                throw new Error(`数据库模板加载失败: ${response.status}`);
+                throw new Error(`数据库资源加载失败: ${response.status}`);
             }
             return response.text();
         }
@@ -119,39 +117,23 @@
             throw new Error('数据库运行环境未准备好');
         }
 
-        const templatePath = desktop.path.join(desktop.appDir, DATABASE_TEMPLATE_PATH);
-        return desktop.fs.readFileSync(templatePath, 'utf8');
+        const assetPath = desktop.path.join(desktop.appDir, desktopPath);
+        return desktop.fs.readFileSync(assetPath, 'utf8');
     }
 
-    function injectDatabaseStyles(doc) {
-        if (document.getElementById('database-embed-style')) return;
+    function readDatabaseStyles() {
+        return readDatabaseAsset(DATABASE_STYLES_PATH, WEB_DATABASE_STYLES_PATH);
+    }
 
-        const styles = Array.from(doc.querySelectorAll('style'))
-            .map((node) => node.textContent || '')
-            .join('\n')
-            .replace(/html\s*,\s*body\s*\{[\s\S]*?\}\s*/g, '')
-            .replace(/body\s*\{[\s\S]*?\}\s*/g, '');
+    function injectDatabaseStyles(styles) {
+        if (document.getElementById('database-embed-style')) return;
 
         const style = document.createElement('style');
         style.id = 'database-embed-style';
-        style.textContent = styles;
+        style.textContent = String(styles || '')
+            .replace(/html\s*,\s*body\s*\{[\s\S]*?\}\s*/g, '')
+            .replace(/body\s*\{[\s\S]*?\}\s*/g, '');
         document.head.appendChild(style);
-    }
-
-    function rewriteImports(source) {
-        return source
-            .replace(/from\s+['"]react['"]/g, `from '${REACT_URL}'`)
-            .replace(/from\s+['"]react\/jsx-runtime['"]/g, `from '${REACT_JSX_RUNTIME_URL}'`)
-            .replace(/from\s+['"]react\/jsx-dev-runtime['"]/g, `from '${REACT_JSX_DEV_RUNTIME_URL}'`)
-            .replace(/from\s+['"]react-dom\/client['"]/g, `from '${REACT_DOM_URL}'`)
-            .replace(/from\s+['"]lucide-react['"]/g, `from '${LUCIDE_URL}'`);
-    }
-
-    function rewriteDatabaseSource(source) {
-        return rewriteImports(source).replace(
-            /document\.getElementById\('root'\)/g,
-            "document.getElementById('database-root')"
-        );
     }
 
     async function mountDatabaseView() {
@@ -162,15 +144,8 @@
 
         mountPromise = (async () => {
             try {
-                const template = await readDatabaseTemplate();
-                const doc = new DOMParser().parseFromString(template, 'text/html');
-                const appScript = doc.querySelector('script[type="text/babel"]');
-
-                if (!appScript) {
-                    throw new Error('数据库脚本不存在');
-                }
-
-                injectDatabaseStyles(doc);
+                const styles = await readDatabaseStyles();
+                injectDatabaseStyles(styles);
                 await ensureRuntime();
 
                 if (isWebRuntime()) {
@@ -180,27 +155,9 @@
                     return;
                 }
 
-                const transformed = rewriteImports(window.Babel.transform(
-                    rewriteDatabaseSource(appScript.textContent || ''),
-                    {
-                        presets: [['react', { runtime: 'classic' }]],
-                        sourceType: 'module'
-                    }
-                ).code);
-
                 host.innerHTML = '';
-                const blob = new Blob(
-                    [`${transformed}\n//# sourceURL=database-embed-runtime.js`],
-                    { type: 'text/javascript' }
-                );
-                const blobUrl = URL.createObjectURL(blob);
-
-                try {
-                    await import(blobUrl);
-                    host.dataset.databaseMounted = 'true';
-                } finally {
-                    URL.revokeObjectURL(blobUrl);
-                }
+                await import(getDesktopDatabaseRuntimeUrl());
+                host.dataset.databaseMounted = 'true';
             } catch (error) {
                 console.error('数据库页面挂载失败:', error);
                 setDatabaseState(`数据库加载失败<br>${error.message || error}`, 'database-error');

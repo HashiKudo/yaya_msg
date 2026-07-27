@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy"
         content="default-src 'self' file: https: data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net https://unpkg.com https://cdn.tailwindcss.com https://esm.sh https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https:; img-src 'self' file: https: data: blob:; media-src 'self' file: https: http: data: blob:; connect-src 'self' file: https: http: ws: wss: data: blob:; font-src 'self' https: data:;">
-    <title>牙牙消息 v2.7</title>
+    <title>牙牙消息 v2.8</title>
     <link rel="icon" href="./icon.png" type="image/x-icon">
 
     <link rel="stylesheet" href="style.css">
@@ -49,7 +49,7 @@
                 </svg>
             </div>
             <img src="./icon.png" class="title-logo">
-            <span>牙牙消息 v2.7</span>
+            <span>牙牙消息 v2.8</span>
         </div>
         <div id="topbar-page-title" class="title-bar-center-title" aria-live="polite"></div>
         <div class="window-controls">
@@ -217,45 +217,70 @@
             <div class="sidebar-group" id="sb-date" style="display: flex; flex-direction: column; gap: 10px;">
                 <div class="group-title" style="margin-bottom: 0;">日期筛选</div>
 
-                <div id="year-wrapper" style="position: relative;">
-                    <input type="hidden" id="yearSelect" value="all">
-                    <input type="text" id="yearSelectDisplay" class="input-control" value="全部" readonly
-                        onclick="toggleDateDropdown('year')" style="cursor: pointer; width: 100%;" disabled>
+                <div id="message-date-wrapper" class="message-date-wrapper" style="position: relative;">
+                    <input type="hidden" id="message-date-from">
+                    <input type="hidden" id="message-date-to">
+                    <button class="btn btn-secondary btn-full flip-date-trigger" type="button"
+                        onclick="toggleMessageDateDropdown()" title="按日期筛选消息" aria-label="按日期筛选消息" disabled>
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M8 2v4"></path>
+                            <path d="M16 2v4"></path>
+                            <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+                            <path d="M3 10h18"></path>
+                        </svg>
+                        <span id="message-date-trigger-text">全部</span>
+                    </button>
+                    <div id="message-date-dropdown" class="suggestion-box flip-date-dropdown message-date-dropdown">
+                        <div class="flip-date-panel">
+                            <div class="flip-date-field-row">
+                                <button type="button" id="message-time-from-display" class="flip-date-field-card"
+                                    onclick="setActiveMessageDateField('from')">
+                                    <span class="flip-date-field-card-label">起始日期</span>
+                                    <span class="flip-date-field-card-value">请选择</span>
+                                </button>
+                                <button type="button" id="message-time-to-display" class="flip-date-field-card"
+                                    onclick="setActiveMessageDateField('to')">
+                                    <span class="flip-date-field-card-label">结束日期</span>
+                                    <span class="flip-date-field-card-value">请选择</span>
+                                </button>
+                            </div>
 
-                    <div
-                        style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-sub); font-size: 12px;">
-                        ▼
-                    </div>
-                    <div id="year-dropdown" class="suggestion-box"></div>
-                </div>
-
-                <div class="btn-grid" style="display: flex; gap: 10px;">
-                    <div id="month-wrapper" style="position: relative; flex: 1;">
-                        <input type="hidden" id="monthSelect" value="all">
-                        <input type="text" id="monthSelectDisplay" class="input-control" value="全年" readonly
-                            onclick="toggleDateDropdown('month')" style="cursor: pointer; width: 100%;" disabled>
-
-                        <div
-                            style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-sub); font-size: 12px;">
-                            ▼
+                            <div class="flip-calendar-shell">
+                                <div class="flip-calendar-header">
+                                    <div class="flip-calendar-nav-group">
+                                        <button type="button" class="flip-calendar-nav flip-calendar-nav-year"
+                                            onclick="shiftMessageDateCalendarYear(-1)" aria-label="上一年">«</button>
+                                        <button type="button" class="flip-calendar-nav"
+                                            onclick="shiftMessageDateCalendarMonth(-1)" aria-label="上个月">‹</button>
+                                    </div>
+                                    <div id="message-date-calendar-label" class="flip-calendar-title"></div>
+                                    <div class="flip-calendar-nav-group">
+                                        <button type="button" class="flip-calendar-nav"
+                                            onclick="shiftMessageDateCalendarMonth(1)" aria-label="下个月">›</button>
+                                        <button type="button" class="flip-calendar-nav flip-calendar-nav-year"
+                                            onclick="shiftMessageDateCalendarYear(1)" aria-label="下一年">»</button>
+                                    </div>
+                                </div>
+                                <div class="flip-calendar-weekdays">
+                                    <span>一</span>
+                                    <span>二</span>
+                                    <span>三</span>
+                                    <span>四</span>
+                                    <span>五</span>
+                                    <span>六</span>
+                                    <span>日</span>
+                                </div>
+                                <div id="message-date-calendar-grid" class="flip-calendar-grid"></div>
+                                <div class="flip-calendar-footer">
+                                    <button type="button" class="btn btn-secondary flip-date-clear"
+                                        onclick="clearActiveMessageDateField()">清除</button>
+                                    <button type="button" class="btn btn-secondary flip-date-today"
+                                        onclick="pickTodayForMessageDate()">今天</button>
+                                </div>
+                            </div>
                         </div>
-                        <div id="month-dropdown" class="suggestion-box"></div>
-                    </div>
-
-                    <div id="day-wrapper" style="position: relative; flex: 1;">
-                        <input type="hidden" id="daySelect" value="all">
-                        <input type="text" id="daySelectDisplay" class="input-control" value="全月" readonly
-                            onclick="toggleDateDropdown('day')" style="cursor: pointer; width: 100%;" disabled>
-
-                        <div
-                            style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-sub); font-size: 12px;">
-                            ▼
-                        </div>
-                        <div id="day-dropdown" class="suggestion-box"></div>
                     </div>
                 </div>
-
-                <button class="btn btn-secondary btn-full" onclick="resetDateFilter()">重置日期</button>
 
                 <button id="sortBtn" class="btn btn-secondary btn-full" onclick="toggleSortOrder()">
                     当前：最新在前
@@ -575,7 +600,7 @@
                                 <button type="button" class="followed-chat-mobile-back"
                                     onclick="backToFollowedRoomList(event)">‹ 聚聚</button>
                                 <img id="followed-chat-avatar" src="./icon.png"
-                                    style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 1.5px solid var(--primary); display: none;">
+                                    style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 1.5px solid var(--primary); display: block; flex: 0 0 40px; visibility: hidden; opacity: 0;">
 
                                 <div style="flex: 1; min-width: 0;">
                                     <div id="followed-chat-title"
@@ -729,7 +754,7 @@
 
                         <div style="position: relative; flex: 1; min-width: 240px;">
                             <input type="text" id="vod-member-filter" class="input-control" style="width: 100%;"
-                                placeholder="成员名 / 日期" oninput="handleMemberFilter()" autocomplete="off">
+                                placeholder="成员名 / 日期，例如 2026-07-24" oninput="handleMemberFilter()" autocomplete="off">
                             <div id="member-suggestions" class="suggestion-box"></div>
                         </div>
 
@@ -1359,7 +1384,9 @@
                         </div>
                     </div>
                     <div class="premium-player-bar official-site-music-player" id="official-site-music-player">
-                        <div class="official-site-music-disc">
+                        <div class="official-site-music-disc" role="button" tabindex="0" title="切换歌词"
+                            aria-label="切换歌词" onclick="toggleOfficialSiteMusicLyricsPanel()"
+                            onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleOfficialSiteMusicLyricsPanel(); }">
                             <img id="official-site-music-cover" class="vinyl-spin vinyl-pause" src="./icon.png" alt="">
                         </div>
                         <div class="official-site-music-player-info">
@@ -1634,7 +1661,13 @@
                                     onchange="handlePrivateMessageImageSelected(this.files && this.files[0]); this.value='';">
                                 <button class="btn btn-secondary private-message-image-send-btn"
                                     id="btn-send-private-message-image" type="button"
-                                    onclick="openPrivateMessageImagePicker()" disabled>图片</button>
+                                    onclick="openPrivateMessageImagePicker()" title="图片" aria-label="发送图片" disabled>
+                                    <svg class="private-message-image-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                        <rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>
+                                        <circle cx="9" cy="9" r="2"></circle>
+                                        <path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"></path>
+                                    </svg>
+                                </button>
                                 <button class="btn btn-primary" id="btn-send-private-message"
                                     onclick="sendPrivateMessageReply()"
                                     style="width:96px; height:74px; flex-shrink:0;" disabled>发送</button>
@@ -1655,7 +1688,7 @@
 
                     <div class="bilibili-live-room-strip" id="bilibili-live-room-strip"></div>
 
-                    <div id="bilibili-live-meta" class="bilibili-live-now-playing" style="display:none;">
+                    <div id="bilibili-live-meta" class="bilibili-live-now-playing" style="visibility:hidden;">
                         <div class="bilibili-live-now-text">
                             <div id="bilibili-live-title" class="bilibili-live-now-title"></div>
                             <div id="bilibili-live-up" class="bilibili-live-now-subtitle"></div>
@@ -1866,7 +1899,7 @@
                                 <div class="maskword-settings-head">
                                     <div>
                                         <h2 class="page-title" style="margin: 0;">屏蔽词检测</h2>
-                                        <div class="maskword-settings-desc">口袋48屏蔽词检测，虽然牙牙消息绕过了屏蔽词检测。</div>
+                                        <div class="maskword-settings-desc">口袋48屏蔽词检测，虽然牙牙消息绕过了屏蔽词检测</div>
                                     </div>
                                     <button id="btn-pbc-maskword-check" class="btn btn-primary btn-sm"
                                         onclick="checkMaskwordText()">检测文本</button>
@@ -2215,8 +2248,22 @@
                                         </div>
                                     </div>
 
+                                    <div id="flip-member-filter-wrapper" style="position: relative; width: 140px;">
+                                        <input type="text" id="flipMemberFilterInput" class="input-control" value="全部成员"
+                                            readonly onclick="toggleFlipMemberFilterDropdown()"
+                                            style="cursor: pointer; text-align: left; padding-right: 25px;">
+
+                                        <div
+                                            style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-sub); font-size: 12px;">
+                                            ▼
+                                        </div>
+
+                                        <div id="flip-member-filter-dropdown" class="suggestion-box"
+                                            style="display: none; top: 42px; max-height: 300px;"></div>
+                                    </div>
+
                                     <input type="text" id="flipSearchInput" class="input-control" style="width: 180px;"
-                                        placeholder="搜索成员或内容..." oninput="applyFlipSearch()">
+                                        placeholder="搜索内容..." oninput="applyFlipSearch()">
 
                                     <button class="btn btn-secondary" style="padding: 0 20px;"
                                         onclick="updateLatestFlips()">
@@ -2769,7 +2816,7 @@
                                 <div class="maskword-settings-head">
                                     <div>
                                         <h3 style="margin: 0; color: var(--text);">屏蔽词检测</h3>
-                                        <div class="maskword-settings-desc">口袋48屏蔽词检测，虽然牙牙消息绕过了屏蔽词检测。</div>
+                                        <div class="maskword-settings-desc">口袋48屏蔽词检测，虽然牙牙消息绕过了屏蔽词检测</div>
                                     </div>
                                     <button id="btn-maskword-check" class="btn btn-primary btn-sm"
                                         onclick="checkMaskwordText()">检测文本</button>
@@ -2779,13 +2826,29 @@
                                     placeholder="请输入要检测的内容"></textarea>
                                 <div id="maskword-result" class="maskword-result" hidden></div>
                             </div>
+                            <div class="Box-row" style="margin-bottom: 30px;">
+                                <h3 style="margin-top: 0; color: var(--text);">代理设置</h3>
+
+                                <div
+                                    style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                                    <div>
+                                        <label
+                                            style="display:block; font-weight:bold; color:var(--text);">代理请求</label>
+                                        <span style="font-size: 12px; color: var(--text-sub);">海外网络无法直连口袋48接口时，通过 api.gnz.hk 代为请求</span>
+                                    </div>
+                                    <label style="display: inline-flex; align-items: center; gap: 10px; color: var(--text); white-space: nowrap; font-size: 16px; line-height: 1;">
+                                        <input type="checkbox" id="use-yaya-api-proxy" onchange="saveYayaApiProxySetting()" style="width: 16px; height: 16px; margin: 0; transform: translateY(1px);">
+                                        <span>使用 yaya-api 代理</span>
+                                    </label>
+                                </div>
+                            </div>
                             <div class="Box-row">
                                 <div
                                     style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 15px;">
                                     <div>
                                         <h3 style="margin: 0; color: var(--text);">IP检测</h3>
                                         <div style="font-size: 12px; color: var(--text-sub); margin-top: 6px;">
-                                            分别检测国内直连、通用出口及 Google 代理通道的 IP 归属。
+                                            分别检测国内直连、通用出口及 Google 代理通道的 IP 归属
                                         </div>
                                     </div>
                                     <button id="btn-check-all" class="btn btn-primary btn-sm"
@@ -2855,6 +2918,17 @@
                 <span class="close-btn" onclick="closeContextModal()">×</span>
             </div>
             <div class="modal-body" id="contextListContainer" style="background: var(--bg); padding: 20px;"></div>
+        </div>
+    </div>
+    <div class="modal-overlay" id="followedUserProfileModal" onclick="if(event.target===this) closeFollowedUserProfile()">
+        <div class="modal-content followed-user-profile-modal">
+            <div class="modal-header">
+                <span class="modal-title">用户主页</span>
+                <span class="close-btn" onclick="closeFollowedUserProfile()">×</span>
+            </div>
+            <div class="modal-body followed-user-profile-body" id="followed-user-profile-body">
+                <div class="empty-state">正在加载...</div>
+            </div>
         </div>
     </div>
     <div class="modal-overlay" id="imageModal" onclick="closeImageModal()"

@@ -1,47 +1,43 @@
-        (function () {
-            const settingsApi = window.desktop && window.desktop.appSettings ? window.desktop.appSettings : null;
-            const savedTheme = settingsApi && typeof settingsApi.getSettingValueSync === 'function'
-                ? String(settingsApi.getSettingValueSync('theme', 'light') || 'light')
-                : (localStorage.getItem('theme') || 'light');
-            const savedBg = settingsApi && typeof settingsApi.getBackgroundUrlSync === 'function'
-                ? settingsApi.getBackgroundUrlSync()
-                : localStorage.getItem('custom_bg_data');
-            const DEFAULT_BACKGROUND_URL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-            const THEME_STYLE_ID = 'yaya-theme-init-style';
+(function () {
+    const settingsApi = window.desktop && window.desktop.appSettings ? window.desktop.appSettings : null;
+    const savedTheme =
+        settingsApi && typeof settingsApi.getSettingValueSync === 'function'
+            ? String(settingsApi.getSettingValueSync('theme', 'light') || 'light')
+            : localStorage.getItem('theme') || 'light';
+    const savedBg =
+        settingsApi && typeof settingsApi.getBackgroundUrlSync === 'function' ? settingsApi.getBackgroundUrlSync() : localStorage.getItem('custom_bg_data');
+    const DEFAULT_BACKGROUND_URL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    const THEME_STYLE_ID = 'yaya-theme-init-style';
 
-            const BG_STYLE_ID = 'yaya-custom-bg-style';
+    const BG_STYLE_ID = 'yaya-custom-bg-style';
 
-            function ensureStyleNode(id) {
-                let styleEl = document.getElementById(id);
-                if (!styleEl) {
-                    styleEl = document.createElement('style');
-                    styleEl.id = id;
-                    document.head.appendChild(styleEl);
-                }
-                return styleEl;
-            }
+    function ensureStyleNode(id) {
+        let styleEl = document.getElementById(id);
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = id;
+            document.head.appendChild(styleEl);
+        }
+        return styleEl;
+    }
 
-            function applyThemeBootStyle(theme) {
-                const styleEl = ensureStyleNode(THEME_STYLE_ID);
-                styleEl.textContent = theme === 'dark'
-                    ? 'html, body { background-color: #1e1e1e !important; }'
-                    : '';
-            }
+    function applyThemeBootStyle(theme) {
+        const styleEl = ensureStyleNode(THEME_STYLE_ID);
+        styleEl.textContent = theme === 'dark' ? 'html, body { background-color: #1e1e1e !important; }' : '';
+    }
 
-            function applyCustomBackground(bgData) {
-                const styleEl = ensureStyleNode(BG_STYLE_ID);
-                const nextBg = bgData || DEFAULT_BACKGROUND_URL;
+    function applyCustomBackground(bgData) {
+        const styleEl = ensureStyleNode(BG_STYLE_ID);
+        const nextBg = bgData || DEFAULT_BACKGROUND_URL;
 
-                const escapedBg = String(nextBg)
-                    .replace(/\\/g, '\\\\')
-                    .replace(/"/g, '\\"');
-                styleEl.textContent = `html, body { background-image: url("${escapedBg}") !important; background-size: cover !important; background-position: center !important; background-repeat: no-repeat !important; }`;
-            }
+        const escapedBg = String(nextBg).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        styleEl.textContent = `html, body { background-image: url("${escapedBg}") !important; background-size: cover !important; background-position: center !important; background-repeat: no-repeat !important; }`;
+    }
 
-            window.__applyYayaThemeBootStyle = applyThemeBootStyle;
-            window.__applyYayaCustomBackground = applyCustomBackground;
+    window.__applyYayaThemeBootStyle = applyThemeBootStyle;
+    window.__applyYayaCustomBackground = applyCustomBackground;
 
-            document.documentElement.setAttribute('data-theme', savedTheme);
-            applyThemeBootStyle(savedTheme);
-            applyCustomBackground(savedBg);
-        })();
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    applyThemeBootStyle(savedTheme);
+    applyCustomBackground(savedBg);
+})();

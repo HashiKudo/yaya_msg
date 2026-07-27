@@ -1,0 +1,422 @@
+        :root {
+            --db-bg: transparent;
+            --db-card: rgba(255, 255, 255, 0.9);
+            --db-card-strong: rgba(255, 255, 255, 0.97);
+            --db-soft: rgba(255, 255, 255, 0.82);
+            --db-border: rgba(203, 213, 225, 0.78);
+            --db-text: #24292e;
+            --db-text-sub: #667085;
+            --db-accent: #9b6a9c;
+        }
+
+        .dark {
+            --db-bg: transparent;
+            --db-card: rgba(22, 27, 34, 0.78);
+            --db-card-strong: rgba(22, 27, 34, 0.9);
+            --db-soft: rgba(13, 17, 23, 0.62);
+            --db-border: rgba(48, 54, 61, 0.62);
+            --db-text: #c9d1d9;
+            --db-text-sub: #8b949e;
+            --db-accent: #b583b6;
+        }
+
+        .db-app {
+            background: transparent !important;
+            color: var(--db-text);
+            min-height: auto !important;
+        }
+
+        .db-main {
+            max-width: none !important;
+            padding: 0 !important;
+        }
+
+        .db-page-shell {
+            width: 100%;
+            max-width: 1680px !important;
+            box-sizing: border-box;
+        }
+
+        .db-app .db-header {
+            position: static !important;
+            top: auto !important;
+            z-index: auto !important;
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            margin-bottom: 18px;
+        }
+
+        .db-tabs-shell {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            padding: 12px 16px 0;
+            border-radius: 16px;
+            background: var(--db-card);
+            border: 1px solid var(--db-border);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+            backdrop-filter: blur(12px);
+        }
+
+        .db-app .bg-white,
+        .db-app .bg-gray-50,
+        .db-app .bg-gray-100 {
+            background: var(--db-card) !important;
+        }
+
+        .dark .db-app .dark\:bg-gray-900,
+        .dark .db-app .dark\:bg-gray-800 {
+            background: var(--db-card) !important;
+        }
+
+        .db-app .border-gray-200,
+        .db-app .border-gray-100,
+        .db-app .border-dashed {
+            border-color: var(--db-border) !important;
+        }
+
+        .db-app .text-gray-900,
+        .db-app .text-gray-800,
+        .db-app .text-gray-700,
+        .dark .db-app .dark\:text-gray-100,
+        .dark .db-app .dark\:text-gray-200 {
+            color: var(--db-text) !important;
+        }
+
+        .db-app .text-gray-600,
+        .db-app .text-gray-500,
+        .db-app .text-gray-400,
+        .dark .db-app .dark\:text-gray-300,
+        .dark .db-app .dark\:text-gray-400 {
+            color: var(--db-text-sub) !important;
+        }
+
+        .db-app .shadow-sm,
+        .db-app .hover\:shadow-md:hover {
+            box-shadow: 0 8px 22px rgba(0, 0, 0, 0.05) !important;
+        }
+
+        .db-app .text-pink-500,
+        .db-app .text-pink-600,
+        .dark .db-app .dark\:text-pink-400 {
+            color: var(--db-accent) !important;
+        }
+
+        .db-app .db-lyrics-modal {
+            background: rgba(255, 255, 255, 0.98) !important;
+            color: #1f2937 !important;
+            border: 1px solid rgba(148, 163, 184, 0.42) !important;
+        }
+
+        .db-app .db-lyrics-modal-header {
+            background: rgba(255, 255, 255, 0.98) !important;
+            border-bottom-color: rgba(203, 213, 225, 0.82) !important;
+        }
+
+        .db-app .db-lyrics-modal-body {
+            background: rgba(255, 255, 255, 0.94) !important;
+            color: #374151 !important;
+        }
+
+        .db-app .db-lyrics-modal-body .db-lyrics-lines {
+            color: #374151 !important;
+        }
+
+        .dark .db-app .db-lyrics-modal {
+            background: rgba(17, 24, 39, 0.98) !important;
+            color: #f3f4f6 !important;
+            border-color: rgba(55, 65, 81, 0.88) !important;
+        }
+
+        .dark .db-app .db-lyrics-modal-header {
+            background: rgba(17, 24, 39, 0.98) !important;
+            border-bottom-color: rgba(55, 65, 81, 0.82) !important;
+        }
+
+        .dark .db-app .db-lyrics-modal-body {
+            background: rgba(17, 24, 39, 0.94) !important;
+            color: #d1d5db !important;
+        }
+
+        .dark .db-app .db-lyrics-modal-body .db-lyrics-lines {
+            color: #d1d5db !important;
+        }
+
+        .db-app .db-member-modal {
+            background:
+                radial-gradient(circle at 16% 8%, rgba(155, 106, 156, 0.07), transparent 30%),
+                linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.95)) !important;
+            border: 1px solid rgba(148, 163, 184, 0.45) !important;
+            color: #1f2937 !important;
+            box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22) !important;
+        }
+
+        .db-app .db-member-modal-header {
+            background: rgba(255, 255, 255, 0.96) !important;
+            border-bottom-color: rgba(148, 163, 184, 0.24) !important;
+            backdrop-filter: blur(14px);
+        }
+
+        .db-app .db-member-modal-body {
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.46), rgba(241, 245, 249, 0.38));
+        }
+
+        .db-app .db-member-info-item {
+            background: rgba(248, 250, 252, 0.92) !important;
+            border-color: rgba(203, 213, 225, 0.72) !important;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+        }
+
+        .db-app .db-member-info-item:hover {
+            background: rgba(255, 255, 255, 0.98) !important;
+            box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08) !important;
+        }
+
+        .db-app .db-member-pinyin {
+            background: rgba(241, 245, 249, 0.92) !important;
+            color: #64748b !important;
+            border: 1px solid rgba(203, 213, 225, 0.58);
+        }
+
+        .dark .db-app .db-member-modal {
+            background:
+                radial-gradient(circle at 16% 8%, rgba(181, 131, 182, 0.13), transparent 30%),
+                linear-gradient(180deg, rgba(17, 24, 39, 0.98), rgba(13, 17, 23, 0.95)) !important;
+            border-color: rgba(55, 65, 81, 0.88) !important;
+            color: #f3f4f6 !important;
+        }
+
+        .dark .db-app .db-member-modal-header {
+            background: rgba(17, 24, 39, 0.96) !important;
+            border-bottom-color: rgba(55, 65, 81, 0.8) !important;
+        }
+
+        .dark .db-app .db-member-modal-body {
+            background: linear-gradient(180deg, rgba(17, 24, 39, 0.35), rgba(13, 17, 23, 0.28));
+        }
+
+        .dark .db-app .db-member-info-item {
+            background: rgba(31, 41, 55, 0.78) !important;
+            border-color: rgba(75, 85, 99, 0.8) !important;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        }
+
+        .dark .db-app .db-member-pinyin {
+            background: rgba(31, 41, 55, 0.82) !important;
+            color: #cbd5e1 !important;
+            border-color: rgba(75, 85, 99, 0.76);
+        }
+
+        .db-app .border-pink-500 {
+            border-color: var(--db-accent) !important;
+        }
+
+        .db-app .focus\:ring-pink-300:focus,
+        .dark .db-app .dark\:focus\:ring-pink-500:focus {
+            --tw-ring-color: color-mix(in srgb, var(--db-accent) 35%, transparent) !important;
+        }
+
+        .db-app .bg-gradient-to-r,
+        .db-theme-toggle {
+            display: none !important;
+        }
+
+        @media (max-width: 640px) {
+            .db-app {
+                width: 100%;
+                max-width: 100%;
+                overflow-x: hidden;
+                padding-bottom: max(96px, env(safe-area-inset-bottom));
+            }
+
+            .db-page-shell {
+                width: 100%;
+                max-width: 100% !important;
+                min-width: 0;
+                padding-left: 12px !important;
+                padding-right: 12px !important;
+            }
+
+            .db-app .db-header {
+                margin-bottom: 12px;
+            }
+
+            .db-tabs-shell {
+                width: 100%;
+                min-width: 0;
+                padding: 8px;
+                border-radius: 14px;
+                overflow: hidden;
+            }
+
+            .db-tabs-shell>div {
+                display: grid !important;
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+                width: 100% !important;
+                min-width: 0;
+                gap: 6px !important;
+            }
+
+            .db-tabs-shell button {
+                width: 100% !important;
+                min-width: 0;
+                padding: 8px 6px !important;
+                font-size: 13px !important;
+                border-radius: 10px;
+            }
+
+            .db-tabs-shell button>div {
+                gap: 5px;
+            }
+
+            .db-tabs-shell svg {
+                width: 14px;
+                height: 14px;
+            }
+
+            .db-tabs-shell .rounded-full {
+                padding-left: 6px !important;
+                padding-right: 6px !important;
+            }
+
+            .db-app main.db-page-shell {
+                padding-top: 0 !important;
+                padding-bottom: 24px !important;
+            }
+
+            .db-app .grid {
+                min-width: 0;
+            }
+
+            .db-app .grid.grid-cols-1.md\:grid-cols-3 {
+                gap: 10px !important;
+                margin-bottom: 12px !important;
+            }
+
+            .db-app .grid.grid-cols-1.md\:grid-cols-3>div {
+                padding: 12px !important;
+                border-radius: 14px !important;
+            }
+
+            .db-app .grid.grid-cols-1.md\:grid-cols-3>div>div:first-child {
+                padding: 10px !important;
+            }
+
+            .db-app .grid.grid-cols-1.md\:grid-cols-3 h3 {
+                font-size: 24px !important;
+                line-height: 1.1;
+            }
+
+            .db-app .grid.grid-cols-1.md\:grid-cols-3 p {
+                font-size: 13px !important;
+            }
+
+            .db-app input,
+            .db-app button {
+                min-width: 0;
+            }
+
+            .db-app input[type="text"] {
+                height: 44px;
+                padding-top: 0 !important;
+                padding-bottom: 0 !important;
+                font-size: 14px !important;
+            }
+
+            .db-app .flex.flex-col.lg\:flex-row {
+                gap: 10px !important;
+            }
+
+            .db-app .flex.flex-col.sm\:flex-row {
+                width: 100%;
+                gap: 8px !important;
+            }
+
+            .db-app .relative.w-full.sm\:w-auto.min-w-\[120px\] {
+                min-width: 0 !important;
+                width: 100% !important;
+            }
+
+            .db-app .bg-gray-100.p-1.rounded-full.flex {
+                width: 100% !important;
+            }
+
+            .db-app .bg-gray-100.p-1.rounded-full.flex button {
+                padding-left: 10px !important;
+                padding-right: 10px !important;
+            }
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: #e5e7eb;
+            border-radius: 20px;
+        }
+
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: #4b5563;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background-color: #d1d5db;
+        }
+
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background-color: #6b7280;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        .animate-backdrop {
+            animation: fadeIn 0.2s ease-out forwards;
+        }
+
+        @keyframes modalPop {
+            from {
+                opacity: 0;
+                transform: scale(0.96) translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+            }
+        }
+
+        .animate-modal {
+            animation: modalPop 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        @keyframes contentSlide {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-content {
+            animation: contentSlide 0.4s ease-out forwards;
+            opacity: 0;
+        }

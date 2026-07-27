@@ -381,6 +381,47 @@ async function postPocketContent(url, payload, options = {}) {
     }
 }
 
+function normalizePocketApiPath(value) {
+    const apiPath = String(value || '').trim();
+    if (!apiPath.startsWith('/') || apiPath.includes('://') || apiPath.includes('..')) {
+        throw new Error('无效的 Pocket API 路径');
+    }
+    return apiPath;
+}
+
+function normalizePocketApiPostData(value) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return value;
+    }
+
+    try {
+        const parsed = JSON.parse(String(value || '{}'));
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (error) {
+        return {};
+    }
+}
+
+async function fetchPocketApiPath({ path: apiPath, postData } = {}) {
+    try {
+        const response = await axios.post(
+            `https://pocketapi.48.cn${normalizePocketApiPath(apiPath)}`,
+            normalizePocketApiPostData(postData),
+            { headers: createModernHeaders() }
+        );
+        return response.data || { status: 500, content: {}, message: 'Pocket API 返回为空' };
+    } catch (error) {
+        const response = error && error.response;
+        const data = response && response.data;
+        if (data && typeof data === 'object') return data;
+        return {
+            status: response && response.status ? response.status : 500,
+            content: {},
+            message: getApiMessage(data) || error.message || 'Pocket API 请求失败'
+        };
+    }
+}
+
 function parseMaskWordsText(text) {
     return String(text || '')
         .replace(/^\uFEFF/, '')
@@ -1872,16 +1913,22 @@ async function unfollowMember({ token, pa, memberId }) {
     }
 }
 
-async function fetchLiveList({ token, pa, groupId = 0, next = 0, record = false, debug = false }) {
+async function fetchLiveList({ token, pa, groupId = 0, userId = '', next = 0, record = false, debug = false }) {
+    const payload = {
+        debug: !!debug,
+        next: Number(next) || 0,
+        record: !!record
+    };
+    if (userId !== undefined && userId !== null && userId !== '') {
+        payload.userId = Number(userId) || String(userId);
+    } else {
+        payload.groupId = Number(groupId) || 0;
+    }
+
     return postPocketContent(
         'https://pocketapi.48.cn/live/api/v1/live/getLiveList',
-        {
-            groupId: Number(groupId) || 0,
-            debug: !!debug,
-            next: Number(next) || 0,
-            record: !!record
-        },
-        { token, pa, errorMessage: '获取直播列表失败' }
+        payload,
+        { token, pa, headersFactory: createModernHeaders, errorMessage: '获取直播列表失败', largeNumbers: true }
     );
 }
 
@@ -1983,14 +2030,50 @@ async function fetchPersonMeleeRankPage({ token, pa, resId }) {
     );
 }
 
-async function fetchPostImageList({ token, pa, userId, nextTime = 0 }) {
+async function fetchPostImageList({ token, pa, userId, nextId = 0, nextTime = 0, limit = 20 }) {
     return postPocketContent(
         'https://pocketapi.48.cn/posts/api/v1/posts/img/list',
         {
-            userId: String(userId || ''),
-            nextTime: Number(nextTime) || 0
+            nextId: Number(nextId || nextTime) || 0,
+            limit: Number(limit) || 20,
+            userId: Number(userId) || 0
         },
-        { token, pa, errorMessage: '获取成员图片动态失败' }
+        { token, pa, headersFactory: createPocketAndroidHeaders, errorMessage: '获取主页相册失败', largeNumbers: true }
+    );
+}
+
+async function fetchPostVideoList({ token, pa, userId, nextId = 0, limit = 20 }) {
+    return postPocketContent(
+        'https://pocketapi.48.cn/posts/api/v2/posts/video/list',
+        {
+            nextId: Number(nextId) || 0,
+            limit: Number(limit) || 20,
+            userId: Number(userId) || 0
+        },
+        { token, pa, headersFactory: createPocketAndroidHeaders, errorMessage: '获取主页视频失败', largeNumbers: true }
+    );
+}
+
+async function fetchPostTimelineHome({ token, pa, userId, nextId = 0, limit = 20 }) {
+    return postPocketContent(
+        'https://pocketapi.48.cn/posts/api/v1/posts/timeline/home',
+        {
+            nextId: Number(nextId) || 0,
+            limit: Number(limit) || 20,
+            userId: Number(userId) || 0
+        },
+        { token, pa, headersFactory: createPocketAndroidHeaders, errorMessage: '获取主页动态失败', largeNumbers: true }
+    );
+}
+
+async function fetchPostTimelineHomeNew({ token, pa, userId, nextId = 0 }) {
+    return postPocketContent(
+        'https://pocketapi.48.cn/posts/api/v1/posts/timeline/home/new',
+        {
+            nextId: String(nextId || 0),
+            userId: Number(userId) || String(userId || '')
+        },
+        { token, pa, headersFactory: createModernHeaders, errorMessage: '获取成员动态失败', largeNumbers: true }
     );
 }
 
@@ -2051,13 +2134,13 @@ async function fetchConversationPage({ token, pa, nextTime = 0, limit = 20 }) {
 async function fetchUserHomeInfo({ token, pa, userId }) {
     const payload = {};
     if (userId !== undefined && userId !== null && userId !== '') {
-        payload.userId = String(userId);
+        payload.userId = Number(userId);
     }
 
     return postPocketContent(
         'https://pocketapi.48.cn/user/api/v1/user/info/home',
         payload,
-        { token, pa, headersFactory: createModernHeaders, errorMessage: '获取用户主页信息失败' }
+        { token, pa, headersFactory: createPocketAndroidHeaders, errorMessage: '获取用户主页信息失败' }
     );
 }
 
@@ -2311,6 +2394,20 @@ async function fetchPageantryBuyStarList({ token, pa, starId = '', starName = ''
         'https://pocketapi.48.cn/ai-fairyland/api/pageantry/2026/v1/get/buy_star/list',
         { starId: String(starId || ''), starName: String(starName || '') },
         { token, pa, headersFactory: createPageantryHeaders, errorMessage: '获取计分成员列表失败' }
+    );
+}
+
+async function fetchPageantryHonorCardInfo({ token, pa, userId, sortType = 0 } = {}) {
+    if (!token) return missingToken();
+    if (!userId) return { success: false, msg: '缺少用户 ID' };
+
+    return postPocketContent(
+        'https://pocketapi.48.cn/ai-fairyland/api/pageantry/2026/v1/user/honor/card/info',
+        {
+            sortType: Number(sortType) || 0,
+            userId: String(userId)
+        },
+        { token, pa, headersFactory: createPocketAndroidHeaders, errorMessage: '获取荣耀卡失败', largeNumbers: true }
     );
 }
 
@@ -2613,6 +2710,9 @@ module.exports = {
     fetchMeleeYearRankPage,
     fetchPersonMeleeRankPage,
     fetchPostImageList,
+    fetchPostVideoList,
+    fetchPostTimelineHome,
+    fetchPostTimelineHomeNew,
     fetchChatroomHomeownerMessages,
     fetchMemberWeiboMessages,
     fetchMemberDynamicMessages,
@@ -2629,6 +2729,7 @@ module.exports = {
     bindElectionSg,
     fetchPageantryRareTreasures,
     fetchPageantryBuyStarList,
+    fetchPageantryHonorCardInfo,
     fetchArea48Newest,
     fetchArea48Recommend,
     fetchArea48TopicInfo,
@@ -2640,6 +2741,7 @@ module.exports = {
     deleteArea48Comment,
     createArea48Post,
     fetchPocketMaskWords,
+    fetchPocketApiPath,
     fetchScoreOfficialBundle,
     runScoreOfficialAction
 };

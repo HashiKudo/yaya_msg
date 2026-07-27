@@ -87,6 +87,8 @@
         let startFollowedRoomsPolling;
         let stopFollowedRoomsPolling;
         let resetFollowedRoomsState;
+        let closeFollowedProfileVideo;
+        let openFollowedProfileVideo;
         let resetPrivateMessageListState;
         let handleOpenLiveSearch;
         let selectOpenLiveMember;
@@ -118,6 +120,7 @@
         let handleTripSearch;
         let selectTripMember;
         let fetchTripList;
+        let ensureTripListLoaded;
         let handleRoomRadioSearch;
         let selectRoomRadioMember;
         let connectRoomRadio;
@@ -181,6 +184,7 @@
         let refreshFlipUserBalance;
         let resetClipTool;
         let selectFlipAnswer;
+        let selectFlipMemberFilter;
         let selectFlipPrivacy;
         let selectFlipSendMember;
         let selectFlipType;
@@ -198,6 +202,7 @@
         let toggleGiftPanel;
         let toggleFlipAnswerDropdown;
         let toggleFlipDateDropdown;
+        let toggleFlipMemberFilterDropdown;
         let toggleFlipPrivacyDropdown;
         let toggleFlipTypeDropdown;
         let toggleFlipVisibilityDropdown;
@@ -251,7 +256,14 @@
         let selectQuickFollowMember;
         let executeQuickAction;
         let backToFollowedRoomList;
+        let backFollowedUserProfile;
         let openFollowedChat;
+        let openFollowedProfilePrivateMessage;
+        let openFollowedProfileRoom;
+        let openFollowedUserProfile;
+        let closeFollowedUserProfile;
+        let switchFollowedUserProfileTab;
+        let toggleFollowedProfileFollow;
         let toggleFollowedRoomType;
         let jumpToFullRoom;
         let toggleFollowedChatMode;
@@ -1264,6 +1276,9 @@
                         if (typeof loadCustomPaths === 'function') {
                             loadCustomPaths();
                         }
+                        if (typeof loadYayaApiProxySetting === 'function') {
+                            loadYayaApiProxySetting();
+                        }
                     }
 
                 } else if (viewName === 'login') {
@@ -1366,6 +1381,9 @@
                     setSidebarHomeMode(false);
                     toggleSidebarMode('login');
                     if (tripView) tripView.style.display = 'block';
+                    if (typeof ensureTripListLoaded === 'function') {
+                        setTimeout(() => ensureTripListLoaded(), 0);
+                    }
 
                 } else if (viewName === 'openlive') {
                     setGlobalSidebarVisible(false);
@@ -1633,7 +1651,7 @@
         }
         let bestNameMapForDisplay = new Map();
 
-        const DATA_BASE_URL = "https://yaya-data.pages.dev";
+        const DATA_BASE_URL = "https://data.gnz.hk";
         const MUSIC_LYRICS_BASE_URL = `${DATA_BASE_URL}/lyrics`;
         const MUSIC_LYRICS_INDEX_URL = `${DATA_BASE_URL}/lyrics-index.json`;
         const BILIBILI_LIVE_CONFIG_URL = `${DATA_BASE_URL}/bilibili-live.json`;
@@ -2104,9 +2122,8 @@
         const userListContainer = document.getElementById('userListContainer');
         const dateModal = document.getElementById('dateModal');
         const dateListContainer = document.getElementById('dateListContainer');
-        const yearSelect = document.getElementById('yearSelect');
-        const monthSelect = document.getElementById('monthSelect');
-        const daySelect = document.getElementById('daySelect');
+        const messageDateFromInput = document.getElementById('message-date-from');
+        const messageDateToInput = document.getElementById('message-date-to');
         const themeBtn = document.getElementById('themeBtn');
         const contextModal = document.getElementById('contextModal');
         const contextListContainer = document.getElementById('contextListContainer');
@@ -2204,43 +2221,12 @@
                 }));
             }
 
-            return new Promise((resolve, reject) => {
-                const options = {
-                    hostname: 'pocketapi.48.cn',
-                    port: 443,
-                    path: path,
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'app-info': '{"vendor":"google","deviceId":"123","appVersion":"6.0.0","appBuild":"123","osType":"android","osVersion":"10.0.0","deviceName":"pixel"}'
-                    }
-                };
-                const req = https.request(options, (res) => {
-                    let data = '';
-                    res.on('data', (chunk) => {
-                        data += chunk;
-                    });
-                    res.on('end', () => {
-                        try {
-                            const json = JSON.parse(data);
-                            resolve(json);
-                        } catch (e) {
-                            resolve({
-                                status: 500,
-                                content: {}
-                            });
-                        }
-                    });
-                });
-                req.on('error', (e) => {
-                    resolve({
-                        status: 500,
-                        content: {}
-                    });
-                });
-                req.write(postData);
-                req.end();
-            });
+            return ipcRenderer.invoke('fetch-pocket-api', { path, postData })
+                .catch(error => ({
+                    status: 500,
+                    content: {},
+                    message: error.message || 'Pocket API 请求失败'
+                }));
         }
 
         function escapePrivateMessageHtml(value) {
@@ -2323,12 +2309,21 @@
 
         ({
             backToFollowedRoomList,
+            backFollowedUserProfile,
+            closeFollowedUserProfile,
             flushFollowedPendingMessages,
             getActiveFollowedChannel,
             jumpToFullRoom,
             loadFollowedChatPage,
             openFollowedChat,
+            openFollowedProfilePrivateMessage,
+            openFollowedProfileRoom,
+            openFollowedProfileVideo,
+            openFollowedUserProfile,
             playSharedLiveFromMessage,
+            closeFollowedProfileVideo,
+            switchFollowedUserProfileTab,
+            toggleFollowedProfileFollow,
             toggleFollowedChatMode,
             toggleFollowedRoomType
         } = window.YayaRendererFeatures.createFollowedChatFeature({
@@ -2338,7 +2333,9 @@
             getAdaptivePollDelay: () => getAdaptivePollDelay(),
             getAppToken: () => getCurrentAppToken(),
             getMemberData: () => memberData || [],
+            getOptimizedThumbUrl,
             ipcRenderer,
+            loadMemberData,
             playArchiveFromMessage: (...args) => typeof playArchiveFromMessage === 'function'
                 ? playArchiveFromMessage(...args)
                 : undefined,
@@ -2353,10 +2350,19 @@
                 : undefined
         }));
         window.backToFollowedRoomList = backToFollowedRoomList;
+        window.backFollowedUserProfile = backFollowedUserProfile;
         window.flushFollowedPendingMessages = flushFollowedPendingMessages;
         window.jumpToFullRoom = jumpToFullRoom;
         window.loadFollowedChatPage = loadFollowedChatPage;
         window.openFollowedChat = openFollowedChat;
+        window.openFollowedProfilePrivateMessage = openFollowedProfilePrivateMessage;
+        window.openFollowedProfileRoom = openFollowedProfileRoom;
+        window.openFollowedProfileVideo = openFollowedProfileVideo;
+        window.openFollowedUserProfile = openFollowedUserProfile;
+        window.closeFollowedUserProfile = closeFollowedUserProfile;
+        window.closeFollowedProfileVideo = closeFollowedProfileVideo;
+        window.switchFollowedUserProfileTab = switchFollowedUserProfileTab;
+        window.toggleFollowedProfileFollow = toggleFollowedProfileFollow;
         window.playSharedLiveFromMessage = playSharedLiveFromMessage;
         window.toggleFollowedChatMode = toggleFollowedChatMode;
         window.toggleFollowedRoomType = toggleFollowedRoomType;
@@ -2831,7 +2837,8 @@
         ({
             handleTripSearch,
             selectTripMember,
-            fetchTripList
+            fetchTripList,
+            ensureTripListLoaded
         } = window.YayaRendererFeatures.createTripFeature({
             getAppToken: () => getCurrentAppToken(),
             getMemberData: () => window.memberData || [],
@@ -2851,6 +2858,7 @@
         window.handleTripSearch = handleTripSearch;
         window.selectTripMember = selectTripMember;
         window.fetchTripList = fetchTripList;
+        window.ensureTripListLoaded = ensureTripListLoaded;
 
         ({
             handleRoomRadioSearch,
@@ -2995,6 +3003,7 @@
             loadFlipList,
             refreshFlipUserBalance,
             selectFlipAnswer,
+            selectFlipMemberFilter,
             selectFlipPrivacy,
             selectFlipSendMember,
             selectFlipType,
@@ -3010,6 +3019,7 @@
             shiftFlipDateCalendarMonth,
             toggleFlipAnswerDropdown,
             toggleFlipDateDropdown,
+            toggleFlipMemberFilterDropdown,
             toggleFlipPrivacyDropdown,
             toggleFlipTypeDropdown,
             toggleFlipVisibilityDropdown,
@@ -3038,6 +3048,8 @@
             setCurrentFlipTimeFrom: value => { currentFlipTimeFrom = value; },
             getCurrentFlipTimeTo: () => currentFlipTimeTo,
             setCurrentFlipTimeTo: value => { currentFlipTimeTo = value; },
+            getCurrentFlipMemberKeyword: () => currentFlipMemberKeyword,
+            setCurrentFlipMemberKeyword: value => { currentFlipMemberKeyword = value; },
             getCurrentSearchKeyword: () => currentSearchKeyword,
             setCurrentSearchKeyword: value => { currentSearchKeyword = value; },
             getIsFetchingFlips: () => isFetchingFlips,
@@ -3066,6 +3078,7 @@
         window.loadFlipList = loadFlipList;
         window.refreshFlipUserBalance = refreshFlipUserBalance;
         window.selectFlipAnswer = selectFlipAnswer;
+        window.selectFlipMemberFilter = selectFlipMemberFilter;
         window.selectFlipPrivacy = selectFlipPrivacy;
         window.selectFlipSendMember = selectFlipSendMember;
         window.selectFlipType = selectFlipType;
@@ -3081,6 +3094,7 @@
         window.shiftFlipDateCalendarMonth = shiftFlipDateCalendarMonth;
         window.toggleFlipAnswerDropdown = toggleFlipAnswerDropdown;
         window.toggleFlipDateDropdown = toggleFlipDateDropdown;
+        window.toggleFlipMemberFilterDropdown = toggleFlipMemberFilterDropdown;
         window.toggleFlipPrivacyDropdown = toggleFlipPrivacyDropdown;
         window.toggleFlipTypeDropdown = toggleFlipTypeDropdown;
         window.toggleFlipVisibilityDropdown = toggleFlipVisibilityDropdown;
@@ -3715,8 +3729,8 @@
             if (giftAnalysisBtn) giftAnalysisBtn.disabled = false;
             if (speechAnalysisBtn) speechAnalysisBtn.disabled = false;
 
-            const yDisp = document.getElementById('yearSelectDisplay');
-            if (yDisp) yDisp.disabled = false;
+            const dateTrigger = document.querySelector('#message-date-wrapper .flip-date-trigger');
+            if (dateTrigger) dateTrigger.disabled = false;
         }
 
         let returnToOpenLive = false;
@@ -4083,6 +4097,40 @@
             await goToPage(nextPage, isAppend);
         }
 
+        function padVodDatePart(value) {
+            return String(value || '').padStart(2, '0');
+        }
+
+        function buildVodDateSearchTerms(rawTime) {
+            const timestamp = Number(rawTime);
+            if (!Number.isFinite(timestamp)) return [];
+
+            const d = new Date(timestamp);
+            if (Number.isNaN(d.getTime())) return [];
+
+            const year = String(d.getFullYear());
+            const month = padVodDatePart(d.getMonth() + 1);
+            const day = padVodDatePart(d.getDate());
+            const monthRaw = String(d.getMonth() + 1);
+            const dayRaw = String(d.getDate());
+
+            return [
+                `${year}-${month}-${day}`,
+                `${year}/${month}/${day}`,
+                `${year}.${month}.${day}`,
+                `${year}${month}${day}`,
+                `${year}年${monthRaw}月${dayRaw}日`,
+                `${year}年${month}月${day}日`,
+                `${month}-${day}`,
+                `${month}/${day}`,
+                `${month}.${day}`,
+                `${monthRaw}-${dayRaw}`,
+                `${monthRaw}/${dayRaw}`,
+                `${monthRaw}.${dayRaw}`,
+                `${monthRaw}月${dayRaw}日`
+            ];
+        }
+
         function getFilteredVODList() {
             const list = vodState.list;
             const memberFilterInput = document.getElementById('vod-member-filter');
@@ -4109,13 +4157,9 @@
                 const title = String(item.title || item.liveTitle || '').toLowerCase();
                 const userId = String(u.userId || u.id || item.userId || item.id || '');
                 const memberNames = getMemberNamesById(userId).map(v => String(v).toLowerCase()).join(' ');
-                let timeStr = '';
                 const rawTime = item.startTime || item.ctime;
-                if (rawTime) {
-                    const d = new Date(Number(rawTime));
-                    timeStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-                }
-                const searchableText = [name, memberNames, title, userId, timeStr].filter(Boolean).join(' ');
+                const dateSearchTerms = buildVodDateSearchTerms(rawTime).map(v => v.toLowerCase()).join(' ');
+                const searchableText = [name, memberNames, title, userId, dateSearchTerms].filter(Boolean).join(' ');
                 return keywords.every(kw => searchableText.includes(kw));
             });
         }
@@ -5288,96 +5332,288 @@
         }
 
         function initDateSelectors() {
+            availableYears = new Set();
             allPosts.forEach(post => {
                 if (post.year) availableYears.add(post.year);
             });
 
-            const yearList = document.getElementById('year-dropdown');
-            let html = `<div class="suggestion-item" onclick="selectDateItem('year', 'all', '全部')">全部</div>`;
-
-            Array.from(availableYears).sort().reverse().forEach(y => {
-                html += `<div class="suggestion-item" onclick="selectDateItem('year', '${y}', '${y}年')">${y}年</div>`;
-            });
-            yearList.innerHTML = html;
-
-            resetMonthSelect();
-            resetDaySelect();
+            const trigger = document.querySelector('#message-date-wrapper .flip-date-trigger');
+            if (trigger) trigger.disabled = false;
+            const dropdown = document.getElementById('message-date-dropdown');
+            if (dropdown && dropdown.dataset.keepOpenBound !== 'true') {
+                dropdown.dataset.keepOpenBound = 'true';
+                dropdown.addEventListener('click', event => event.stopPropagation());
+            }
+            syncMessageDateTriggerState();
+            syncMessageDateFieldDisplays();
         }
 
-        function populateMonths(year) {
-            const monthList = document.getElementById('month-dropdown');
-            let html = `<div class="suggestion-item" onclick="selectDateItem('month', 'all', '全年')">全年</div>`;
+        const messageDatePickerState = {
+            activeTarget: 'from',
+            displayYear: null,
+            displayMonth: null
+        };
 
-            const months = new Set();
-            allPosts.forEach(p => {
-                if (p.year == year) months.add(p.month);
-            });
+        const legacyMessageDateParts = {
+            year: 'all',
+            month: 'all',
+            day: 'all'
+        };
 
-            Array.from(months).sort((a, b) => a - b).forEach(m => {
-                html += `<div class="suggestion-item" onclick="selectDateItem('month', '${m}', '${m}月')">${m}月</div>`;
-            });
-            monthList.innerHTML = html;
-
-            resetDaySelect();
+        function padMessageDatePart(value) {
+            return String(value).padStart(2, '0');
         }
 
-        function populateDays(year, month) {
-            const dayList = document.getElementById('day-dropdown');
-            let html = `<div class="suggestion-item" onclick="selectDateItem('day', 'all', '全月')">全月</div>`;
-
-            const days = new Set();
-            allPosts.forEach(p => {
-                if (p.year == year && p.month == month) days.add(p.day);
-            });
-
-            Array.from(days).sort((a, b) => a - b).forEach(d => {
-                html += `<div class="suggestion-item" onclick="selectDateItem('day', '${d}', '${d}日')">${d}日</div>`;
-            });
-            dayList.innerHTML = html;
+        function toMessageDateValue(year, monthIndex, day) {
+            return `${year}-${padMessageDatePart(monthIndex + 1)}-${padMessageDatePart(day)}`;
         }
 
-        function resetMonthSelect() {
-            document.getElementById('monthSelect').value = 'all';
-            document.getElementById('monthSelectDisplay').value = '全年';
-            document.getElementById('monthSelectDisplay').disabled = true;
-            document.getElementById('month-dropdown').style.display = 'none';
+        function parseMessageDateValue(value) {
+            if (!value) return null;
+            const normalized = String(value).trim().replace(/\//g, '-');
+            const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+            if (!match) return null;
+            return {
+                year: Number(match[1]),
+                month: Number(match[2]) - 1,
+                day: Number(match[3])
+            };
         }
 
-        function resetDaySelect() {
-            document.getElementById('daySelect').value = 'all';
-            document.getElementById('daySelectDisplay').value = '全月';
-            document.getElementById('daySelectDisplay').disabled = true;
-            document.getElementById('day-dropdown').style.display = 'none';
+        function formatMessageDateDisplay(value) {
+            return value ? String(value).replace(/-/g, '/') : '请选择';
+        }
+
+        function getMessageDateInput(target) {
+            return target === 'to' ? messageDateToInput : messageDateFromInput;
+        }
+
+        function getMessageDateValue(target) {
+            const input = getMessageDateInput(target);
+            return input ? input.value : '';
+        }
+
+        function parseMessageFilterDate(value, isEnd = false) {
+            if (!value) return null;
+            const normalized = String(value).trim().replace(/\//g, '-');
+            const suffix = isEnd ? 'T23:59:59.999' : 'T00:00:00';
+            const parsed = new Date(`${normalized}${suffix}`).getTime();
+            return Number.isFinite(parsed) ? parsed : null;
+        }
+
+        function getMessagePostTimeMs(post) {
+            const direct = Number(post?.sortTime);
+            if (Number.isFinite(direct) && direct > 0) return direct;
+            const parsedTime = new Date(post?.timeStr || '').getTime();
+            if (Number.isFinite(parsedTime) && parsedTime > 0) return parsedTime;
+            if (post?.year && post?.month && post?.day) {
+                const fallback = new Date(Number(post.year), Number(post.month) - 1, Number(post.day)).getTime();
+                if (Number.isFinite(fallback)) return fallback;
+            }
+            return 0;
+        }
+
+        function syncMessageDateTriggerState() {
+            const trigger = document.querySelector('#message-date-wrapper .flip-date-trigger');
+            const textEl = document.getElementById('message-date-trigger-text');
+            if (!trigger || !textEl) return;
+
+            const fromValue = getMessageDateValue('from');
+            const toValue = getMessageDateValue('to');
+            const hasValue = !!(fromValue || toValue);
+            trigger.classList.toggle('is-active', hasValue);
+            if (fromValue && toValue) {
+                textEl.textContent = `${formatMessageDateDisplay(fromValue)} - ${formatMessageDateDisplay(toValue)}`;
+            } else if (fromValue) {
+                textEl.textContent = `${formatMessageDateDisplay(fromValue)} 起`;
+            } else if (toValue) {
+                textEl.textContent = `至 ${formatMessageDateDisplay(toValue)}`;
+            } else {
+                textEl.textContent = '全部';
+            }
+        }
+
+        function syncMessageDateFieldDisplays() {
+            const fromDisplay = document.getElementById('message-time-from-display');
+            const toDisplay = document.getElementById('message-time-to-display');
+            const fromValue = getMessageDateValue('from');
+            const toValue = getMessageDateValue('to');
+
+            if (fromDisplay) {
+                const valueNode = fromDisplay.querySelector('.flip-date-field-card-value');
+                if (valueNode) valueNode.textContent = formatMessageDateDisplay(fromValue);
+                fromDisplay.classList.toggle('is-active', messageDatePickerState.activeTarget === 'from');
+            }
+
+            if (toDisplay) {
+                const valueNode = toDisplay.querySelector('.flip-date-field-card-value');
+                if (valueNode) valueNode.textContent = formatMessageDateDisplay(toValue);
+                toDisplay.classList.toggle('is-active', messageDatePickerState.activeTarget === 'to');
+            }
+        }
+
+        function setMessageDateCalendarMonth(dateValue = '') {
+            const parsed = parseMessageDateValue(dateValue);
+            const baseDate = parsed
+                ? new Date(parsed.year, parsed.month, parsed.day)
+                : new Date();
+            messageDatePickerState.displayYear = baseDate.getFullYear();
+            messageDatePickerState.displayMonth = baseDate.getMonth();
+        }
+
+        function renderMessageDateCalendar() {
+            const label = document.getElementById('message-date-calendar-label');
+            const grid = document.getElementById('message-date-calendar-grid');
+            if (!label || !grid) return;
+
+            if (messageDatePickerState.displayYear === null || messageDatePickerState.displayMonth === null) {
+                setMessageDateCalendarMonth(getMessageDateValue(messageDatePickerState.activeTarget));
+            }
+
+            syncMessageDateFieldDisplays();
+
+            const year = messageDatePickerState.displayYear;
+            const month = messageDatePickerState.displayMonth;
+            label.textContent = `${year}年${padMessageDatePart(month + 1)}月`;
+
+            const firstDay = new Date(year, month, 1);
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            const prevMonthDays = new Date(year, month, 0).getDate();
+            const startOffset = (firstDay.getDay() + 6) % 7;
+            const fromValue = getMessageDateValue('from');
+            const toValue = getMessageDateValue('to');
+            const fromMs = parseMessageFilterDate(fromValue, false);
+            const toMs = parseMessageFilterDate(toValue, true);
+            const now = new Date();
+            const todayValue = toMessageDateValue(now.getFullYear(), now.getMonth(), now.getDate());
+
+            grid.innerHTML = '';
+            for (let index = 0; index < 42; index += 1) {
+                let day;
+                let cellMonth = month;
+                let cellYear = year;
+                let isMuted = false;
+
+                if (index < startOffset) {
+                    day = prevMonthDays - startOffset + index + 1;
+                    cellMonth -= 1;
+                    if (cellMonth < 0) {
+                        cellMonth = 11;
+                        cellYear -= 1;
+                    }
+                    isMuted = true;
+                } else if (index >= startOffset + daysInMonth) {
+                    day = index - startOffset - daysInMonth + 1;
+                    cellMonth += 1;
+                    if (cellMonth > 11) {
+                        cellMonth = 0;
+                        cellYear += 1;
+                    }
+                    isMuted = true;
+                } else {
+                    day = index - startOffset + 1;
+                }
+
+                const value = toMessageDateValue(cellYear, cellMonth, day);
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'flip-calendar-day';
+                if (isMuted) button.classList.add('is-muted');
+                if (value === fromValue || value === toValue) button.classList.add('is-selected');
+                if (value === todayValue) button.classList.add('is-today');
+
+                const dayMs = parseMessageFilterDate(value, false);
+                if (fromMs !== null && toMs !== null && dayMs !== null && dayMs >= fromMs && dayMs <= toMs) {
+                    button.classList.add('is-in-range');
+                }
+
+                button.textContent = String(day);
+                button.onclick = () => selectMessageCalendarDate(value);
+                grid.appendChild(button);
+            }
+        }
+
+        function toggleMessageDateDropdown() {
+            const list = document.getElementById('message-date-dropdown');
+            const trigger = document.querySelector('#message-date-wrapper .flip-date-trigger');
+            if (!list || trigger?.disabled) return;
+            const willOpen = list.style.display !== 'block';
+            list.style.display = willOpen ? 'block' : 'none';
+            if (willOpen) {
+                setMessageDateCalendarMonth(getMessageDateValue(messageDatePickerState.activeTarget));
+                renderMessageDateCalendar();
+            }
+        }
+
+        function setActiveMessageDateField(target) {
+            messageDatePickerState.activeTarget = target === 'to' ? 'to' : 'from';
+            setMessageDateCalendarMonth(getMessageDateValue(messageDatePickerState.activeTarget));
+            renderMessageDateCalendar();
+        }
+
+        function shiftMessageDateCalendarMonth(offset) {
+            if (!Number.isFinite(offset)) return;
+            if (messageDatePickerState.displayYear === null || messageDatePickerState.displayMonth === null) {
+                setMessageDateCalendarMonth(getMessageDateValue(messageDatePickerState.activeTarget));
+            }
+            const nextDate = new Date(messageDatePickerState.displayYear, messageDatePickerState.displayMonth + offset, 1);
+            messageDatePickerState.displayYear = nextDate.getFullYear();
+            messageDatePickerState.displayMonth = nextDate.getMonth();
+            renderMessageDateCalendar();
+        }
+
+        function shiftMessageDateCalendarYear(offset) {
+            if (!Number.isFinite(offset)) return;
+            if (messageDatePickerState.displayYear === null || messageDatePickerState.displayMonth === null) {
+                setMessageDateCalendarMonth(getMessageDateValue(messageDatePickerState.activeTarget));
+            }
+            messageDatePickerState.displayYear += offset;
+            renderMessageDateCalendar();
+        }
+
+        function applyMessageDateRangeFilter() {
+            syncMessageDateTriggerState();
+            syncMessageDateFieldDisplays();
+            applyFilters();
+            const view = document.getElementById('view-messages');
+            if (view) view.scrollTop = 0;
+        }
+
+        function selectMessageCalendarDate(value) {
+            const input = getMessageDateInput(messageDatePickerState.activeTarget);
+            if (!input) return;
+            input.value = value;
+            applyMessageDateRangeFilter();
+            renderMessageDateCalendar();
+            const dropdown = document.getElementById('message-date-dropdown');
+            if (dropdown) dropdown.style.display = 'block';
+        }
+
+        function clearActiveMessageDateField() {
+            const input = getMessageDateInput(messageDatePickerState.activeTarget);
+            if (!input) return;
+            input.value = '';
+            applyMessageDateRangeFilter();
+            renderMessageDateCalendar();
+            const dropdown = document.getElementById('message-date-dropdown');
+            if (dropdown) dropdown.style.display = 'block';
+        }
+
+        function pickTodayForMessageDate() {
+            const now = new Date();
+            selectMessageCalendarDate(toMessageDateValue(now.getFullYear(), now.getMonth(), now.getDate()));
         }
 
         function resetDateFilter() {
-            selectDateItem('year', 'all', '全部');
-            const view = document.getElementById('view-messages');
-            if (view) {
-                view.scrollTop = 0;
-            }
-        }
-
-        function handleDateChange(level) {
-            const yearVal = document.getElementById('yearSelect').value;
-            const monthVal = document.getElementById('monthSelect').value;
-
-            if (level === 'year') {
-                if (yearVal === 'all') {
-                    resetMonthSelect();
-                    resetDaySelect();
-                } else {
-                    populateMonths(yearVal);
-                    document.getElementById('monthSelectDisplay').disabled = false;
-                }
-            } else if (level === 'month') {
-                if (monthVal === 'all') {
-                    resetDaySelect();
-                } else {
-                    populateDays(yearVal, monthVal);
-                    document.getElementById('daySelectDisplay').disabled = false;
-                }
-            }
+            if (messageDateFromInput) messageDateFromInput.value = '';
+            if (messageDateToInput) messageDateToInput.value = '';
+            legacyMessageDateParts.year = 'all';
+            legacyMessageDateParts.month = 'all';
+            legacyMessageDateParts.day = 'all';
+            const dropdown = document.getElementById('message-date-dropdown');
+            if (dropdown) dropdown.style.display = 'none';
+            syncMessageDateTriggerState();
+            syncMessageDateFieldDisplays();
             applyFilters();
             const view = document.getElementById('view-messages');
             if (view) {
@@ -5385,26 +5621,54 @@
             }
         }
 
-        function toggleDateDropdown(type) {
-            const displayEl = document.getElementById(`${type}SelectDisplay`);
-            if (displayEl && displayEl.disabled) return;
+        function populateMonths(year) {
+            legacyMessageDateParts.year = String(year || 'all');
+        }
 
-            const list = document.getElementById(`${type}-dropdown`);
-            ['year', 'month', 'day'].forEach(t => {
-                if (t !== type) {
-                    const other = document.getElementById(`${t}-dropdown`);
-                    if (other) other.style.display = 'none';
-                }
-            });
+        function populateDays(year, month) {
+            legacyMessageDateParts.year = String(year || 'all');
+            legacyMessageDateParts.month = String(month || 'all');
+        }
 
-            if (list) list.style.display = (list.style.display === 'block') ? 'none' : 'block';
+        function resetMonthSelect() {
+            legacyMessageDateParts.month = 'all';
+        }
+
+        function resetDaySelect() {
+            legacyMessageDateParts.day = 'all';
+        }
+
+        function toggleDateDropdown() {
+            toggleMessageDateDropdown();
         }
 
         function selectDateItem(type, value, text) {
-            document.getElementById(`${type}Select`).value = value;
-            document.getElementById(`${type}SelectDisplay`).value = text;
-            document.getElementById(`${type}-dropdown`).style.display = 'none';
-            handleDateChange(type);
+            if (value === 'all') {
+                resetDateFilter();
+                return;
+            }
+
+            legacyMessageDateParts[type] = String(value || 'all');
+            const year = Number(legacyMessageDateParts.year);
+            if (!Number.isFinite(year)) return;
+
+            let fromValue = `${year}-01-01`;
+            let toValue = `${year}-12-31`;
+            const month = Number(legacyMessageDateParts.month);
+            if (Number.isFinite(month)) {
+                fromValue = `${year}-${padMessageDatePart(month)}-01`;
+                const lastDay = new Date(year, month, 0).getDate();
+                toValue = `${year}-${padMessageDatePart(month)}-${padMessageDatePart(lastDay)}`;
+            }
+            const day = Number(legacyMessageDateParts.day);
+            if (Number.isFinite(month) && Number.isFinite(day)) {
+                fromValue = `${year}-${padMessageDatePart(month)}-${padMessageDatePart(day)}`;
+                toValue = fromValue;
+            }
+
+            if (messageDateFromInput) messageDateFromInput.value = fromValue;
+            if (messageDateToInput) messageDateToInput.value = toValue;
+            applyMessageDateRangeFilter();
         }
 
         function setFilter(type) {
@@ -5511,9 +5775,8 @@
             const sortType = currentSortOrder;
             const groupInputVal = document.getElementById('groupInput').value;
             const selGroup = (groupInputVal === '全部成员' || groupInputVal === '') ? 'all' : groupInputVal;
-            const selYear = yearSelect.value;
-            const selMonth = monthSelect.value;
-            const selDay = daySelect.value;
+            const fromMs = parseMessageFilterDate(getMessageDateValue('from'), false);
+            const toMs = parseMessageFilterDate(getMessageDateValue('to'), true);
 
             currentFilteredPosts = allPosts.filter(post => {
                 if (selGroup !== 'all' && post.groupName !== selGroup) return false;
@@ -5556,12 +5819,11 @@
 
                 if (!matchType) return false;
 
-                if (selYear !== 'all') {
-                    if (post.year != selYear) return false;
-                    if (selMonth !== 'all') {
-                        if (post.month != selMonth) return false;
-                        if (selDay !== 'all' && post.day != selDay) return false;
-                    }
+                if (fromMs !== null || toMs !== null) {
+                    const postTime = getMessagePostTimeMs(post);
+                    if (!postTime) return false;
+                    if (fromMs !== null && postTime < fromMs) return false;
+                    if (toMs !== null && postTime > toMs) return false;
                 }
                 return true;
             });
@@ -5784,6 +6046,7 @@
         let currentFlipSort = "latest_desc";
         let currentFlipTimeFrom = "";
         let currentFlipTimeTo = "";
+        let currentFlipMemberKeyword = "";
         let currentSearchKeyword = "";
         const FLIP_HISTORY_CACHE_KEY = 'yaya_flip_history_cache_v1';
 
@@ -5908,7 +6171,11 @@
             allFlipData = [];
             isFetchingFlips = false;
             flipCurrentPage = 0;
+            currentFlipMemberKeyword = "";
             currentSearchKeyword = "";
+
+            const memberFilterInput = document.getElementById('flipMemberFilterInput');
+            if (memberFilterInput) memberFilterInput.value = '全部成员';
 
             const searchInput = document.getElementById('flipSearchInput');
             if (searchInput) searchInput.value = '';
@@ -6060,11 +6327,10 @@
                 { inputId: 'room-radio-member-input', dropdownId: 'room-radio-search-results' },
                 { wrapperId: 'vod-group-wrapper', dropdownId: 'vod-group-dropdown' },
                 { wrapperId: 'vod-type-wrapper', dropdownId: 'vod-type-dropdown' },
-                { wrapperId: 'year-wrapper', dropdownId: 'year-dropdown' },
-                { wrapperId: 'month-wrapper', dropdownId: 'month-dropdown' },
-                { wrapperId: 'day-wrapper', dropdownId: 'day-dropdown' },
+                { wrapperId: 'message-date-wrapper', dropdownId: 'message-date-dropdown' },
                 { wrapperId: 'flip-date-wrapper', dropdownId: 'flip-date-dropdown' },
                 { wrapperId: 'flip-type-wrapper', dropdownId: 'flip-type-dropdown' },
+                { wrapperId: 'flip-member-filter-wrapper', dropdownId: 'flip-member-filter-dropdown' },
                 { wrapperId: 'flip-visibility-wrapper', dropdownId: 'flip-visibility-dropdown' },
                 { wrapperId: 'flip-sort-wrapper', dropdownId: 'flip-sort-dropdown' },
                 { wrapperId: 'live-group-wrapper', dropdownId: 'live-group-dropdown' },
@@ -6272,6 +6538,45 @@
             document.getElementById('path-media').value = readStoredStringSetting('yaya_path_media', '');
             document.getElementById('path-flip').value = readStoredStringSetting('yaya_path_flip', '');
             document.getElementById('path-room-radio').value = readStoredStringSetting('yaya_path_room_radio', '');
+        }
+
+        function readStoredBooleanSetting(key, fallbackValue = false) {
+            const settingsApi = getAppSettingsApi();
+            if (settingsApi && typeof settingsApi.getSettingValueSync === 'function') {
+                return settingsApi.getSettingValueSync(key, fallbackValue) === true;
+            }
+
+            const legacyValue = localStorage.getItem(key);
+            if (legacyValue === null) return fallbackValue === true;
+            return legacyValue === 'true';
+        }
+
+        function writeStoredBooleanSetting(key, value) {
+            const normalized = value === true;
+            const settingsApi = getAppSettingsApi();
+            if (settingsApi && typeof settingsApi.setSettingValueSync === 'function') {
+                settingsApi.setSettingValueSync(key, normalized);
+                localStorage.removeItem(key);
+                return normalized;
+            }
+
+            localStorage.setItem(key, String(normalized));
+            return normalized;
+        }
+
+        function loadYayaApiProxySetting() {
+            const checkbox = document.getElementById('use-yaya-api-proxy');
+            if (!checkbox) return;
+            checkbox.checked = readStoredBooleanSetting('useYayaApiProxy', false);
+        }
+
+        function saveYayaApiProxySetting() {
+            const checkbox = document.getElementById('use-yaya-api-proxy');
+            if (!checkbox) return;
+            writeStoredBooleanSetting('useYayaApiProxy', checkbox.checked);
+            if (typeof showToast === 'function') {
+                showToast(checkbox.checked ? '已启用 yaya-api 代理' : '已关闭 yaya-api 代理');
+            }
         }
 
         function saveCustomPaths() {

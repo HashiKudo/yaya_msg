@@ -169,7 +169,11 @@
             if (headerEl) headerEl.style.visibility = 'hidden';
             if (titleEl) titleEl.textContent = '私信详情';
             if (subtitleEl) subtitleEl.textContent = '--';
-            if (avatarEl) avatarEl.src = './icon.png';
+            if (avatarEl) {
+                avatarEl.src = './icon.png';
+                avatarEl.classList.remove('is-clickable');
+                avatarEl.onclick = null;
+            }
             if (inputEl) inputEl.value = '';
             if (imageInputEl) imageInputEl.value = '';
             if (bodyEl) bodyEl.innerHTML = '<div class="empty-state">请选择一个私信会话</div>';
@@ -195,6 +199,20 @@
             return (container.scrollHeight - container.scrollTop - container.clientHeight) <= threshold;
         }
 
+        function openPrivateMessageUserProfile(userId, displayName = '', avatarUrl = '', event = null) {
+            if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+            const normalizedUserId = String(userId || '').trim();
+            if (!normalizedUserId) {
+                showToast('没有获取到用户 ID');
+                return;
+            }
+            if (typeof window.openFollowedUserProfile !== 'function') {
+                showToast('用户主页模块还没有准备好');
+                return;
+            }
+            window.openFollowedUserProfile(normalizedUserId, displayName || '口袋用户', avatarUrl || './icon.png');
+        }
+
         function createPrivateMessageDetailElement(item) {
             const incoming = String(item.user?.userId || '') === String(privateMessageDetailState.targetUserId);
             const msgId = getPrivateMessageDeletableId(item);
@@ -204,7 +222,20 @@
             if (msgId) {
                 wrapper.dataset.msgId = msgId;
             }
-            wrapper.innerHTML = `<div class="private-message-row"><img class="private-message-sender-avatar" src="${escapePrivateMessageHtml(avatarUrl)}" alt="" onerror="this.src='./icon.png'"><div class="private-message-content"><div class="private-message-bubble-meta">${escapePrivateMessageHtml(formatPrivateMessageDateTime(item.timestamp))}</div><div class="private-message-bubble ${incoming ? 'incoming' : 'outgoing'}">${renderPrivateMessageContentHtml(item)}</div></div></div>`;
+            wrapper.innerHTML = `<div class="private-message-row"><img class="private-message-sender-avatar ${incoming ? 'is-clickable' : ''}" src="${escapePrivateMessageHtml(avatarUrl)}" alt="" onerror="this.src='./icon.png'"><div class="private-message-content"><div class="private-message-bubble-meta">${escapePrivateMessageHtml(formatPrivateMessageDateTime(item.timestamp))}</div><div class="private-message-bubble ${incoming ? 'incoming' : 'outgoing'}">${renderPrivateMessageContentHtml(item)}</div></div></div>`;
+            if (incoming) {
+                const avatarEl = wrapper.querySelector('.private-message-sender-avatar');
+                if (avatarEl) {
+                    avatarEl.addEventListener('click', event => {
+                        openPrivateMessageUserProfile(
+                            privateMessageDetailState.targetUserId,
+                            privateMessageDetailState.title,
+                            avatarUrl,
+                            event
+                        );
+                    });
+                }
+            }
             wrapper.addEventListener('contextmenu', event => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -1050,7 +1081,18 @@
                 if (headerEl) headerEl.style.visibility = 'visible';
                 if (titleEl) titleEl.textContent = privateMessageDetailState.title;
                 if (subtitleEl) subtitleEl.textContent = `ID: ${privateMessageDetailState.targetUserId}`;
-                if (avatarEl) avatarEl.src = privateMessageDetailState.avatar;
+                if (avatarEl) {
+                    avatarEl.src = privateMessageDetailState.avatar;
+                    avatarEl.classList.add('is-clickable');
+                    avatarEl.onclick = event => {
+                        openPrivateMessageUserProfile(
+                            privateMessageDetailState.targetUserId,
+                            privateMessageDetailState.title,
+                            privateMessageDetailState.avatar,
+                            event
+                        );
+                    };
+                }
                 if (inputEl) inputEl.value = '';
                 if (viewEl) viewEl.classList.add('is-detail-open');
                 clearActivePrivateMessageUnread(privateMessageDetailState.targetUserId);
@@ -1174,14 +1216,22 @@
             }
         }
 
-        function openPrivateMessageDetail(targetUserId) {
-            const item = privateMessageListState.items.find(entry => String(entry.user?.userId || '') === String(targetUserId));
-            if (!item) return;
-            const user = item.user || {};
+        function openPrivateMessageDetail(targetUserId, fallback = {}) {
+            const normalizedTargetUserId = String(targetUserId || '').trim();
+            if (!normalizedTargetUserId) return;
+
+            const item = privateMessageListState.items.find(entry => String(entry.user?.userId || '') === normalizedTargetUserId);
+            const user = item?.user || {
+                userId: normalizedTargetUserId,
+                nickname: fallback.title || fallback.name || fallback.nickName || '',
+                nickName: fallback.title || fallback.name || fallback.nickName || '',
+                userName: fallback.title || fallback.name || fallback.nickName || '',
+                avatar: fallback.avatar || ''
+            };
             loadPrivateMessageDetail({
                 targetUserId: String(user.userId || ''),
-                title: getPrivateMessageDisplayName(user),
-                avatar: getPrivateMessageAvatar(user.avatar),
+                title: getPrivateMessageDisplayName(user) || fallback.title || fallback.name || '私信详情',
+                avatar: getPrivateMessageAvatar(user.avatar || fallback.avatar),
                 reset: true
             });
         }
@@ -1546,7 +1596,10 @@
 
         function setPrivateMessageImageButtonText(text) {
             const btn = document.getElementById('btn-send-private-message-image');
-            if (btn) btn.textContent = text || '图片';
+            if (!btn) return;
+            const label = text || '图片';
+            btn.title = label;
+            btn.setAttribute('aria-label', label === '图片' ? '发送图片' : label);
         }
 
         async function handlePrivateMessageImageSelected(file) {

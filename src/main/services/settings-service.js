@@ -67,6 +67,21 @@ function normalizeSettings(rawSettings) {
         }
     }
 
+    if (Object.prototype.hasOwnProperty.call(safeSettings, 'useYayaApiProxy')) {
+        safeSettings.useYayaApiProxy = safeSettings.useYayaApiProxy === true;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(safeSettings, 'yayaApiProxyBaseUrl')) {
+        if (typeof safeSettings.yayaApiProxyBaseUrl !== 'string') {
+            delete safeSettings.yayaApiProxyBaseUrl;
+        } else {
+            safeSettings.yayaApiProxyBaseUrl = safeSettings.yayaApiProxyBaseUrl.trim();
+            if (!safeSettings.yayaApiProxyBaseUrl) {
+                delete safeSettings.yayaApiProxyBaseUrl;
+            }
+        }
+    }
+
     return safeSettings;
 }
 

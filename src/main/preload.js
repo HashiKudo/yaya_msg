@@ -3,7 +3,7 @@ const fs = require('fs');
 const https = require('https');
 const readline = require('readline');
 const { pathToFileURL } = require('url');
-const { ipcRenderer, shell } = require('electron');
+const { ipcRenderer, shell, webFrame } = require('electron');
 const { ensureStoragePaths } = require('../common/storage-paths');
 
 const appDir = path.join(__dirname, '../../');
@@ -68,8 +68,7 @@ function removeFileIfExists(filePath) {
         if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
         }
-    } catch (error) {
-    }
+    } catch (error) {}
 }
 
 function removeManagedBackgroundFiles(exceptFileName = '') {
@@ -81,8 +80,7 @@ function removeManagedBackgroundFiles(exceptFileName = '') {
             if (exceptFileName && entry.name === exceptFileName) return;
             removeFileIfExists(path.join(storagePaths.internalDataDir, entry.name));
         });
-    } catch (error) {
-    }
+    } catch (error) {}
 }
 
 function persistBackgroundFileSync(bufferLike, extName) {
@@ -203,24 +201,18 @@ function removeSettingValueSync(key) {
 
 function readRuntimeCacheSync() {
     const rawCache = readJsonFileSafe(storagePaths.runtimeCacheFile, {});
-    return rawCache && typeof rawCache === 'object' && !Array.isArray(rawCache)
-        ? rawCache
-        : {};
+    return rawCache && typeof rawCache === 'object' && !Array.isArray(rawCache) ? rawCache : {};
 }
 
 function writeRuntimeCacheSync(nextCache) {
-    const normalized = nextCache && typeof nextCache === 'object' && !Array.isArray(nextCache)
-        ? nextCache
-        : {};
+    const normalized = nextCache && typeof nextCache === 'object' && !Array.isArray(nextCache) ? nextCache : {};
     writeJsonFileSafe(storagePaths.runtimeCacheFile, normalized);
     return normalized;
 }
 
 function updateRuntimeCacheSync(updater) {
     const current = readRuntimeCacheSync();
-    const next = typeof updater === 'function'
-        ? updater({ ...current }) || current
-        : { ...current, ...(updater || {}) };
+    const next = typeof updater === 'function' ? updater({ ...current }) || current : { ...current, ...(updater || {}) };
     return writeRuntimeCacheSync(next);
 }
 
@@ -296,4 +288,41 @@ window.desktop = {
 };
 
 window.ipcRenderer = window.desktop.ipcRenderer;
-window.Buffer = Buffer;
+
+function resetRendererPageZoom() {
+    try {
+        webFrame.setZoomLevel(0);
+        webFrame.setZoomFactor(1);
+    } catch (error) {}
+}
+
+resetRendererPageZoom();
+
+window.addEventListener(
+    'wheel',
+    (event) => {
+        if (!event.ctrlKey && !event.metaKey) return;
+
+        event.preventDefault();
+        resetRendererPageZoom();
+    },
+    { passive: false, capture: true }
+);
+
+window.addEventListener(
+    'keydown',
+    (event) => {
+        if (!event.ctrlKey && !event.metaKey) return;
+
+        const key = String(event.key || '').toLowerCase();
+        if (key === '+' || key === '=' || key === '-' || key === '_' || key === '0') {
+            event.preventDefault();
+            resetRendererPageZoom();
+        }
+    },
+    { capture: true }
+);
+
+window.addEventListener('DOMContentLoaded', resetRendererPageZoom, { once: true });
+window.addEventListener('pageshow', resetRendererPageZoom);
+window.addEventListener('focus', resetRendererPageZoom);

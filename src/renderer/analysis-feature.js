@@ -337,25 +337,13 @@
 
         function filterByDate(dateStr) {
             closeDateAnalysis();
-            const [year, month, day] = dateStr.split('-');
-
-            const yearSelect = document.getElementById('yearSelect');
-            const monthSelect = document.getElementById('monthSelect');
-            const daySelect = document.getElementById('daySelect');
-
-            if (yearSelect) {
-                yearSelect.value = year;
-                if (typeof populateMonths === 'function') populateMonths(year);
-            }
-            if (monthSelect) {
-                monthSelect.value = parseInt(month).toString();
-                if (typeof populateDays === 'function') populateDays(year, parseInt(month).toString());
-                monthSelect.disabled = false;
-            }
-            if (daySelect) {
-                daySelect.value = parseInt(day).toString();
-                daySelect.disabled = false;
-            }
+            const normalizedDate = String(dateStr || '').trim();
+            const fromInput = document.getElementById('message-date-from');
+            const toInput = document.getElementById('message-date-to');
+            if (fromInput) fromInput.value = normalizedDate;
+            if (toInput) toInput.value = normalizedDate;
+            if (typeof window.syncMessageDateTriggerState === 'function') window.syncMessageDateTriggerState();
+            if (typeof window.syncMessageDateFieldDisplays === 'function') window.syncMessageDateFieldDisplays();
             if (typeof applyFilters === 'function') applyFilters();
         }
 

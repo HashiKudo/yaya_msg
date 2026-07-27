@@ -543,7 +543,10 @@
             const titleEl = document.getElementById('bilibili-live-title');
             const upEl = document.getElementById('bilibili-live-up');
             const roomMetaEl = document.getElementById('bilibili-live-room-meta');
-            if (metaEl) metaEl.style.display = 'none';
+            if (metaEl) {
+                metaEl.style.display = '';
+                metaEl.style.visibility = 'hidden';
+            }
             if (titleEl) titleEl.textContent = '';
             if (upEl) upEl.textContent = '';
             if (roomMetaEl) roomMetaEl.textContent = '';
@@ -561,7 +564,10 @@
                 ? bilibiliCurrentOpenLiveInfo
                 : null;
 
-            if (metaEl) metaEl.style.display = 'block';
+            if (metaEl) {
+                metaEl.style.display = '';
+                metaEl.style.visibility = 'visible';
+            }
             if (titleEl) {
                 titleEl.textContent = currentOpenLive?.title || info.title || roomConfig?.title || 'B站直播';
             }

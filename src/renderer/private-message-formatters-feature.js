@@ -378,9 +378,7 @@
             if (directTeam) return normalizePrivateMessageTeamLabel(directTeam, user.groupName);
 
             const directGroup = String(user.groupName || '').trim().toUpperCase();
-            if (directGroup === 'SNH48' || directGroup === 'GNZ48' || directGroup === 'BEJ48' || directGroup === 'CKG48' || directGroup === 'CGT48') {
-                // 团名只作为最后兜底，不盖掉真实队伍。
-            } else if (directGroup) {
+            if (directGroup && directGroup !== 'SNH48' && directGroup !== 'GNZ48' && directGroup !== 'BEJ48' && directGroup !== 'CKG48' && directGroup !== 'CGT48') {
                 return String(user.groupName).trim();
             }
 

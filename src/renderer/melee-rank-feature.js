@@ -1,5 +1,5 @@
 (function () {
-    const MEMBER_DATA_URL = 'https://yaya-data.pages.dev/members.json';
+    const MEMBER_DATA_URL = 'https://data.gnz.hk/members.json';
     const EARLIEST_KNOWN_WEEK_RANK_ID = 17;
     const WEEK_QUERY_CONCURRENCY = 6;
 
