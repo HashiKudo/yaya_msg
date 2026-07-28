@@ -747,7 +747,7 @@
 
                         <div style="position: relative; flex: 1; min-width: 240px;">
                             <input type="text" id="vod-member-filter" class="input-control" style="width: 100%;"
-                                placeholder="成员名 / 日期，例如 2026-07-24" oninput="handleMemberFilter()" autocomplete="off">
+                                placeholder="成员名 / 日期" oninput="handleMemberFilter()" autocomplete="off">
                             <div id="member-suggestions" class="suggestion-box"></div>
                         </div>
 
@@ -995,6 +995,10 @@
                                 style="padding: 10px 20px; cursor: pointer; color: var(--primary); border-bottom: 2px solid var(--primary); font-weight: bold; transition: all 0.2s;">
                                 验证码登录
                             </div>
+                            <div id="tab-qr" onclick="switchLoginTab('qr')"
+                                style="display: none; padding: 10px 20px; cursor: pointer; color: var(--text-sub); border-bottom: 2px solid transparent; transition: all 0.2s;">
+                                扫码登录
+                            </div>
                             <div id="tab-token" onclick="switchLoginTab('token')"
                                 style="padding: 10px 20px; cursor: pointer; color: var(--text-sub); border-bottom: 2px solid transparent; transition: all 0.2s;">
                                 Token 登录
@@ -1047,6 +1051,47 @@
                                     style="height: 40px; font-size: 15px;">
                                     登 录
                                 </button>
+                            </div>
+
+                            <div id="form-qr" style="display: none;" hidden>
+                                <div class="Box-row"
+                                    style="display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 18px; margin-bottom: 15px;">
+                                    <div id="live48-qr-placeholder"
+                                        style="width: 190px; height: 190px; border: 1px dashed var(--border); border-radius: 10px; display: flex; align-items: center; justify-content: center; color: var(--text-sub); background: var(--input-bg); text-align: center; padding: 12px; box-sizing: border-box;">
+                                        点击下方按钮生成二维码
+                                    </div>
+                                    <img id="live48-login-qr" src="" alt="口袋48扫码登录二维码"
+                                        style="display: none; width: 190px; height: 190px; border-radius: 10px; background: #fff; padding: 8px; object-fit: contain; box-sizing: border-box;">
+                                    <div id="live48-login-qr-msg"
+                                        style="font-size: 13px; color: var(--text-sub); min-height: 20px; text-align: center;">
+                                        使用口袋48 App 扫码并确认登录
+                                    </div>
+                                    <div id="live48-login-account"
+                                        style="display: none; width: min(360px, 100%); align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--input-bg); box-sizing: border-box;">
+                                        <img id="live48-login-account-avatar" src="./icon.png" alt=""
+                                            style="width: 42px; height: 42px; border-radius: 50%; object-fit: cover; background: #fff;">
+                                        <div style="min-width: 0; flex: 1;">
+                                            <div id="live48-login-account-name"
+                                                style="font-size: 14px; font-weight: bold; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                                live.48.cn 用户
+                                            </div>
+                                            <div id="live48-login-account-id"
+                                                style="font-size: 12px; color: var(--text-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                                UID: --
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style="display: flex; gap: 10px;">
+                                    <button id="btn-live48-login-qr" class="btn btn-primary btn-full"
+                                        onclick="startLive48QrLogin()" style="height: 40px; font-size: 15px;">
+                                        生成二维码
+                                    </button>
+                                    <button id="btn-live48-login-stop" class="btn btn-secondary"
+                                        onclick="stopLive48QrLogin(true)" style="width: 96px; height: 40px; display: none;">
+                                        停止
+                                    </button>
+                                </div>
                             </div>
 
                             <div id="form-token" style="display: none;">

@@ -1151,38 +1151,213 @@
 
 
         let smsTimer = null;
+        let live48QrTimer = null;
+        let live48QrCode = '';
+        let live48QrPollCount = 0;
 
         function switchLoginTab(type) {
             const tabSms = document.getElementById('tab-sms');
+            const tabQr = document.getElementById('tab-qr');
             const tabToken = document.getElementById('tab-token');
             const formSms = document.getElementById('form-sms');
+            const formQr = document.getElementById('form-qr');
             const formToken = document.getElementById('form-token');
             const msgDiv = document.getElementById('login-msg');
 
             msgDiv.innerText = '';
 
-            if (type === 'sms') {
-                tabSms.style.color = 'var(--primary)';
-                tabSms.style.borderBottomColor = 'var(--primary)';
-                tabSms.style.fontWeight = 'bold';
+            if (type !== 'qr') stopLive48QrLogin(false);
 
-                tabToken.style.color = 'var(--text-sub)';
-                tabToken.style.borderBottomColor = 'transparent';
-                tabToken.style.fontWeight = 'normal';
+            [
+                { tab: tabSms, form: formSms, key: 'sms' },
+                { tab: tabQr, form: formQr, key: 'qr' },
+                { tab: tabToken, form: formToken, key: 'token' }
+            ].forEach(item => {
+                const active = item.key === type;
+                if (item.tab) {
+                    item.tab.style.color = active ? 'var(--primary)' : 'var(--text-sub)';
+                    item.tab.style.borderBottomColor = active ? 'var(--primary)' : 'transparent';
+                    item.tab.style.fontWeight = active ? 'bold' : 'normal';
+                }
+                if (item.form) item.form.style.display = active ? 'block' : 'none';
+            });
 
-                formSms.style.display = 'block';
-                formToken.style.display = 'none';
-            } else {
-                tabToken.style.color = 'var(--primary)';
-                tabToken.style.borderBottomColor = 'var(--primary)';
-                tabToken.style.fontWeight = 'bold';
+            if (type === 'qr') refreshLive48QrLoginStatus();
+        }
 
-                tabSms.style.color = 'var(--text-sub)';
-                tabSms.style.borderBottomColor = 'transparent';
-                tabSms.style.fontWeight = 'normal';
+        function setLive48QrMessage(text, color = 'var(--text-sub)') {
+            const msgEl = document.getElementById('live48-login-qr-msg');
+            if (!msgEl) return;
+            msgEl.innerText = text;
+            msgEl.style.color = color;
+        }
 
-                formToken.style.display = 'block';
-                formSms.style.display = 'none';
+        function renderLive48QrAccountInfo(accountInfo = null) {
+            const box = document.getElementById('live48-login-account');
+            const avatarEl = document.getElementById('live48-login-account-avatar');
+            const nameEl = document.getElementById('live48-login-account-name');
+            const idEl = document.getElementById('live48-login-account-id');
+            if (!box || !avatarEl || !nameEl || !idEl) return;
+
+            if (!accountInfo) {
+                box.style.display = 'none';
+                avatarEl.src = './icon.png';
+                nameEl.innerText = 'live.48.cn 用户';
+                idEl.innerText = 'UID: --';
+                return;
+            }
+
+            const nickname = String(accountInfo.nickname || 'live.48.cn 用户').trim();
+            const userId = String(accountInfo.userId || accountInfo.uid || '').trim();
+            const avatarUrl = String(accountInfo.avatarUrl || accountInfo.avatar || '').trim();
+            nameEl.innerText = nickname;
+            idEl.innerText = userId ? `UID: ${userId}` : 'UID: --';
+            avatarEl.src = avatarUrl || './icon.png';
+            box.style.display = 'flex';
+        }
+
+        async function refreshLive48QrLoginStatus() {
+            try {
+                const res = await ipcRenderer.invoke('login-qr-status');
+                if (res && res.loggedIn && res.accountInfo) {
+                    renderLive48QrAccountInfo(res.accountInfo);
+                    setLive48QrMessage('live.48.cn 已登录', '#28a745');
+                } else if (res && res.accountInfo) {
+                    renderLive48QrAccountInfo(res.accountInfo);
+                    setLive48QrMessage(res.msg || 'live.48.cn 登录状态可能已失效', '#fa8c16');
+                }
+            } catch (error) {
+            }
+        }
+
+        function resetLive48QrDisplay() {
+            const qrImg = document.getElementById('live48-login-qr');
+            const placeholder = document.getElementById('live48-qr-placeholder');
+            if (qrImg) {
+                qrImg.src = '';
+                qrImg.style.display = 'none';
+            }
+            if (placeholder) {
+                placeholder.style.display = 'flex';
+                placeholder.innerText = '点击下方按钮生成二维码';
+            }
+        }
+
+        function stopLive48QrLogin(cancelRemote = false) {
+            if (live48QrTimer) {
+                clearInterval(live48QrTimer);
+                live48QrTimer = null;
+            }
+
+            const codeToCancel = live48QrCode;
+            live48QrCode = '';
+            live48QrPollCount = 0;
+
+            const btn = document.getElementById('btn-live48-login-qr');
+            const stopBtn = document.getElementById('btn-live48-login-stop');
+            if (btn) {
+                btn.disabled = false;
+                btn.innerText = '生成二维码';
+            }
+            if (stopBtn) stopBtn.style.display = 'none';
+
+            if (cancelRemote && codeToCancel) {
+                ipcRenderer.invoke('login-cancel-qr', { code: codeToCancel }).catch(() => {});
+                resetLive48QrDisplay();
+                renderLive48QrAccountInfo(null);
+                setLive48QrMessage('已停止扫码登录');
+            }
+        }
+
+        async function pollLive48QrLogin() {
+            if (!live48QrCode) return;
+            live48QrPollCount += 1;
+
+            if (live48QrPollCount > 100) {
+                stopLive48QrLogin(true);
+                setLive48QrMessage('二维码已过期，请重新生成', '#ff4d4f');
+                return;
+            }
+
+            try {
+                const res = await ipcRenderer.invoke('login-poll-qr', { code: live48QrCode });
+                if (!res || !res.success) {
+                    throw new Error(res?.msg || '检查登录状态失败');
+                }
+
+                if (res.loggedIn) {
+                    stopLive48QrLogin(false);
+                    renderLive48QrAccountInfo(res.accountInfo || null);
+                    const name = res.accountInfo?.nickname ? `：${res.accountInfo.nickname}` : '';
+                    setLive48QrMessage(`扫码登录成功${name}`, '#28a745');
+                    const msgBox = document.getElementById('login-msg');
+                    if (msgBox) {
+                        msgBox.style.color = '#28a745';
+                        msgBox.innerText = res.accountInfo?.nickname
+                            ? `live.48.cn 已登录：${res.accountInfo.nickname}；口袋 API 功能仍需验证码或 Token 登录。`
+                            : '网页扫码登录成功；口袋 API 功能仍需验证码或 Token 登录。';
+                    }
+                    return;
+                }
+
+                setLive48QrMessage(res.msg || '等待 App 确认登录');
+            } catch (error) {
+                if (live48QrCode) {
+                    setLive48QrMessage(error.message || '检查登录状态失败', '#ff4d4f');
+                }
+            }
+        }
+
+        async function startLive48QrLogin() {
+            stopLive48QrLogin(false);
+
+            const btn = document.getElementById('btn-live48-login-qr');
+            const stopBtn = document.getElementById('btn-live48-login-stop');
+            const qrImg = document.getElementById('live48-login-qr');
+            const placeholder = document.getElementById('live48-qr-placeholder');
+            const msgBox = document.getElementById('login-msg');
+
+            if (btn) {
+                btn.disabled = true;
+                btn.innerText = '生成中...';
+            }
+            if (msgBox) msgBox.innerText = '';
+            renderLive48QrAccountInfo(null);
+            if (placeholder) {
+                placeholder.style.display = 'flex';
+                placeholder.innerText = '正在生成二维码...';
+            }
+            if (qrImg) qrImg.style.display = 'none';
+            setLive48QrMessage('正在连接 live.48.cn...');
+
+            try {
+                const res = await ipcRenderer.invoke('login-create-qr');
+                if (!res || !res.success || !res.code || !res.qrImage) {
+                    throw new Error(res?.msg || '创建二维码失败');
+                }
+
+                live48QrCode = res.code;
+                live48QrPollCount = 0;
+                if (qrImg) {
+                    qrImg.src = res.qrImage;
+                    qrImg.style.display = 'block';
+                }
+                if (placeholder) placeholder.style.display = 'none';
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerText = '刷新二维码';
+                }
+                if (stopBtn) stopBtn.style.display = 'block';
+                setLive48QrMessage('请用口袋48 App 扫码，并在手机上确认登录');
+
+                live48QrTimer = setInterval(pollLive48QrLogin, 3000);
+            } catch (error) {
+                resetLive48QrDisplay();
+                setLive48QrMessage(error.message || '创建二维码失败', '#ff4d4f');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerText = '重新生成';
+                }
             }
         }
 

@@ -2777,7 +2777,8 @@ if (buildDatabaseRuntimeOnly) {
         'style.css',
         'web-icon.png',
         '2.wasm',
-        'rust-wasm-browser.js'
+        'rust-wasm-browser.js',
+        '4fb13b5a010b5eb4c05ec3fdfd5504e0.txt'
     ].forEach(copyFile);
 
     copyDir('src/renderer');

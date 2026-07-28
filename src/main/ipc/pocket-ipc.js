@@ -154,6 +154,10 @@ function registerPocketIpc() {
     handle('login-send-sms', (payload) => pocketService.loginSendSms(payload));
     handle('login-by-code', (payload) => pocketService.loginByCode(payload));
     handle('login-check-token', (payload) => pocketService.loginCheckToken(payload));
+    handle('login-create-qr', () => pocketService.loginCreateQr());
+    handle('login-poll-qr', (payload) => pocketService.loginPollQr(payload));
+    handle('login-cancel-qr', (payload) => pocketService.loginCancelQr(payload));
+    handle('login-qr-status', () => pocketService.loginQrStatus());
     handle('pocket-checkin', (payload) => pocketService.checkIn(payload));
     handle('switch-big-small', (payload) => pocketService.switchBigSmall(payload));
     handle('fetch-room-messages', (payload) => pocketService.fetchRoomMessages(payload));
