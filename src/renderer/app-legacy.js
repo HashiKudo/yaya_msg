@@ -86,6 +86,10 @@
         let stopPrivateMessagePolling;
         let startFollowedRoomsPolling;
         let stopFollowedRoomsPolling;
+        let startFollowedRoomNotificationPolling;
+        let stopFollowedRoomNotificationPolling;
+        let toggleActiveFollowedRoomNotification;
+        let updateFollowedRoomNotificationButton;
         let resetFollowedRoomsState;
         let closeFollowedProfileVideo;
         let openFollowedProfileVideo;
@@ -409,6 +413,7 @@
         let currentViewName = 'home';
         let currentViewMode = null;
         let mediaPlaybackViewToken = 0;
+        let messageIndexAutoRefreshTimer = null;
 
         function getActivePlaybackScope() {
             if (currentViewName === 'official-site-music') return 'official-site-music';
@@ -457,6 +462,21 @@
         if (window.ipcRenderer && typeof window.ipcRenderer.on === 'function') {
             window.ipcRenderer.on('system-media-key', (event, action) => {
                 handleSystemMediaKeyAction(action);
+            });
+            window.ipcRenderer.on('message-index-updated', (event, result = {}) => {
+                window.__messageDataDirty = true;
+                if ((Number(result.removedMessages) || 0) <= 0 || currentViewName !== 'messages') return;
+
+                if (messageIndexAutoRefreshTimer) clearTimeout(messageIndexAutoRefreshTimer);
+                messageIndexAutoRefreshTimer = setTimeout(() => {
+                    messageIndexAutoRefreshTimer = null;
+                    if (currentViewName !== 'messages' || typeof loadWebMessageData !== 'function') return;
+                    window.__messageDataDirty = false;
+                    Promise.resolve(loadWebMessageData()).catch(error => {
+                        window.__messageDataDirty = true;
+                        console.warn('消息删除后的索引刷新失败:', error);
+                    });
+                }, 600);
             });
         }
 
@@ -524,6 +544,74 @@
                     downloadsHost.appendChild(downloadNode);
                 }
             }
+
+            if (isWebRuntime) {
+                const messageControlsHost = document.getElementById('web-message-controls-host');
+                if (messageControlsHost && messageControlsHost.dataset.mounted !== 'true') {
+                    messageControlsHost.dataset.mounted = 'true';
+                    messageControlsHost.innerHTML = `
+                        <div class="web-message-page-header"></div>
+                        <div class="web-message-controls-grid view-toolbar-grid"></div>
+                    `;
+
+                    const controlsGrid = messageControlsHost.querySelector('.web-message-controls-grid');
+                    const status = document.getElementById('statusMsg');
+                    const pageHeader = messageControlsHost.querySelector('.web-message-page-header');
+                    const sidebar = document.querySelector('.sidebar');
+                    const creditLink = document.querySelector('.credit-link');
+                    const statusGroup = creditLink ? creditLink.parentElement : null;
+                    const compactMessageLayout = window.matchMedia('(max-width: 900px)');
+                    const messagePanelIds = [
+                        'sb-search',
+                        'sb-members',
+                        'sb-date',
+                        'sb-type',
+                        'sb-message-data'
+                    ];
+                    const desktopPanelIds = [
+                        'sb-search',
+                        'sb-members',
+                        'sb-date',
+                        'sb-analysis',
+                        'sb-type',
+                        'sb-message-data'
+                    ];
+
+                    const syncMessageControlPlacement = () => {
+                        if (compactMessageLayout.matches) {
+                            messagePanelIds.forEach((id) => {
+                                const panel = document.getElementById(id);
+                                if (panel && controlsGrid) controlsGrid.appendChild(panel);
+                            });
+                            if (status && pageHeader) pageHeader.appendChild(status);
+                            return;
+                        }
+
+                        if (sidebar && statusGroup && statusGroup.parentElement === sidebar) {
+                            desktopPanelIds.forEach((id) => {
+                                const panel = document.getElementById(id);
+                                if (panel) sidebar.insertBefore(panel, statusGroup);
+                            });
+                        }
+                        if (status && creditLink && creditLink.parentElement) {
+                            creditLink.parentElement.insertBefore(status, creditLink);
+                        }
+                    };
+
+                    syncMessageControlPlacement();
+                    compactMessageLayout.addEventListener('change', syncMessageControlPlacement);
+
+                    const dataPanel = document.getElementById('sb-message-data');
+                    const dataButtons = dataPanel ? dataPanel.querySelectorAll('button') : [];
+                    if (dataButtons[1]) {
+                        dataButtons[1].textContent = '清空浏览器消息';
+                        dataButtons[1].onclick = () => clearWebMessageData();
+                    }
+
+                    const exportButton = document.getElementById('btn-export-jsonl');
+                    if (exportButton) exportButton.textContent = '保存到消息检索';
+                }
+            }
         }
 
         function setSidebarHomeMode(isHome) {
@@ -549,9 +637,9 @@
 
         function ensureMessageViewportFilled() {
             if (!isMessageViewVisible()) return;
-            if (renderedCount >= currentFilteredPosts.length) return;
             if (scrollContainer.scrollHeight <= scrollContainer.clientHeight) {
-                scheduleNextBatch();
+                if (renderedCount < currentFilteredPosts.length) scheduleNextBatch();
+                else loadNextPagedMessageBatch();
             }
         }
 
@@ -1473,7 +1561,15 @@
                     if (msgView) {
                         msgView.style.display = 'block';
                         syncMessageIndexLoadingShield();
-                        ensureMessageViewportFilled();
+                        if (window.__messageDataDirty && typeof loadWebMessageData === 'function') {
+                            window.__messageDataDirty = false;
+                            Promise.resolve(loadWebMessageData()).catch(error => {
+                                window.__messageDataDirty = true;
+                                console.warn('自动抓取后的消息索引刷新失败:', error);
+                            });
+                        } else {
+                            ensureMessageViewportFilled();
+                        }
                     }
                 }
 
@@ -2139,8 +2235,27 @@
         let allMemberOptions = [];
         let currentFilteredPosts = [];
         let renderedCount = 0;
+        const WEB_MESSAGE_PAGE_SIZE = 100;
+        let webMessagePage = 1;
+        let webMessageHasMore = false;
+        let webMessageSummary = { totalCount: 0, members: [] };
+        let webMessageQueryToken = 0;
+        let pagedMessageMatchedCount = 0;
+        let pagedMessageCursors = new Map([[1, null]]);
+        let pagedMessageLoadingMore = false;
+        let pagedAnalysisPosts = null;
+        const desktopMessageStore = !isWebRuntime ? {
+            sync: () => ipcRenderer.invoke('message-index-sync'),
+            getSummary: () => ipcRenderer.invoke('message-index-summary'),
+            queryPage: filters => ipcRenderer.invoke('message-index-query-page', filters),
+            analyze: payload => ipcRenderer.invoke('message-index-analyze', payload),
+            getAll: () => ipcRenderer.invoke('message-index-get-all')
+        } : null;
+        const isPagedMessageRuntime = isWebRuntime || !!desktopMessageStore;
+        const getActiveMessageStore = () => isWebRuntime ? window.yayaWebMessageStore : desktopMessageStore;
         const getBatchSize = () => (filterType === 'video' || filterType === 'image') ? 6 : 30;
         let filterType = 'all';
+        let messageAnalysisDrilldown = '';
         let userStats = [];
         let availableYears = new Set();
         let isRenderingBatch = false;
@@ -2382,12 +2497,17 @@
             resetFollowedRoomsState,
             selectFollowedSort,
             selectQuickFollowMember,
+            startFollowedRoomNotificationPolling,
             startFollowedRoomsPolling,
+            stopFollowedRoomNotificationPolling,
             stopFollowedRoomsPolling,
             sortFollowedRooms,
-            toggleFollowedSortDropdown
+            toggleActiveFollowedRoomNotification,
+            toggleFollowedSortDropdown,
+            updateFollowedRoomNotificationButton
         } = window.YayaRendererFeatures.createFollowedRoomsFeature({
             getActiveFollowedChannel: () => getActiveFollowedChannel(),
+            getAdaptivePollDelay: () => getAdaptivePollDelay(),
             getAppToken: () => getCurrentAppToken(),
             getMemberData: () => memberData || [],
             getMemberDataLoaded: () => !!window.isMemberDataLoaded,
@@ -2409,8 +2529,25 @@
         window.resetFollowedRoomsState = resetFollowedRoomsState;
         window.selectFollowedSort = selectFollowedSort;
         window.selectQuickFollowMember = selectQuickFollowMember;
+        window.toggleActiveFollowedRoomNotification = toggleActiveFollowedRoomNotification;
+        window.updateFollowedRoomNotificationButton = updateFollowedRoomNotificationButton;
         window.sortFollowedRooms = sortFollowedRooms;
         window.toggleFollowedSortDropdown = toggleFollowedSortDropdown;
+        if (window.ipcRenderer && typeof window.ipcRenderer.on === 'function') {
+            window.ipcRenderer.on('open-followed-room-from-notification', (event, payload = {}) => {
+                const channelId = String(payload.channelId || '').trim();
+                const mainChannelId = String(payload.mainChannelId || channelId).trim();
+                const serverId = String(payload.serverId || '').trim();
+                if (!channelId || !serverId) return;
+                switchView('followed-rooms');
+                setTimeout(() => {
+                    openFollowedChat(String(payload.memberName || '成员'), channelId, serverId, {
+                        mainChannelId,
+                        roomType: payload.roomType === 'small' ? 'small' : 'big'
+                    });
+                }, 180);
+            });
+        }
 
         ({
             loadMemberAvatar,
@@ -2951,8 +3088,11 @@
         } = window.YayaRendererFeatures.createAnalysisFeature({
             applyFilters,
             escapeHtml,
-            getAllPosts: () => allPosts || [],
-            getCurrentFilteredPosts: () => currentFilteredPosts || [],
+            getAllPosts: () => pagedAnalysisPosts || allPosts || [],
+            getCurrentFilteredPosts: () => pagedAnalysisPosts
+                ? filterMessagePostsInMemory(pagedAnalysisPosts)
+                : (currentFilteredPosts || []),
+            loadAnalysis: !isWebRuntime ? loadMessageAnalysis : null,
             getMemberIdSet: () => memberIdSet,
             getMemberNameMap: () => memberNameMap,
             getPocketGiftData: () => typeof POCKET_GIFT_DATA !== 'undefined' ? POCKET_GIFT_DATA : [],
@@ -2961,6 +3101,26 @@
             selectDateItem,
             setFilter
         }));
+        const openDateAnalysisFromMemory = openDateAnalysis;
+        const openGiftAnalysisFromMemory = openGiftAnalysis;
+        const openSpeechAnalysisFromMemory = openSpeechAnalysis;
+        const openUserAnalysisFromMemory = openUserAnalysis;
+        openDateAnalysis = async (...args) => {
+            if (isWebRuntime) await ensurePagedAnalysisPosts();
+            return openDateAnalysisFromMemory(...args);
+        };
+        openGiftAnalysis = async (...args) => {
+            if (isWebRuntime) await ensurePagedAnalysisPosts();
+            return openGiftAnalysisFromMemory(...args);
+        };
+        openSpeechAnalysis = async (...args) => {
+            if (isWebRuntime) await ensurePagedAnalysisPosts();
+            return openSpeechAnalysisFromMemory(...args);
+        };
+        openUserAnalysis = async (...args) => {
+            if (isWebRuntime) await ensurePagedAnalysisPosts();
+            return openUserAnalysisFromMemory(...args);
+        };
         window.closeDateAnalysis = closeDateAnalysis;
         window.closeGiftAnalysis = closeGiftAnalysis;
         window.closeSpeechAnalysis = closeSpeechAnalysis;
@@ -3272,6 +3432,280 @@
             });
         }
 
+        function parseWebMessageRecords(records) {
+            const groupedRecords = new Map();
+            (Array.isArray(records) ? records : []).forEach((record) => {
+                if (!record || (!record.itemHtml && !record.content && !record.contentHtml)) return;
+                const memberName = String(record.memberName || '未命名成员');
+                const fileName = String(record.fileName || 'messages.jsonl');
+                const groupKey = `${memberName}\u0000${fileName}`;
+                if (!groupedRecords.has(groupKey)) {
+                    groupedRecords.set(groupKey, { memberName, fileName, records: [] });
+                }
+                groupedRecords.get(groupKey).records.push(record);
+            });
+
+            const posts = [];
+            groupedRecords.forEach((group) => {
+                const html = `<ul>${group.records.map(jsonRecordToHtmlRow).join('\n')}</ul>`;
+                const sourcePath = group.records[0]?.sourcePath || `web:${group.memberName}/${group.fileName}`;
+                const parsedGroupPosts = parseHtmlContent(html, group.fileName, group.memberName);
+                posts.push(...parsedGroupPosts.map((post, index) => ({
+                    ...post,
+                    sourcePath: group.records[index]?.sourcePath || sourcePath,
+                    sourceFile: group.records[index]?.fileName || group.fileName,
+                    indexId: group.records[index]?.indexId || ''
+                })));
+            });
+            posts.sort((a, b) => {
+                const difference = getMessagePostTimeMs(a) - getMessagePostTimeMs(b);
+                return currentSortOrder === 'desc' ? -difference : difference;
+            });
+            posts.forEach((post, index) => {
+                post.originalIndex = index;
+            });
+            return posts;
+        }
+
+        function getWebMessageFilterInput() {
+            const groupValue = String(document.getElementById('groupInput')?.value || '全部成员');
+            return {
+                query: String(document.getElementById('search-content-input')?.value || '').trim(),
+                user: String(document.getElementById('search-user-input')?.value || '').trim(),
+                member: (groupValue === '全部成员' || !groupValue) ? 'all' : groupValue,
+                type: filterType,
+                drilldown: messageAnalysisDrilldown,
+                fromTime: parseMessageFilterDate(getMessageDateValue('from'), false),
+                toTime: parseMessageFilterDate(getMessageDateValue('to'), true),
+                sortOrder: currentSortOrder
+            };
+        }
+
+        async function applyWebMessageFilters(options = {}) {
+            const store = getActiveMessageStore();
+            if (!store || typeof store.queryPage !== 'function') return;
+            const append = options.append === true;
+            if (append && (pagedMessageLoadingMore || !webMessageHasMore)) return;
+            if (options.resetPage) {
+                webMessagePage = 1;
+                pagedMessageCursors = new Map([[1, null]]);
+            }
+            const requestedPage = append ? webMessagePage + 1 : webMessagePage;
+            const queryToken = append ? webMessageQueryToken : ++webMessageQueryToken;
+            pagedMessageLoadingMore = true;
+            if (!append) {
+                statusMsg.textContent = '正在检索消息...';
+            }
+
+            try {
+                const request = {
+                    ...getWebMessageFilterInput(),
+                    offset: (requestedPage - 1) * WEB_MESSAGE_PAGE_SIZE,
+                    limit: WEB_MESSAGE_PAGE_SIZE
+                };
+                if (!isWebRuntime) {
+                    request.cursor = pagedMessageCursors.get(requestedPage) || null;
+                    delete request.offset;
+                }
+                const result = await store.queryPage(request);
+                if (queryToken !== webMessageQueryToken) return;
+
+                const nextPosts = parseWebMessageRecords(result.records);
+                if (append) {
+                    const startIndex = allPosts.length;
+                    nextPosts.forEach((post, index) => {
+                        post.originalIndex = startIndex + index;
+                    });
+                    allPosts = allPosts.concat(nextPosts);
+                    currentFilteredPosts = currentFilteredPosts.concat(nextPosts);
+                    webMessagePage = requestedPage;
+                } else {
+                    allPosts = nextPosts;
+                    currentFilteredPosts = allPosts.slice();
+                }
+                webMessageHasMore = !!result.hasMore;
+                pagedMessageMatchedCount = Number.isFinite(Number(result.totalCount))
+                    ? Number(result.totalCount)
+                    : Number(webMessageSummary.totalCount) || 0;
+                if (!isWebRuntime && result.nextCursor) {
+                    pagedMessageCursors.set(requestedPage + 1, result.nextCursor);
+                }
+                if (!append) {
+                    outputList.innerHTML = '';
+                    resetMessageRenderState();
+                    if (scrollContainer) scrollContainer.scrollTop = 0;
+                }
+                if (!currentFilteredPosts.length) {
+                    const isDatabaseEmpty = webMessageSummary.totalCount === 0;
+                    outputList.innerHTML = isDatabaseEmpty
+                        ? '<div class="placeholder-tip"><h3>还没有消息</h3><p>请返回主页进入“抓取”，选择成员并将抓取结果保存到消息检索。</p></div>'
+                        : '<div class="placeholder-tip"><h3>没有匹配消息</h3><p>请调整关键词或筛选条件。</p></div>';
+                } else if (isMessageViewVisible()) {
+                    if (append) scheduleNextBatch();
+                    else renderNextBatch();
+                }
+                updateStatus();
+            } catch (error) {
+                if (queryToken !== webMessageQueryToken) return;
+                console.error('检索浏览器消息失败:', error);
+                if (append) {
+                    statusMsg.textContent = '继续加载消息失败，请稍后再试';
+                } else {
+                    allPosts = [];
+                    currentFilteredPosts = [];
+                    webMessageHasMore = false;
+                    statusMsg.textContent = '消息检索失败';
+                    outputList.innerHTML = `<div class="placeholder-tip"><h3>消息检索失败</h3><p>${escapeHtml(error?.message || '未知错误')}</p></div>`;
+                }
+            } finally {
+                if (queryToken === webMessageQueryToken) pagedMessageLoadingMore = false;
+            }
+        }
+
+        async function loadNextPagedMessageBatch() {
+            if (!isPagedMessageRuntime || pagedMessageLoadingMore || !webMessageHasMore) return;
+            if (renderedCount < currentFilteredPosts.length) {
+                scheduleNextBatch();
+                return;
+            }
+            await applyWebMessageFilters({ append: true });
+        }
+
+        async function loadWebMessageData() {
+            const store = getActiveMessageStore();
+            const environmentName = isWebRuntime ? '浏览器' : '本地';
+            setMessageIndexLoadingState(true, '正在读取消息', `正在准备${environmentName}消息索引`);
+            statusMsg.textContent = `正在读取${environmentName}消息索引...`;
+
+            if (!store || typeof store.getSummary !== 'function' || typeof store.queryPage !== 'function') {
+                allPosts = [];
+                currentFilteredPosts = [];
+                setMessageIndexLoadingState(false);
+                statusMsg.textContent = '消息索引不可用';
+                outputList.innerHTML = '<div class="placeholder-tip"><h3>无法读取消息</h3><p>当前消息索引服务不可用。</p></div>';
+                return;
+            }
+
+            try {
+                if (!isWebRuntime) {
+                    await migrateLegacyHtmlMessageFiles(FIXED_PATH);
+                    await store.sync();
+                    removeMessageCacheFile();
+                    pagedAnalysisPosts = null;
+                }
+                webMessageSummary = await store.getSummary();
+                allMemberOptions = Array.from(new Set(webMessageSummary.members || [])).sort();
+                messageIndexLoadState.initialized = true;
+                setMessageIndexLoadingState(false);
+                initDateSelectors();
+                const sortBtn = document.getElementById('sortBtn');
+                if (sortBtn) sortBtn.innerText = currentSortOrder === 'asc' ? '当前：最早在前' : '当前：最新在前';
+                const searchInput = document.getElementById('searchInput');
+                if (searchInput) searchInput.disabled = false;
+                if (analysisBtn) analysisBtn.disabled = false;
+                if (dateBtn) dateBtn.disabled = false;
+                const giftAnalysisBtn = document.getElementById('giftAnalysisBtn');
+                const speechAnalysisBtn = document.getElementById('speechAnalysisBtn');
+                if (giftAnalysisBtn) giftAnalysisBtn.disabled = false;
+                if (speechAnalysisBtn) speechAnalysisBtn.disabled = false;
+                const dateTrigger = document.querySelector('#message-date-wrapper .flip-date-trigger');
+                if (dateTrigger) dateTrigger.disabled = false;
+                webMessagePage = 1;
+                await applyWebMessageFilters({ resetPage: true });
+            } catch (error) {
+                console.error('读取浏览器消息索引失败:', error);
+                allPosts = [];
+                currentFilteredPosts = [];
+                setMessageIndexLoadingState(false);
+                statusMsg.textContent = '消息索引读取失败';
+                outputList.innerHTML = `<div class="placeholder-tip"><h3>消息读取失败</h3><p>${escapeHtml(error?.message || '未知错误')}</p></div>`;
+            }
+        }
+
+        async function ensurePagedAnalysisPosts() {
+            if (!isPagedMessageRuntime || pagedAnalysisPosts) return pagedAnalysisPosts;
+            const store = getActiveMessageStore();
+            if (!store || typeof store.getAll !== 'function') return null;
+
+            const originalStatus = statusMsg.textContent;
+            statusMsg.textContent = '正在准备完整统计数据...';
+            try {
+                const records = await store.getAll();
+                pagedAnalysisPosts = parseWebMessageRecords(records);
+                return pagedAnalysisPosts;
+            } finally {
+                statusMsg.textContent = originalStatus;
+            }
+        }
+
+        async function loadMessageAnalysis(kind) {
+            const store = getActiveMessageStore();
+            if (!store || typeof store.analyze !== 'function') {
+                throw new Error('本地统计服务不可用');
+            }
+            const memberNames = new Set(allMemberOptions || []);
+            if (memberNameMap && typeof memberNameMap.keys === 'function') {
+                for (const name of memberNameMap.keys()) memberNames.add(String(name));
+            }
+            const memberIds = memberIdSet && typeof memberIdSet.values === 'function'
+                ? Array.from(memberIdSet.values(), value => String(value))
+                : [];
+            const giftPrices = (typeof POCKET_GIFT_DATA !== 'undefined' && Array.isArray(POCKET_GIFT_DATA))
+                ? POCKET_GIFT_DATA.map(gift => ({
+                    id: gift.id,
+                    name: gift.name,
+                    cost: Number(gift.cost) || 0
+                }))
+                : [];
+            return store.analyze({
+                kind,
+                filters: getWebMessageFilterInput(),
+                memberNames: Array.from(memberNames),
+                memberIds,
+                giftPrices
+            });
+        }
+
+        window.applyMessageAnalysisDrilldown = function applyMessageAnalysisDrilldown(kind, payload = {}) {
+            const contentInput = document.getElementById('search-content-input');
+            const userInput = document.getElementById('search-user-input');
+            messageAnalysisDrilldown = kind === 'gift' || kind === 'interaction' ? kind : '';
+            filterType = 'all';
+            document.querySelectorAll('.filter-chip').forEach(element => element.classList.remove('active'));
+            document.getElementById('filter-all')?.classList.add('active');
+
+            if (kind === 'interaction') {
+                const names = Array.isArray(payload.names) ? payload.names.map(String).filter(Boolean) : [];
+                if (contentInput) contentInput.value = names.join('|');
+                if (userInput) userInput.value = '';
+            } else if (kind === 'gift') {
+                if (contentInput) contentInput.value = '';
+                if (userInput) userInput.value = String(payload.userId || payload.name || '').trim();
+            }
+
+            const view = document.getElementById('view-messages');
+            if (view) view.scrollTop = 0;
+            return applyFilters();
+        };
+
+        window.clearWebMessageData = function clearWebMessageData() {
+            const clearMessages = async () => {
+                try {
+                    await window.yayaWebMessageStore.clear();
+                    await loadWebMessageData();
+                    if (typeof showToast === 'function') showToast('浏览器消息已清空');
+                } catch (error) {
+                    if (typeof showToast === 'function') showToast(`清空失败：${error?.message || '未知错误'}`);
+                }
+            };
+
+            if (typeof showCustomConfirm === 'function') {
+                showCustomConfirm('确定清空当前浏览器中保存的全部消息吗？此操作无法撤销。', clearMessages);
+            } else if (window.confirm('确定清空当前浏览器中保存的全部消息吗？此操作无法撤销。')) {
+                clearMessages();
+            }
+        };
+
         window.onload = async function () {
             try {
                 setMessageIndexLoadingState(true, '正在初始化', '正在准备运行环境');
@@ -3294,36 +3728,15 @@
                     console.warn('成员列表预加载失败:', error);
                 });
 
-                if (isWebRuntime || !fs || typeof fs.existsSync !== 'function') {
+                if (isWebRuntime) {
+                    await loadWebMessageData();
+                } else if (!fs || typeof fs.existsSync !== 'function') {
                     allPosts = [];
                     initUIWithData();
-                    statusMsg.textContent = "网页版已就绪";
-                    outputList.innerHTML = '<div class="placeholder-tip"><h3>网页版已启动</h3><p>本地历史 HTML 扫描仅桌面版支持；网页版可继续使用登录、抓取、房间、相册、翻牌等在线功能。</p></div>';
-                } else if (hasJsonlMessageFiles(FIXED_PATH)) {
-                    removeMessageCacheFile();
-                    setMessageIndexLoadingState(true, '正在直读 JSONL', '检测到本地 JSONL 数据，跳过缓存');
-                    statusMsg.textContent = "正在直读 JSONL 数据...";
-                    scanFiles();
-                } else if (fs.existsSync(CACHE_FILE)) {
-                    setMessageIndexLoadingState(true, '正在读取缓存', '解析本地历史数据');
-                    statusMsg.textContent = "正在流式读取缓存...";
-
-                    loadCacheOptimized().then((data) => {
-                        allPosts = data;
-                        allPosts.forEach((post, index) => {
-                            post.originalIndex = index;
-                        });
-                        initUIWithData();
-                        statusMsg.textContent = `缓存加载完毕: ${allPosts.length} 条`;
-
-                    }).catch((e) => {
-                        try {
-                            fs.unlinkSync(CACHE_FILE);
-                        } catch (err) { }
-                        scanFiles();
-                    });
+                    statusMsg.textContent = "消息文件系统不可用";
+                    outputList.innerHTML = '<div class="placeholder-tip"><h3>无法读取消息</h3><p>当前运行环境不支持消息文件系统。</p></div>';
                 } else {
-                    scanFiles();
+                    await loadWebMessageData();
                 }
 
                 if (window.vodState) {
@@ -3349,7 +3762,8 @@
 
                 let searchTimeout = null;
 
-                function handleInstantSearch() {
+                function handleInstantSearch(event) {
+                    if (event?.isTrusted) messageAnalysisDrilldown = '';
                     if (searchTimeout) clearTimeout(searchTimeout);
 
                     searchTimeout = setTimeout(() => {
@@ -3365,6 +3779,7 @@
 
                 if (rBtn) {
                     rBtn.onclick = () => {
+                        messageAnalysisDrilldown = '';
                         if (cInput) cInput.value = '';
                         if (uInput) uInput.value = '';
 
@@ -3442,6 +3857,10 @@
 
 
         window.forceReloadData = function () {
+            if (isPagedMessageRuntime) {
+                return loadWebMessageData();
+            }
+
             setMessageIndexLoadingState(true, '正在准备更新', '检查文件变动');
 
             currentFilteredPosts = [];
@@ -3509,6 +3928,17 @@
             }
 
             loadManifest();
+            let htmlMigration = { convertedFiles: 0, convertedMessages: 0, deletedFiles: 0, failedFiles: 0, deleteFailures: 0 };
+            try {
+                htmlMigration = await migrateLegacyHtmlMessageFiles(FIXED_PATH);
+                if (htmlMigration.convertedFiles > 0) {
+                    isIncremental = false;
+                    fileManifest = {};
+                    removeMessageCacheFile();
+                }
+            } catch (error) {
+                console.error('检测旧 HTML 消息失败:', error);
+            }
 
             if (isIncremental && allPosts.some(post => !post || !post.sourcePath)) {
                 isIncremental = false;
@@ -3570,6 +4000,10 @@
                     if (item.isDirectory()) {
                         await gatherFilesAsync(path.join(dirPath, item.name), item.name);
                     } else if (item.isFile() && isMessageDataFile(item.name)) {
+                        if (/\.html$/i.test(item.name)) {
+                            const jsonlPath = path.join(dirPath, item.name.replace(/\.html$/i, '.jsonl'));
+                            if (fs.existsSync(jsonlPath) && await hasUsableJsonlMessageFile(jsonlPath)) continue;
+                        }
                         fileQueue.push({
                             fullPath: path.join(dirPath, item.name),
                             fileName: item.name,
@@ -4764,6 +5198,266 @@
                 .replace(/^\s+|\s+$/g, '');
         }
 
+        function getLegacyMigrationText(node) {
+            return String(node?.textContent || '').replace(/\s+/g, ' ').trim();
+        }
+
+        function getLegacyMigrationMediaUrl(node, selector) {
+            const media = node?.querySelector(selector);
+            if (!media) return '';
+            return String(media.getAttribute('src') || media.querySelector('source')?.getAttribute('src') || '').trim();
+        }
+
+        function buildLegacyMigrationKey(row, timeStr, userId, index) {
+            const existingKey = String(row.getAttribute('data-export-key') || '').trim();
+            if (existingKey) return existingKey;
+
+            const seed = `${timeStr}|${userId}|${getLegacyMigrationText(row)}|${index}`;
+            let hash = 0;
+            for (let i = 0; i < seed.length; i += 1) {
+                hash = ((hash << 5) - hash) + seed.charCodeAt(i);
+                hash |= 0;
+            }
+            return `legacy_${Math.abs(hash)}_${Date.parse(String(timeStr).replace(/-/g, '/')) || index}`;
+        }
+
+        function extractLegacyReplyContent(contentRoot) {
+            const quote = contentRoot.querySelector('blockquote');
+            if (!quote) return null;
+
+            const quoteText = getLegacyMigrationText(quote);
+            const separatorIndex = Math.max(quoteText.indexOf('：'), quoteText.indexOf(':'));
+            const replyName = separatorIndex >= 0 ? quoteText.slice(0, separatorIndex).trim() : '未知用户';
+            const replyText = separatorIndex >= 0 ? quoteText.slice(separatorIndex + 1).trim() : quoteText;
+            quote.remove();
+            contentRoot.querySelectorAll('audio, video').forEach(node => node.remove());
+            contentRoot.querySelectorAll('div').forEach(node => {
+                if (/^(?:音频|语音|视频)\s*[-–—]/.test(getLegacyMigrationText(node))) node.remove();
+            });
+            return {
+                text: getLegacyMigrationText(contentRoot),
+                replyName,
+                replyText
+            };
+        }
+
+        function convertLegacyHtmlRowToStructuredRecord(row, index) {
+            const timeStr = getLegacyMigrationText(row.querySelector('time'));
+            const parsedTime = Date.parse(timeStr.replace(/-/g, '/'));
+            const senderNode = row.querySelector('span[data-userid], div.mb-2 span');
+            const header = senderNode?.closest('div.mb-2') || null;
+            const avatar = header?.querySelector('img');
+            const userId = String(senderNode?.getAttribute('data-userid') || '');
+            const roleId = Number(senderNode?.getAttribute('data-roleid')) || 0;
+            const senderName = getLegacyMigrationText(senderNode) || '未知用户';
+            const contentRoot = row.cloneNode(true);
+            contentRoot.querySelector('time')?.remove();
+            if (header) {
+                const clonedHeader = contentRoot.querySelector('span[data-userid], div.mb-2 span')?.closest('div.mb-2');
+                clonedHeader?.remove();
+            }
+
+            const audioUrl = getLegacyMigrationMediaUrl(contentRoot, 'audio');
+            const videoUrl = getLegacyMigrationMediaUrl(contentRoot, 'video');
+            const mediaImage = Array.from(contentRoot.querySelectorAll('img')).find(image => !image.classList.contains('avatar'));
+            const imageUrl = String(mediaImage?.getAttribute('src') || '');
+            const textContent = getLegacyMigrationText(contentRoot);
+            let messageType = 'TEXT';
+            let content = { text: textContent };
+
+            const questionNode = Array.from(contentRoot.querySelectorAll('p, div')).find(node => /翻牌问题[:：]|翻牌提问/.test(getLegacyMigrationText(node)));
+            const answerNode = Array.from(contentRoot.querySelectorAll('p, div')).find(node => /回答[:：]|成员回答/.test(getLegacyMigrationText(node)));
+            if (questionNode || answerNode) {
+                const question = getLegacyMigrationText(questionNode).replace(/^.*?(?:翻牌问题[:：]|翻牌提问)\s*/, '');
+                const answer = getLegacyMigrationText(answerNode).replace(/^.*?(?:回答[:：]|成员回答)\s*/, '');
+                if (videoUrl) {
+                    messageType = 'FLIPCARD_VIDEO';
+                    content = { flipCardVideoInfo: { question, answer: { url: videoUrl } } };
+                } else if (audioUrl) {
+                    messageType = 'FLIPCARD_AUDIO';
+                    content = { flipCardAudioInfo: { question, answer: { url: audioUrl } } };
+                } else {
+                    messageType = 'FLIPCARD';
+                    content = { flipCardInfo: { question, answer } };
+                }
+            } else {
+                const giftContainer = Array.from(contentRoot.querySelectorAll('div')).find(node =>
+                    String(node.getAttribute('style') || '').includes('background:#fff0f6')
+                    && getLegacyMigrationText(node).includes('送出礼物')
+                );
+                const packetContainer = Array.from(contentRoot.querySelectorAll('div')).find(node =>
+                    String(node.getAttribute('style') || '').includes('linear-gradient')
+                    && getLegacyMigrationText(node).includes('红包')
+                );
+                const liveLink = contentRoot.querySelector('a[href*="live/playdetail"], a[href*="?id="]');
+                const replyRoot = contentRoot.cloneNode(true);
+                const replyInfo = extractLegacyReplyContent(replyRoot);
+
+                if (giftContainer) {
+                    const giftText = getLegacyMigrationText(giftContainer);
+                    const giftName = giftText.match(/送出礼物[:：]\s*([^数量]+)/)?.[1]?.trim() || '未知礼物';
+                    const giftNum = Number(giftText.match(/数量[:：]\s*x?(\d+)/i)?.[1]) || 1;
+                    const totalCost = Number(giftText.match(/\((\d+)🍗\)/)?.[1]) || 0;
+                    messageType = 'GIFT_TEXT';
+                    content = {
+                        giftInfo: {
+                            giftName,
+                            giftNum,
+                            money: totalCost ? totalCost / giftNum : 0,
+                            image: String(giftContainer.querySelector('img')?.getAttribute('src') || '')
+                        }
+                    };
+                } else if (packetContainer) {
+                    const detailNodes = Array.from(packetContainer.querySelectorAll('div')).filter(node => node.children.length === 0);
+                    const visibleTexts = detailNodes.map(getLegacyMigrationText).filter(Boolean).filter(text => text !== '红包');
+                    const metaParts = String(visibleTexts[1] || '').split(/\s+·\s+/);
+                    messageType = 'RED_PACKET';
+                    content = {
+                        blessMessage: visibleTexts[0] || '送来了红包祝福',
+                        creatorName: metaParts[0] || senderName,
+                        starName: metaParts.slice(1).join(' · '),
+                        coverUrl: String(packetContainer.querySelector('img')?.getAttribute('src') || '')
+                    };
+                } else if (liveLink) {
+                    const liveId = String(liveLink.getAttribute('href') || '').match(/[?&]id=(\d+)/)?.[1] || '';
+                    const title = String(liveLink.getAttribute('data-title') || getLegacyMigrationText(liveLink) || '直播开始了');
+                    const cover = String(liveLink.getAttribute('data-cover') || '');
+                    const memberName = String(liveLink.getAttribute('data-member') || '');
+                    if (memberName) {
+                        messageType = 'SHARE_LIVE';
+                        content = { shareInfo: { shareTitle: title, jumpPath: `?id=${liveId}`, sharePic: cover, liveUserName: memberName } };
+                    } else {
+                        messageType = 'LIVEPUSH';
+                        content = { livePushInfo: { liveId, liveTitle: title, liveCover: cover } };
+                    }
+                } else if (audioUrl && replyInfo) {
+                    messageType = 'AUDIO_REPLY';
+                    content = { replyInfo: { ...replyInfo, voiceUrl: audioUrl } };
+                } else if (videoUrl) {
+                    messageType = 'VIDEO';
+                    content = { url: videoUrl };
+                } else if (audioUrl) {
+                    messageType = 'AUDIO';
+                    content = { url: audioUrl };
+                } else if (mediaImage?.classList.contains('template-image-express-image')) {
+                    messageType = 'EXPRESSIMAGE';
+                    content = { expressImgInfo: { emotionRemote: imageUrl } };
+                } else if (imageUrl) {
+                    messageType = 'IMAGE';
+                    content = { url: imageUrl };
+                } else if (replyInfo) {
+                    messageType = 'REPLY';
+                    content = { replyInfo };
+                }
+            }
+
+            return {
+                schemaVersion: 1,
+                key: buildLegacyMigrationKey(row, timeStr, userId, index),
+                sortTime: Number.isFinite(parsedTime) ? parsedTime : index,
+                timeStr,
+                messageType,
+                sender: {
+                    name: senderName,
+                    avatarUrl: String(avatar?.getAttribute('src') || ''),
+                    userId,
+                    roleId
+                },
+                content
+            };
+        }
+
+        function convertLegacyHtmlContentToStructuredRecords(htmlContent) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(String(htmlContent || ''), 'text/html');
+            return Array.from(doc.querySelectorAll('.Box-row'))
+                .map(convertLegacyHtmlRowToStructuredRecord)
+                .filter(record => record && record.key);
+        }
+
+        async function hasUsableJsonlMessageFile(filePath) {
+            try {
+                const content = await fs.promises.readFile(filePath, 'utf8');
+                return content.split(/\r?\n/).some(line => {
+                    const trimmed = line.trim();
+                    if (!trimmed) return false;
+                    try {
+                        const record = JSON.parse(trimmed);
+                        return !!(record && typeof record === 'object' && record.key);
+                    } catch (error) {
+                        return false;
+                    }
+                });
+            } catch (error) {
+                return false;
+            }
+        }
+
+        async function migrateLegacyHtmlMessageFiles(dirPath) {
+            const result = {
+                convertedFiles: 0,
+                convertedMessages: 0,
+                deletedFiles: 0,
+                failedFiles: 0,
+                deleteFailures: 0
+            };
+
+            async function deleteConvertedHtml(htmlPath) {
+                try {
+                    await fs.promises.unlink(htmlPath);
+                    result.deletedFiles += 1;
+                } catch (error) {
+                    result.deleteFailures += 1;
+                    console.error('已生成 JSONL，但删除旧 HTML 失败:', htmlPath, error);
+                }
+            }
+
+            async function visit(currentDir) {
+                const items = await fs.promises.readdir(currentDir, { withFileTypes: true });
+                for (const item of items) {
+                    const fullPath = path.join(currentDir, item.name);
+                    if (item.isDirectory()) {
+                        await visit(fullPath);
+                        continue;
+                    }
+                    if (!item.isFile() || !/\.html$/i.test(item.name)) continue;
+
+                    const jsonlPath = fullPath.replace(/\.html$/i, '.jsonl');
+                    if (fs.existsSync(jsonlPath)) {
+                        if (await hasUsableJsonlMessageFile(jsonlPath)) {
+                            await deleteConvertedHtml(fullPath);
+                        }
+                        continue;
+                    }
+
+                    try {
+                        const htmlContent = await fs.promises.readFile(fullPath, 'utf8');
+                        const records = convertLegacyHtmlContentToStructuredRecords(htmlContent);
+                        if (!records.length) continue;
+
+                        const jsonlContent = records.map(record => JSON.stringify(record)).join('\n') + '\n';
+                        const tempPath = `${jsonlPath}.${Date.now()}.migrating`;
+                        await fs.promises.writeFile(tempPath, jsonlContent, 'utf8');
+                        try {
+                            await fs.promises.rename(tempPath, jsonlPath);
+                        } catch (error) {
+                            if (fs.existsSync(tempPath)) await fs.promises.unlink(tempPath);
+                            throw error;
+                        }
+                        result.convertedFiles += 1;
+                        result.convertedMessages += records.length;
+                        await deleteConvertedHtml(fullPath);
+                    } catch (error) {
+                        result.failedFiles += 1;
+                        console.error('HTML 消息转换失败:', fullPath, error);
+                    }
+                }
+            }
+
+            await visit(dirPath);
+            return result;
+        }
+
         function isMessageDataFile(fileName) {
             return /\.(html|jsonl|json)$/i.test(String(fileName || ''));
         }
@@ -4787,19 +5481,213 @@
             return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
         }
 
+        function normalizeJsonMessageMediaUrl(value) {
+            const mediaPath = String(value || '').trim();
+            if (!mediaPath) return '';
+            if (/^https?:\/\//i.test(mediaPath)) return mediaPath;
+            if (mediaPath.includes('48.cn')) return `https://${mediaPath.replace(/^\/+/, '')}`;
+            return mediaPath.startsWith('/')
+                ? `https://source3.48.cn${mediaPath}`
+                : `https://source3.48.cn/${mediaPath}`;
+        }
+
+        function structuredJsonValueText(value, fallback = '') {
+            if (value === null || value === undefined) return String(fallback || '');
+            if (typeof value === 'string') return value;
+            if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+            try {
+                return JSON.stringify(value);
+            } catch (error) {
+                return String(fallback || '');
+            }
+        }
+
+        function renderStructuredGiftContent(giftInfo = {}) {
+            const giftName = structuredJsonValueText(giftInfo.giftName || giftInfo.name, '未知礼物');
+            const giftNum = Number(giftInfo.giftNum || giftInfo.num || giftInfo.count || 1) || 1;
+            const giftImg = normalizeJsonMessageMediaUrl(giftInfo.picPath || giftInfo.giftPic || giftInfo.image || '');
+            let unitCost = Number(giftInfo.money || giftInfo.cost || 0);
+
+            if (!unitCost && typeof POCKET_GIFT_DATA !== 'undefined') {
+                const giftId = giftInfo.giftId || giftInfo.id;
+                const gift = POCKET_GIFT_DATA.find(item => item.id == giftId || item.name === giftName);
+                if (gift) unitCost = Number(gift.cost || 0);
+            }
+
+            const costDisplay = unitCost
+                ? `<span style="margin-left:5px; color:#fa8c16; font-weight:bold;">(${unitCost * giftNum}🍗)</span>`
+                : '';
+
+            return `
+                <div class="mb-2" style="display:flex; align-items:center; background:#fff0f6; padding:6px 8px; border-radius:6px; border:1px solid #ffadd2; max-width: 300px;">
+                    ${giftImg ? `<img src="${escapeHtml(giftImg)}" style="width: 25px !important; height: 25px !important; max-width: 32px !important; max-height: 32px !important; object-fit: contain !important; margin: 0 8px 0 0 !important; border-radius: 4px; box-shadow: none !important;">` : '<span style="font-size:24px; margin-right:8px;">🎁</span>'}
+                    <div style="flex: 1; overflow: hidden;">
+                        <div style="color:#eb2f96; font-weight:bold; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">送出礼物：${escapeHtml(giftName)}</div>
+                        <div style="font-size:11px; color:#888;">数量: x${giftNum} ${costDisplay}</div>
+                    </div>
+                </div>`;
+        }
+
+        function renderStructuredJsonContent(record, senderName) {
+            const content = record.content && typeof record.content === 'object'
+                ? record.content
+                : { text: structuredJsonValueText(record.content ?? record.text ?? '') };
+            const messageType = String(record.messageType || record.msgType || content.messageType || 'TEXT').toUpperCase();
+            const contentMessageType = String(content.messageType || '').toUpperCase();
+
+            if (messageType === 'TEXT') {
+                const text = structuredJsonValueText(content.bodys ?? content.text ?? content);
+                return `<p class="mb-2 template-pre">${escapeHtml(text)}</p>`;
+            }
+
+            if (messageType === 'IMAGE') {
+                const url = normalizeJsonMessageMediaUrl(content.url);
+                return `<div class="mb-2"><img class="template-media" src="${escapeHtml(url)}" loading="lazy" style="cursor: pointer;"></div><div class="mb-2"></div>`;
+            }
+
+            if (messageType === 'GIFT_TEXT' || contentMessageType === 'GIFT_TEXT') {
+                return renderStructuredGiftContent(content.giftInfo || content);
+            }
+
+            if (messageType.startsWith('RED_PACKET') || contentMessageType.startsWith('RED_PACKET')) {
+                const blessMessage = structuredJsonValueText(content.blessMessage, '送来了红包祝福');
+                const creatorName = structuredJsonValueText(content.creatorName, senderName || '未知用户');
+                const starName = structuredJsonValueText(content.starName, '');
+                const packetImage = normalizeJsonMessageMediaUrl(content.openImgUrl || content.coverUrl);
+                return `
+                    <div class="mb-2" style="display:flex; gap:8px; align-items:center; background:linear-gradient(135deg, rgba(255,120,117,0.12) 0%, rgba(255,120,117,0.04) 100%), rgba(0,0,0,0.02); padding:6px 8px; border-radius:10px; border:1px solid rgba(255,110,110,0.22); width: 220px; max-width: 220px; box-sizing: border-box;">
+                        <img src="${escapeHtml(packetImage)}" style="width:34px; height:34px; border-radius:6px; object-fit:cover; flex-shrink:0; box-shadow:0 2px 6px rgba(0,0,0,0.12);">
+                        <div style="min-width:0; flex:1;">
+                            <div style="font-size:10px; color:#ff7875; font-weight:bold; margin-bottom:2px;">红包</div>
+                            <div style="font-size:12px; color:var(--text-main); font-weight:bold; line-height:1.35; word-break:break-word;">${escapeHtml(blessMessage)}</div>
+                            <div style="font-size:11px; color:var(--text-sub); margin-top:4px; line-height:1.35; word-break:break-word;">${escapeHtml(creatorName)}${starName ? ` · ${escapeHtml(starName)}` : ''}</div>
+                        </div>
+                    </div>`;
+            }
+
+            if (messageType === 'VIDEO' || messageType === 'AUDIO') {
+                const url = normalizeJsonMessageMediaUrl(content.url);
+                const isVideo = messageType === 'VIDEO';
+                const mediaTag = isVideo ? 'video' : 'audio';
+                const label = isVideo ? '视频' : '语音';
+                return `<div class="mb-2"><${mediaTag} class="template-media" src="${escapeHtml(url)}" controls></${mediaTag}></div><div class="mb-2">${label} - <a class="color-fg-accent" href="${escapeHtml(url)}" target="_blank">${escapeHtml(url)}</a></div>`;
+            }
+
+            if (messageType === 'REPLY' || messageType === 'GIFTREPLY') {
+                const info = content.replyInfo || content.giftReplyInfo
+                    || content.bodys?.replyInfo || content.bodys?.giftReplyInfo || {};
+                const text = structuredJsonValueText(info.text ?? content.text ?? '');
+                const replyName = structuredJsonValueText(info.replyName, '未知用户');
+                const replyText = structuredJsonValueText(info.replyText, '未知消息');
+                return `<p class="mb-2 template-pre">${escapeHtml(text)}</p><blockquote class="ml-2 mb-2 p-2 color-bg-accent template-pre" style="border-left: 4px solid #d0d7de; color: #57606a;">${escapeHtml(replyName)}：${escapeHtml(replyText)}</blockquote>`;
+            }
+
+            if (messageType === 'EXPRESSIMAGE') {
+                const url = normalizeJsonMessageMediaUrl(content.expressImgInfo?.emotionRemote || content.url);
+                return `<div class="mb-2"><img class="template-image-express-image" src="${escapeHtml(url)}"></div>`;
+            }
+
+            if (messageType === 'LIVEPUSH') {
+                const info = content.livePushInfo || {};
+                const title = structuredJsonValueText(info.liveTitle, '直播开始了');
+                const liveId = structuredJsonValueText(info.liveId, '');
+                const coverUrl = info.liveCover
+                    ? (/^https?:\/\//i.test(info.liveCover) ? info.liveCover : `https://source.48.cn${info.liveCover}`)
+                    : '';
+                return liveId
+                    ? `<a href="live/playdetail?id=${escapeHtml(liveId)}" data-title="${escapeHtml(title)}" data-cover="${escapeHtml(coverUrl)}" target="_blank" style="display:none"></a>`
+                    : `直播 - ${escapeHtml(title)}`;
+            }
+
+            if (messageType === 'SHARE_LIVE' || contentMessageType === 'SHARE_LIVE') {
+                const info = content.shareInfo || {};
+                const title = structuredJsonValueText(info.shareTitle, '直播分享');
+                const match = structuredJsonValueText(info.jumpPath, '').match(/id=(\d+)/);
+                const liveId = match ? match[1] : '';
+                const coverUrl = info.sharePic
+                    ? (/^https?:\/\//i.test(info.sharePic) ? info.sharePic : `https://source.48.cn${info.sharePic}`)
+                    : '';
+                const memberName = structuredJsonValueText(info.liveUserName, '');
+                return liveId
+                    ? `<a href="live/playdetail?id=${escapeHtml(liveId)}" data-title="${escapeHtml(title)}" data-cover="${escapeHtml(coverUrl)}" data-member="${escapeHtml(memberName)}" target="_blank" style="display:none"></a>`
+                    : `[分享] ${escapeHtml(title)}`;
+            }
+
+            if (['AUDIO_GIFT_REPLY', 'AUDIO_REPLY'].includes(messageType) || ['AUDIO_GIFT_REPLY', 'AUDIO_REPLY'].includes(contentMessageType)) {
+                const info = content.replyInfo || content.giftReplyInfo || content;
+                const voiceUrl = normalizeJsonMessageMediaUrl(info.voiceUrl);
+                const replyName = structuredJsonValueText(info.replyName, '未知用户');
+                const replyText = structuredJsonValueText(info.replyText, '');
+                return `<div class="mb-2"><audio class="template-media" src="${escapeHtml(voiceUrl)}" controls></audio></div><div class="mb-2">语音 - <a class="color-fg-accent" href="${escapeHtml(voiceUrl)}" target="_blank">${escapeHtml(voiceUrl)}</a></div><blockquote class="ml-2 mb-2 p-2 color-bg-accent template-pre" style="border-left: 4px solid #d0d7de; color: #57606a;">${escapeHtml(replyName)}：${escapeHtml(replyText)}</blockquote>`;
+            }
+
+            if (['FLIPCARD', 'FLIPCARD_AUDIO', 'FLIPCARD_VIDEO'].includes(messageType)) {
+                const possibleKeys = ['flipCardInfo', 'filpCardInfo', 'flipCardAudioInfo', 'filpCardAudioInfo', 'flipCardVideoInfo', 'filpCardVideoInfo'];
+                let info = null;
+                for (const key of possibleKeys) {
+                    if (content[key]) {
+                        info = content[key];
+                        break;
+                    }
+                    if (content.bodys && content.bodys[key]) {
+                        info = content.bodys[key];
+                        break;
+                    }
+                }
+                const question = structuredJsonValueText(info?.question ?? content.question, '问题');
+                const rawAnswer = info?.answer ?? content.answer ?? '回答';
+                let answerText = structuredJsonValueText(rawAnswer, '回答');
+                let mediaHtml = '';
+
+                if (messageType !== 'FLIPCARD') {
+                    let answerObject = rawAnswer;
+                    if (typeof answerObject === 'string') {
+                        try {
+                            answerObject = JSON.parse(answerObject);
+                        } catch (error) {
+                        }
+                    }
+                    if (answerObject && typeof answerObject === 'object' && answerObject.url) {
+                        const rawUrl = String(answerObject.url);
+                        const mediaUrl = rawUrl.includes('48.cn')
+                            ? normalizeJsonMessageMediaUrl(rawUrl)
+                            : `https://mp4.48.cn/${rawUrl.replace(/^\/+/, '')}`;
+                        const mediaTag = messageType === 'FLIPCARD_VIDEO' ? 'video' : 'audio';
+                        mediaHtml = `<div class="mb-2"><${mediaTag} class="template-media" src="${escapeHtml(mediaUrl)}" controls preload="metadata"></${mediaTag}></div>`;
+                        answerText = mediaUrl;
+                    }
+                }
+
+                const answerHtml = mediaHtml
+                    ? `<a class="color-fg-accent template-pre" href="${escapeHtml(answerText)}" target="_blank">${escapeHtml(answerText)}</a>`
+                    : escapeHtml(answerText);
+                return `<p class="mb-2"><strong>翻牌问题：</strong>${escapeHtml(question)}</p><p class="mb-2"><strong>回答：</strong>${answerHtml}</p>${mediaHtml}`;
+            }
+
+            const fallbackText = structuredJsonValueText(content.text ?? content.bodys ?? content, '');
+            return `<p class="mb-2 template-pre">${escapeHtml(fallbackText)}</p>`;
+        }
+
         function jsonRecordToHtmlRow(record) {
             if (!record || typeof record !== 'object') return '';
 
-            const avatarUrl = String(record.avatarUrl || record.avatar || '').trim();
+            if (record.itemHtml) {
+                return String(record.itemHtml);
+            }
+
+            const sender = record.sender && typeof record.sender === 'object' ? record.sender : {};
+            const avatarUrl = String(sender.avatarUrl || record.avatarUrl || record.avatar || '').trim();
             const avatarHtml = record.avatarHtml
                 || (avatarUrl ? `<img class="avatar avatar-5 mr-2" src="${escapeHtml(avatarUrl)}" loading="lazy">` : '');
-            const nameStr = String(record.nameStr || record.nickName || record.nickname || record.senderName || 'Unknown');
-            const userId = record.userId == null ? '' : String(record.userId);
-            const roleId = record.roleId == null ? '' : String(record.roleId);
-            let contentHtml = String(record.contentHtml || '').trim()
-                || `<p class="mb-2 template-pre">${escapeHtml(String(record.text || record.content || ''))}</p>`;
-            const contentSeed = `${record.msgType || ''} ${contentHtml} ${record.text || ''}`;
-            const recordLooksFlip = /FLIPCARD/i.test(String(record.msgType || ''))
+            const nameStr = String(sender.name || record.nameStr || record.nickName || record.nickname || record.senderName || 'Unknown');
+            const userId = sender.userId == null ? (record.userId == null ? '' : String(record.userId)) : String(sender.userId);
+            const roleId = sender.roleId == null ? (record.roleId == null ? '' : String(record.roleId)) : String(sender.roleId);
+            let contentHtml = record.schemaVersion && record.content
+                ? renderStructuredJsonContent(record, nameStr)
+                : (String(record.contentHtml || '').trim()
+                    || `<p class="mb-2 template-pre">${escapeHtml(String(record.text || record.content || ''))}</p>`);
+            const contentSeed = `${record.messageType || record.msgType || ''} ${contentHtml} ${record.text || ''}`;
+            const recordLooksFlip = /FLIPCARD/i.test(String(record.messageType || record.msgType || ''))
                 || /翻牌问题[:：]/.test(contentSeed);
             if (recordLooksFlip && !/回答[:：]/.test(contentHtml)) {
                 contentHtml += '<p class="mb-2"><strong>回答：</strong></p>';
@@ -4859,19 +5747,24 @@
 
             return parsedPosts.map((post, index) => {
                 const record = validRecords[index] || {};
-                const contentSeed = `${record.msgType || ''} ${record.contentHtml || ''} ${record.text || ''}`;
-                const recordLooksFlip = /FLIPCARD/i.test(String(record.msgType || ''))
+                const structuredContent = record.content && typeof record.content === 'object' ? record.content : {};
+                const recordMessageType = String(record.messageType || record.msgType || structuredContent.messageType || '').toUpperCase();
+                const contentSeed = `${recordMessageType} ${record.contentHtml || ''} ${record.text || ''} ${structuredJsonValueText(structuredContent)}`;
+                const recordLooksFlip = /FLIPCARD/i.test(recordMessageType)
                     || /翻牌问题[:：]/.test(contentSeed);
-                const recordLooksExpress = /EXPRESS/i.test(String(record.msgType || ''))
+                const recordLooksExpress = /EXPRESS/i.test(recordMessageType)
                     || /template-image-express-image/.test(contentSeed)
                     || /\[表情\]/.test(contentSeed);
+                const recordLooksImage = recordMessageType === 'IMAGE';
+                const recordLooksVideo = recordMessageType === 'VIDEO' || recordMessageType === 'FLIPCARD_VIDEO';
+                const recordLooksAudio = ['AUDIO', 'AUDIO_REPLY', 'AUDIO_GIFT_REPLY', 'FLIPCARD_AUDIO'].includes(recordMessageType);
 
                 return {
                     ...post,
                     groupName: String(record.groupName || post.groupName || groupName || ''),
-                    hasImg: post.hasImg || (record.hasImg === true && !recordLooksExpress),
-                    hasVideo: post.hasVideo || record.hasVideo === true || !!record.videoUrl,
-                    hasAudio: post.hasAudio || record.hasAudio === true || !!record.audioUrl,
+                    hasImg: post.hasImg || recordLooksImage || (record.hasImg === true && !recordLooksExpress),
+                    hasVideo: post.hasVideo || recordLooksVideo || record.hasVideo === true || !!record.videoUrl,
+                    hasAudio: post.hasAudio || recordLooksAudio || record.hasAudio === true || !!record.audioUrl,
                     audioUrl: post.audioUrl || String(record.audioUrl || ''),
                     videoUrl: post.videoUrl || String(record.videoUrl || ''),
                     isReply: post.isReply || recordLooksFlip,
@@ -5183,6 +6076,32 @@
                     <span class="timestamp">${post.timeStr}</span>
                 </div>
             `;
+            const profileAvatar = header.querySelector('img.avatar, img.msg-avatar');
+            if (profileAvatar && post.userId && String(post.userId) !== 'undefined') {
+                profileAvatar.classList.add('message-profile-avatar');
+                profileAvatar.title = '查看用户主页';
+                profileAvatar.tabIndex = 0;
+                profileAvatar.setAttribute('role', 'button');
+                const openProfile = event => {
+                    event.stopPropagation();
+                    if (typeof window.openFollowedUserProfile !== 'function') {
+                        if (typeof showToast === 'function') showToast('用户主页模块还没有准备好');
+                        return;
+                    }
+                    window.openFollowedUserProfile(
+                        String(post.userId),
+                        post.nameStr || '口袋用户',
+                        profileAvatar.currentSrc || profileAvatar.src || './icon.png',
+                        isMemberPost
+                    );
+                };
+                profileAvatar.addEventListener('click', openProfile);
+                profileAvatar.addEventListener('keydown', event => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    openProfile(event);
+                });
+            }
             const content = document.createElement('div');
             content.innerHTML = replaceTencentEmoji(post.contentHtml);
             content.querySelectorAll('img').forEach(img => {
@@ -5302,6 +6221,10 @@
             if (isRenderingBatch) return;
             if (renderedCount >= currentFilteredPosts.length) {
                 loadingMoreDiv.style.display = 'none';
+                if (isPagedMessageRuntime && webMessageHasMore && isMessageViewVisible()
+                    && scrollContainer.scrollTop + scrollContainer.clientHeight >= scrollContainer.scrollHeight - 300) {
+                    loadNextPagedMessageBatch();
+                }
                 return;
             }
 
@@ -5320,8 +6243,9 @@
             outputList.appendChild(fragment);
             renderedCount += nextBatch.length;
             isRenderingBatch = false;
-            if (isMessageViewVisible() && scrollContainer.scrollHeight <= scrollContainer.clientHeight && renderedCount < currentFilteredPosts.length) {
-                scheduleNextBatch();
+            if (isMessageViewVisible() && scrollContainer.scrollHeight <= scrollContainer.clientHeight) {
+                if (renderedCount < currentFilteredPosts.length) scheduleNextBatch();
+                else loadNextPagedMessageBatch();
             }
             updateStatus();
         }
@@ -5667,6 +6591,7 @@
         }
 
         function setFilter(type) {
+            messageAnalysisDrilldown = '';
             filterType = type;
 
             document.querySelectorAll('.filter-chip').forEach(el => el.classList.remove('active'));
@@ -5760,7 +6685,57 @@
             }
         });
 
+        function filterMessagePostsInMemory(sourcePosts) {
+            const contentKw = String(document.getElementById('search-content-input')?.value || '').trim().toLowerCase();
+            const userKw = String(document.getElementById('search-user-input')?.value || '').trim().toLowerCase();
+            const groupInputVal = String(document.getElementById('groupInput')?.value || '全部成员');
+            const selectedGroup = (groupInputVal === '全部成员' || !groupInputVal) ? 'all' : groupInputVal;
+            const fromMs = parseMessageFilterDate(getMessageDateValue('from'), false);
+            const toMs = parseMessageFilterDate(getMessageDateValue('to'), true);
+
+            const filtered = (Array.isArray(sourcePosts) ? sourcePosts : []).filter(post => {
+                if (selectedGroup !== 'all' && post.groupName !== selectedGroup) return false;
+                if (contentKw) {
+                    const text = String(post.text || '').toLowerCase();
+                    const title = String(post.liveTitle || '').toLowerCase();
+                    const html = String(post.contentHtml || '').toLowerCase();
+                    const terms = contentKw.split('|').map(term => term.trim()).filter(Boolean);
+                    if (terms.length && !terms.some(term => text.includes(term) || title.includes(term) || html.includes(term))) return false;
+                }
+                if (userKw) {
+                    const name = String(post.nameStr || '').toLowerCase();
+                    const userId = String(post.userId || '').toLowerCase();
+                    if (!name.includes(userKw) && userId !== userKw) return false;
+                }
+
+                if (filterType === 'image' && (post.isReply || !post.hasImg)) return false;
+                if (filterType === 'video' && (post.isReply || !post.hasVideo)) return false;
+                if (filterType === 'audio' && (post.isReply || !post.hasAudio)) return false;
+                if (filterType === 'reply' && !post.isReply) return false;
+                if (filterType === 'live-record' && !post.liveId && !post.isLiveText) return false;
+                if (filterType === 'text' && (post.hasImg || post.hasVideo || post.hasAudio || post.liveId || post.isLiveText || post.isReply)) return false;
+
+                if (fromMs !== null || toMs !== null) {
+                    const postTime = getMessagePostTimeMs(post);
+                    if (!postTime) return false;
+                    if (fromMs !== null && postTime < fromMs) return false;
+                    if (toMs !== null && postTime > toMs) return false;
+                }
+                return true;
+            });
+
+            filtered.sort((left, right) => {
+                const difference = getMessagePostTimeMs(left) - getMessagePostTimeMs(right);
+                return currentSortOrder === 'desc' ? -difference : difference;
+            });
+            return filtered;
+        }
+
         function applyFilters() {
+            if (isPagedMessageRuntime) {
+                return applyWebMessageFilters({ resetPage: true });
+            }
+
             const contentInput = document.getElementById('search-content-input');
             const userInput = document.getElementById('search-user-input');
 
@@ -5847,10 +6822,16 @@
                 'reply': '翻牌',
                 'live-record': '直播'
             };
+            if (isPagedMessageRuntime) {
+                statusMsg.textContent = `[${names[filterType]}] 共 ${pagedMessageMatchedCount || 0} 条`;
+                return;
+            }
             statusMsg.textContent = `[${names[filterType]}] 找到 ${currentFilteredPosts.length} 条`;
         }
         scrollContainer.addEventListener('scroll', () => {
-            if (scrollContainer.scrollTop + scrollContainer.clientHeight >= scrollContainer.scrollHeight - 300) scheduleNextBatch();
+            if (scrollContainer.scrollTop + scrollContainer.clientHeight < scrollContainer.scrollHeight - 300) return;
+            if (renderedCount < currentFilteredPosts.length) scheduleNextBatch();
+            else loadNextPagedMessageBatch();
         });
 
         function openContextModal(targetGlobalIndex) {

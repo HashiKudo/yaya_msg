@@ -17,11 +17,13 @@ function registerSystemIpc() {
             };
         }
     });
-    ipcMain.handle('save-export-html', (event, payload) => systemService.saveExportHtml(payload));
+    ipcMain.handle('save-export-jsonl', (event, payload) => systemService.saveExportJsonl(payload));
+    ipcMain.handle('save-export-html', (event, payload) => systemService.saveExportJsonl(payload));
     ipcMain.handle('dialog-open-directory', () => systemService.openDirectoryDialog(getMainWindow()));
     ipcMain.handle('open-message-data-folder', () => systemService.openMessageDataFolder());
     ipcMain.handle('fetch-remote-image-data-url', (event, payload) => systemService.fetchRemoteImageDataUrl(payload));
     ipcMain.handle('cache-image-thumbnail', (event, payload) => systemService.createCachedImageThumbnail(payload));
+    ipcMain.handle('show-system-notification', (event, payload) => systemService.showSystemNotification(payload, getMainWindow()));
     ipcMain.handle('check-ip-info', () => systemService.checkIpInfo());
     ipcMain.handle('check-ip-domestic', () => systemService.checkIpDomestic());
     ipcMain.handle('check-ip-foreign', () => systemService.checkIpForeign());

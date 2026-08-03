@@ -10,6 +10,17 @@
         const AUTO_CHECKIN_ENABLED_KEY = 'yaya_auto_checkin_enabled';
         const AUTO_CHECKIN_LAST_DATE_KEY = 'yaya_auto_checkin_last_date';
         const AUTO_CHECKIN_LAST_USER_KEY = 'yaya_auto_checkin_last_user';
+        const AUTO_MESSAGE_FETCH_SETTING_KEY = 'autoMessageFetch';
+        const AUTO_MESSAGE_FETCH_DEFAULT_INTERVAL = 10;
+        const AUTO_MESSAGE_FETCH_MAX_PAGES = 200;
+        let autoMessageFetchTimer = null;
+        let autoMessageFetchStartupTimer = null;
+        let autoMessageFetchInFlight = false;
+        let autoMessageFetchInitialized = false;
+        let autoMessageFetchStartupArmed = false;
+        let autoMessageFetchStartupCompleted = false;
+        let autoMessageFetchDraftConfig = null;
+        let autoMessageFetchDraftDirty = false;
         let currentPocketUserId = '';
         let currentPocketProfile = { nickname: '', avatar: '', avatarUrl: '' };
         let selectedAccountAvatarFile = null;
@@ -878,6 +889,746 @@
             return new Promise(resolve => setTimeout(resolve, ms));
         }
 
+        function normalizeAutoMessageFetchMember(member) {
+            const name = String(member?.name || member?.ownerName || '').trim();
+            const serverId = String(member?.serverId || '').trim();
+            const channelId = String(member?.channelId || '').trim();
+            if (!name || !serverId || !channelId) return null;
+
+            return {
+                name,
+                serverId,
+                channelId,
+                smallChannelId: String(member?.smallChannelId || member?.yklzId || '').trim(),
+                team: String(member?.team || '').trim()
+            };
+        }
+
+        function normalizeAutoMessageFetchConfig(value) {
+            const allowedIntervals = new Set([5, 10, 30, 60]);
+            const intervalMinutes = Number(value?.intervalMinutes);
+            const hasSplitModeSetting = typeof value?.startupEnabled === 'boolean'
+                || typeof value?.scheduledEnabled === 'boolean';
+            const legacyEnabled = value?.enabled === true;
+            const memberKeys = new Set();
+            const members = [];
+
+            for (const rawMember of (Array.isArray(value?.members) ? value.members : [])) {
+                const member = normalizeAutoMessageFetchMember(rawMember);
+                if (!member) continue;
+                const memberKey = `${member.serverId}::${member.channelId}`;
+                if (memberKeys.has(memberKey)) continue;
+                memberKeys.add(memberKey);
+                members.push(member);
+            }
+
+            return {
+                startupEnabled: value?.startupEnabled === true,
+                scheduledEnabled: value?.scheduledEnabled === true || (!hasSplitModeSetting && legacyEnabled),
+                roomType: value?.roomType === 'small' || value?.roomType === 'all' ? value.roomType : 'big',
+                messageScope: value?.messageScope === 'all' ? 'all' : 'member',
+                intervalMinutes: allowedIntervals.has(intervalMinutes)
+                    ? intervalMinutes
+                    : AUTO_MESSAGE_FETCH_DEFAULT_INTERVAL,
+                members,
+                lastRunAt: Number(value?.lastRunAt) || 0
+            };
+        }
+
+        function readAutoMessageFetchConfig() {
+            const settingsApi = getAppSettingsApi();
+            let rawValue = null;
+
+            if (settingsApi && typeof settingsApi.getSettingValueSync === 'function') {
+                rawValue = settingsApi.getSettingValueSync(AUTO_MESSAGE_FETCH_SETTING_KEY, null);
+            }
+
+            if (!rawValue) {
+                const legacyValue = localStorage.getItem(`yaya_${AUTO_MESSAGE_FETCH_SETTING_KEY}`);
+                if (legacyValue) {
+                    try {
+                        rawValue = JSON.parse(legacyValue);
+                    } catch (error) {
+                        rawValue = null;
+                    }
+                }
+            }
+
+            return normalizeAutoMessageFetchConfig(rawValue || {});
+        }
+
+        function writeAutoMessageFetchConfig(value) {
+            const config = normalizeAutoMessageFetchConfig(value);
+            const settingsApi = getAppSettingsApi();
+
+            if (settingsApi && typeof settingsApi.setSettingValueSync === 'function') {
+                settingsApi.setSettingValueSync(AUTO_MESSAGE_FETCH_SETTING_KEY, config);
+                localStorage.removeItem(`yaya_${AUTO_MESSAGE_FETCH_SETTING_KEY}`);
+            } else {
+                localStorage.setItem(`yaya_${AUTO_MESSAGE_FETCH_SETTING_KEY}`, JSON.stringify(config));
+            }
+
+            return config;
+        }
+
+        function cloneAutoMessageFetchConfig(value) {
+            return normalizeAutoMessageFetchConfig(JSON.parse(JSON.stringify(value || {})));
+        }
+
+        function getAutoMessageFetchDraftConfig(refreshWhenClean = false) {
+            if (!autoMessageFetchDraftConfig || (refreshWhenClean && !autoMessageFetchDraftDirty)) {
+                autoMessageFetchDraftConfig = cloneAutoMessageFetchConfig(readAutoMessageFetchConfig());
+            }
+            return autoMessageFetchDraftConfig;
+        }
+
+        function markAutoMessageFetchDraftDirty() {
+            autoMessageFetchDraftDirty = true;
+            renderAutoMessageFetchUi();
+        }
+
+        function setAutoMessageFetchStatus(message, type = '') {
+            const statusEl = document.getElementById('auto-fetch-status');
+            if (!statusEl) return;
+            statusEl.textContent = String(message || '');
+            statusEl.className = `auto-fetch-status${type ? ` is-${type}` : ''}`;
+        }
+
+        function formatAutoMessageFetchTime(timestamp) {
+            if (!timestamp) return '';
+            return new Date(timestamp).toLocaleString('zh-CN', {
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            });
+        }
+
+        function renderAutoMessageFetchUi(options = {}) {
+            if (!autoMessageFetchDraftDirty) {
+                autoMessageFetchDraftConfig = cloneAutoMessageFetchConfig(readAutoMessageFetchConfig());
+            }
+            const config = getAutoMessageFetchDraftConfig();
+            const startupToggle = document.getElementById('auto-fetch-startup-toggle');
+            const scheduleToggle = document.getElementById('auto-fetch-schedule-toggle');
+            const roomTypeDisplay = document.getElementById('auto-fetch-room-type-display');
+            const messageScopeDisplay = document.getElementById('auto-fetch-message-scope-display');
+            const intervalDisplay = document.getElementById('auto-fetch-interval-display');
+            const intervalField = document.getElementById('auto-fetch-schedule-interval-field');
+            const controls = document.querySelector('.auto-fetch-controls');
+            const saveButton = document.getElementById('btn-save-auto-fetch-settings');
+            const runButton = document.getElementById('btn-auto-fetch-now');
+            const list = document.getElementById('auto-fetch-member-list');
+
+            if (startupToggle) startupToggle.checked = config.startupEnabled;
+            if (scheduleToggle) scheduleToggle.checked = config.scheduledEnabled;
+            if (roomTypeDisplay) {
+                roomTypeDisplay.value = config.roomType === 'small'
+                    ? '小房间'
+                    : (config.roomType === 'all' ? '所有房间' : '大房间');
+            }
+            if (messageScopeDisplay) messageScopeDisplay.value = config.messageScope === 'all' ? '全体消息' : '只看成员';
+            if (intervalDisplay) intervalDisplay.value = config.intervalMinutes === 60 ? '1 小时' : `${config.intervalMinutes} 分钟`;
+            if (intervalField) intervalField.style.display = config.scheduledEnabled ? 'block' : 'none';
+            if (controls) controls.classList.toggle('has-scheduled-interval', config.scheduledEnabled);
+            if (!config.scheduledEnabled) {
+                const intervalDropdown = document.getElementById('auto-fetch-interval-dropdown');
+                if (intervalDropdown) intervalDropdown.style.display = 'none';
+            }
+            if (saveButton) {
+                saveButton.disabled = !autoMessageFetchDraftDirty;
+                saveButton.textContent = '保存';
+                saveButton.className = autoMessageFetchDraftDirty ? 'btn btn-primary' : 'btn btn-secondary';
+            }
+            if (runButton && !autoMessageFetchInFlight) {
+                runButton.disabled = autoMessageFetchDraftDirty;
+                runButton.title = autoMessageFetchDraftDirty ? '请先保存自动抓取设置' : '';
+            }
+
+            if (list) {
+                list.innerHTML = '';
+                for (const member of config.members) {
+                    const chip = document.createElement('span');
+                    chip.className = 'auto-fetch-member-chip';
+
+                    const name = document.createElement('span');
+                    name.textContent = member.name;
+                    chip.appendChild(name);
+
+                    const removeButton = document.createElement('button');
+                    removeButton.type = 'button';
+                    removeButton.title = `移除 ${member.name}`;
+                    removeButton.setAttribute('aria-label', `移除 ${member.name}`);
+                    removeButton.textContent = '×';
+                    removeButton.addEventListener('click', () => removeAutoMessageFetchMember(member.serverId, member.channelId));
+                    chip.appendChild(removeButton);
+                    list.appendChild(chip);
+                }
+            }
+
+            if (options.keepStatus || autoMessageFetchInFlight) return;
+            if (autoMessageFetchDraftDirty) {
+                setAutoMessageFetchStatus('设置已修改，点击“保存设置”后生效', 'running');
+                return;
+            }
+            if (config.members.length === 0) {
+                setAutoMessageFetchStatus('尚未添加自动抓取成员');
+            } else if (!config.startupEnabled && !config.scheduledEnabled) {
+                setAutoMessageFetchStatus(`已选择 ${config.members.length} 位成员，自动抓取未启用`);
+            } else if (config.startupEnabled && !config.scheduledEnabled) {
+                setAutoMessageFetchStatus('已启用打开软件自动抓取，下次打开软件并登录后执行');
+            } else {
+                const nextRunAt = Math.max(Date.now(), config.lastRunAt + config.intervalMinutes * 60 * 1000);
+                const prefix = config.startupEnabled ? '两种自动抓取均已启用' : '已启用定时抓取';
+                setAutoMessageFetchStatus(`${prefix}，下次定时抓取约 ${formatAutoMessageFetchTime(nextRunAt)}`);
+            }
+        }
+
+        function handleAutoFetchMemberSearch(keyword) {
+            const resultBox = document.getElementById('auto-fetch-member-results');
+            if (!resultBox) return;
+
+            const query = String(keyword || '').trim();
+            if (!query) {
+                resultBox.style.display = 'none';
+                return;
+            }
+
+            if (typeof isMemberDataLoaded !== 'undefined' && !isMemberDataLoaded) {
+                if (typeof loadMemberData === 'function') {
+                    Promise.resolve(loadMemberData()).then(() => handleAutoFetchMemberSearch(query));
+                }
+                resultBox.innerHTML = '<div class="suggestion-item" style="cursor:default;color:var(--text-sub)">正在读取成员列表...</div>';
+                resultBox.style.display = 'block';
+                return;
+            }
+
+            const source = (typeof memberData !== 'undefined' && Array.isArray(memberData))
+                ? memberData
+                : (Array.isArray(window.memberData) ? window.memberData : []);
+            const lowerQuery = query.toLowerCase();
+            const matches = source.filter(member => {
+                const name = String(member?.ownerName || '');
+                const pinyin = String(member?.pinyin || '');
+                const initials = typeof getPinyinInitials === 'function' ? getPinyinInitials(pinyin) : '';
+                return name.includes(query)
+                    || pinyin.toLowerCase().includes(lowerQuery)
+                    || initials.toLowerCase().includes(lowerQuery);
+            });
+
+            if (typeof memberSortLogic === 'function') matches.sort(memberSortLogic);
+            resultBox.innerHTML = '';
+
+            if (matches.length === 0) {
+                resultBox.innerHTML = '<div class="suggestion-item" style="cursor:default;color:var(--text-sub)">未找到该成员</div>';
+                resultBox.style.display = 'block';
+                return;
+            }
+
+            for (const member of matches.slice(0, 30)) {
+                const isInactive = member?.isInGroup === false;
+                const item = document.createElement('div');
+                item.className = 'suggestion-item';
+                item.style.display = 'flex';
+                item.style.justifyContent = 'space-between';
+                item.style.alignItems = 'center';
+
+                const name = document.createElement('span');
+                name.style.fontWeight = 'bold';
+                if (isInactive) {
+                    name.style.opacity = '0.6';
+                    name.style.color = '#999';
+                }
+                name.textContent = String(member.ownerName || '');
+                item.appendChild(name);
+
+                const team = document.createElement('span');
+                team.className = 'team-tag';
+                if (typeof getTeamStyle === 'function') {
+                    team.style.cssText = getTeamStyle(member.team, isInactive);
+                }
+                if (isInactive) {
+                    team.style.opacity = '0.6';
+                    team.style.color = '#999';
+                }
+                team.textContent = String(member.team || '');
+                item.appendChild(team);
+                item.addEventListener('click', () => addAutoMessageFetchMember(member));
+                resultBox.appendChild(item);
+            }
+
+            resultBox.style.display = 'block';
+        }
+
+        function addAutoMessageFetchMember(rawMember) {
+            const member = normalizeAutoMessageFetchMember(rawMember);
+            if (!member) {
+                showToast('该成员缺少大房间参数，无法加入自动抓取');
+                return;
+            }
+
+            const config = getAutoMessageFetchDraftConfig(true);
+            const exists = config.members.some(item => item.serverId === member.serverId && item.channelId === member.channelId);
+            if (!exists) config.members.push(member);
+
+            const input = document.getElementById('auto-fetch-member-input');
+            const results = document.getElementById('auto-fetch-member-results');
+            if (input) input.value = '';
+            if (results) results.style.display = 'none';
+            if (exists) {
+                showToast(`${member.name} 已在自动抓取列表中`);
+            } else {
+                markAutoMessageFetchDraftDirty();
+            }
+        }
+
+        function removeAutoMessageFetchMember(serverId, channelId) {
+            const config = getAutoMessageFetchDraftConfig(true);
+            config.members = config.members.filter(member => (
+                member.serverId !== String(serverId || '') || member.channelId !== String(channelId || '')
+            ));
+            if (config.members.length === 0) {
+                config.startupEnabled = false;
+                config.scheduledEnabled = false;
+            }
+            markAutoMessageFetchDraftDirty();
+        }
+
+        function setAutoMessageFetchRoomType(value) {
+            const config = getAutoMessageFetchDraftConfig(true);
+            config.roomType = value === 'small' || value === 'all' ? value : 'big';
+            markAutoMessageFetchDraftDirty();
+        }
+
+        function setAutoMessageFetchScope(value) {
+            const config = getAutoMessageFetchDraftConfig(true);
+            config.messageScope = value === 'all' ? 'all' : 'member';
+            markAutoMessageFetchDraftDirty();
+        }
+
+        function setAutoMessageFetchInterval(value) {
+            const config = getAutoMessageFetchDraftConfig(true);
+            config.intervalMinutes = Number(value);
+            markAutoMessageFetchDraftDirty();
+        }
+
+        function canEnableAutoMessageFetch(config) {
+            if (config.members.length > 0) return true;
+            showToast('请先添加自动抓取成员');
+            return false;
+        }
+
+        function setStartupAutoMessageFetchEnabled(enabled) {
+            const config = getAutoMessageFetchDraftConfig(true);
+            if (enabled && !canEnableAutoMessageFetch(config)) {
+                config.startupEnabled = false;
+                renderAutoMessageFetchUi();
+                setAutoMessageFetchStatus('请先添加至少一位成员', 'error');
+                return;
+            }
+
+            config.startupEnabled = !!enabled;
+            markAutoMessageFetchDraftDirty();
+        }
+
+        function setScheduledAutoMessageFetchEnabled(enabled) {
+            const config = getAutoMessageFetchDraftConfig(true);
+            if (enabled && !canEnableAutoMessageFetch(config)) {
+                config.scheduledEnabled = false;
+                renderAutoMessageFetchUi();
+                setAutoMessageFetchStatus('请先添加至少一位成员', 'error');
+                return;
+            }
+
+            config.scheduledEnabled = !!enabled;
+            markAutoMessageFetchDraftDirty();
+        }
+
+        // 保留旧入口，已有页面缓存调用时按“定时抓取”处理。
+        function setAutoMessageFetchEnabled(enabled) {
+            setScheduledAutoMessageFetchEnabled(enabled);
+        }
+
+        function closeAutoMessageFetchDropdowns(exceptId = '') {
+            document.querySelectorAll('.auto-fetch-option-dropdown').forEach(dropdown => {
+                if (exceptId && dropdown.id === exceptId) return;
+                dropdown.style.display = 'none';
+            });
+        }
+
+        function toggleAutoMessageFetchDropdown(settingName) {
+            const dropdownIds = {
+                roomType: 'auto-fetch-room-type-dropdown',
+                messageScope: 'auto-fetch-message-scope-dropdown',
+                intervalMinutes: 'auto-fetch-interval-dropdown'
+            };
+            const dropdown = document.getElementById(dropdownIds[settingName]);
+            if (!dropdown) return;
+            const shouldOpen = dropdown.style.display !== 'block';
+            closeAutoMessageFetchDropdowns();
+            dropdown.style.display = shouldOpen ? 'block' : 'none';
+        }
+
+        function selectAutoMessageFetchOption(settingName, value) {
+            closeAutoMessageFetchDropdowns();
+            if (settingName === 'roomType') {
+                setAutoMessageFetchRoomType(value);
+            } else if (settingName === 'messageScope') {
+                setAutoMessageFetchScope(value);
+            } else if (settingName === 'intervalMinutes') {
+                setAutoMessageFetchInterval(value);
+            }
+        }
+
+        function saveAutoMessageFetchSettings() {
+            if (!autoMessageFetchDraftDirty) return;
+
+            const previousConfig = readAutoMessageFetchConfig();
+            const draftConfig = cloneAutoMessageFetchConfig(getAutoMessageFetchDraftConfig());
+            if ((draftConfig.startupEnabled || draftConfig.scheduledEnabled) && draftConfig.members.length === 0) {
+                setAutoMessageFetchStatus('请先添加至少一位成员', 'error');
+                showToast('请先添加自动抓取成员');
+                return;
+            }
+
+            const scheduleTimingChanged = draftConfig.scheduledEnabled
+                && (!previousConfig.scheduledEnabled
+                    || previousConfig.intervalMinutes !== draftConfig.intervalMinutes);
+            draftConfig.lastRunAt = scheduleTimingChanged ? Date.now() : previousConfig.lastRunAt;
+
+            const savedConfig = writeAutoMessageFetchConfig(draftConfig);
+            autoMessageFetchDraftConfig = cloneAutoMessageFetchConfig(savedConfig);
+            autoMessageFetchDraftDirty = false;
+
+            if (!savedConfig.startupEnabled) {
+                autoMessageFetchStartupArmed = false;
+                if (autoMessageFetchStartupTimer) clearTimeout(autoMessageFetchStartupTimer);
+                autoMessageFetchStartupTimer = null;
+            }
+
+            if (savedConfig.scheduledEnabled) {
+                if (scheduleTimingChanged || !autoMessageFetchTimer) {
+                    scheduleAutoMessageFetch(savedConfig.intervalMinutes * 60 * 1000);
+                }
+            } else {
+                if (autoMessageFetchTimer) clearTimeout(autoMessageFetchTimer);
+                autoMessageFetchTimer = null;
+            }
+
+            closeAutoMessageFetchDropdowns();
+            renderAutoMessageFetchUi();
+            const missingSmallRoomCount = savedConfig.roomType === 'small' || savedConfig.roomType === 'all'
+                ? savedConfig.members.filter(member => !member.smallChannelId).length
+                : 0;
+            if (missingSmallRoomCount > 0) {
+                const missingMessage = savedConfig.roomType === 'all'
+                    ? `${missingSmallRoomCount} 位成员缺少小房间参数，将只抓取大房间`
+                    : `${missingSmallRoomCount} 位成员缺少小房间参数`;
+                setAutoMessageFetchStatus(`设置已保存；${missingMessage}`, 'error');
+            }
+            showToast('自动抓取设置已保存');
+        }
+
+        function scheduleAutoMessageFetch(delayMs) {
+            if (autoMessageFetchTimer) clearTimeout(autoMessageFetchTimer);
+            autoMessageFetchTimer = null;
+
+            const config = readAutoMessageFetchConfig();
+            if (!config.scheduledEnabled || config.members.length === 0) return;
+
+            const safeDelay = Math.max(250, Number(delayMs) || config.intervalMinutes * 60 * 1000);
+            autoMessageFetchTimer = setTimeout(() => {
+                autoMessageFetchTimer = null;
+                Promise.resolve(runAutoMessageFetchNow()).catch(error => {
+                    console.warn('自动抓取任务失败:', error);
+                });
+            }, safeDelay);
+        }
+
+        function filterFetchedMemberMessages(list) {
+            return (Array.isArray(list) ? list : []).filter(message => {
+                let senderId = message.senderUserId || message.senderId || message.uid;
+                if (!senderId && message.extInfo) {
+                    try {
+                        const ext = typeof message.extInfo === 'string' ? JSON.parse(message.extInfo) : message.extInfo;
+                        if (ext?.user) senderId = ext.user.userId || ext.user.id;
+                    } catch (error) {
+                    }
+                }
+                return String(senderId || '') !== '121569667';
+            });
+        }
+
+        async function fetchAutoMessageMember(member, token, options = {}) {
+            const roomType = options.roomType === 'small' ? 'small' : 'big';
+            const fetchAll = options.messageScope === 'all';
+            const channelId = roomType === 'small' ? member.smallChannelId : member.channelId;
+            if (!channelId) {
+                throw new Error(`缺少${roomType === 'small' ? '小' : '大'}房间 Channel ID`);
+            }
+
+            const previousBoundary = loadFetchBoundary(member.serverId, channelId, fetchAll);
+            const collectedMessages = [];
+            const seenKeys = new Set();
+            let nextTime = 0;
+            let pageCount = 0;
+            let reachedPrevious = false;
+
+            do {
+                const pa = window.getPA ? window.getPA() : null;
+                const response = await ipcRenderer.invoke('fetch-room-messages', {
+                    token,
+                    serverId: member.serverId,
+                    channelId,
+                    pa,
+                    nextTime,
+                    fetchAll
+                });
+
+                if (!response?.success || !response?.data?.content) {
+                    throw new Error(response?.msg || '抓取接口未返回消息');
+                }
+
+                const content = response.data.content;
+                const rawList = content.messageList || content.message || [];
+                let list = fetchAll ? (Array.isArray(rawList) ? rawList : []) : filterFetchedMemberMessages(rawList);
+                if (previousBoundary) {
+                    const stopIndex = list.findIndex(message => buildFetchMessageKey(message) === previousBoundary);
+                    if (stopIndex >= 0) {
+                        list = list.slice(0, stopIndex);
+                        reachedPrevious = true;
+                    }
+                }
+
+                for (const message of list) {
+                    const messageKey = buildFetchMessageKey(message);
+                    if (messageKey && seenKeys.has(messageKey)) continue;
+                    if (messageKey) seenKeys.add(messageKey);
+                    collectedMessages.push(message);
+                }
+
+                pageCount += 1;
+                nextTime = reachedPrevious ? 0 : (Number(content.nextTime) || 0);
+
+                // 没有历史边界时只取最新一页，避免首次启用就抓完整个历史房间。
+                if (!previousBoundary || !Array.isArray(rawList) || rawList.length === 0) nextTime = 0;
+                if (nextTime > 0 && pageCount < AUTO_MESSAGE_FETCH_MAX_PAGES) await sleep(350);
+            } while (nextTime > 0 && pageCount < AUTO_MESSAGE_FETCH_MAX_PAGES);
+
+            if (pageCount >= AUTO_MESSAGE_FETCH_MAX_PAGES && nextTime > 0) {
+                throw new Error(`连续抓取超过 ${AUTO_MESSAGE_FETCH_MAX_PAGES} 页，已安全停止`);
+            }
+
+            if (collectedMessages.length === 0) {
+                return { addedCount: 0, changed: false, initialized: !previousBoundary };
+            }
+
+            const exportMeta = getFetchExportMemberMeta(member.name, channelId);
+            const exportGroupName = exportMeta.groupName === '未知分团' && member.team
+                ? member.team
+                : exportMeta.groupName;
+            const exportPrefix = `${exportGroupName}-${exportMeta.memberName}`;
+            const saveResult = await ipcRenderer.invoke('save-export-jsonl', {
+                memberName: exportMeta.memberName,
+                fileName: `${exportPrefix}-${exportMeta.channelId}.jsonl`,
+                entries: buildFetchExportEntries(collectedMessages)
+            });
+
+            if (!saveResult?.success) {
+                throw new Error(saveResult?.msg || '保存 JSONL 失败');
+            }
+
+            saveFetchBoundary(member.serverId, channelId, fetchAll, collectedMessages[0]);
+            return {
+                addedCount: Number(saveResult.addedCount) || 0,
+                changed: saveResult.changed === true,
+                initialized: !previousBoundary
+            };
+        }
+
+        async function fetchAutoMessageMemberRooms(member, token, options = {}) {
+            const roomTypes = options.roomType === 'all'
+                ? ['big', 'small']
+                : [options.roomType === 'small' ? 'small' : 'big'];
+            const aggregate = { addedCount: 0, changed: false, skippedRoomCount: 0 };
+
+            for (let index = 0; index < roomTypes.length; index += 1) {
+                const roomType = roomTypes[index];
+                if (roomType === 'small' && !member.smallChannelId && options.roomType === 'all') {
+                    aggregate.skippedRoomCount += 1;
+                    continue;
+                }
+
+                const result = await fetchAutoMessageMember(member, token, {
+                    roomType,
+                    messageScope: options.messageScope
+                });
+                aggregate.addedCount += result.addedCount;
+                aggregate.changed = aggregate.changed || result.changed;
+                if (index < roomTypes.length - 1) await sleep(350);
+            }
+
+            return aggregate;
+        }
+
+        async function runAutoMessageFetchNow(options = {}) {
+            const manual = options?.manual === true;
+            const startup = options?.startup === true;
+            const config = readAutoMessageFetchConfig();
+            const shouldSchedule = config.scheduledEnabled;
+
+            if (autoMessageFetchInFlight) {
+                if (manual) showToast('自动抓取正在运行');
+                if (!manual && shouldSchedule) scheduleAutoMessageFetch(30000);
+                return { success: false, skipped: true, reason: 'busy' };
+            }
+
+            if (config.members.length === 0) {
+                setAutoMessageFetchStatus('请先添加自动抓取成员', 'error');
+                if (manual) showToast('请先添加自动抓取成员');
+                return { success: false, skipped: true, reason: 'missing-members' };
+            }
+
+            const token = String(appToken || readStoredToken() || '').trim();
+            if (!token) {
+                setAutoMessageFetchStatus('等待账号登录，登录后会继续自动抓取', 'error');
+                if (manual) showToast('请先登录账号');
+                if (shouldSchedule) scheduleAutoMessageFetch(Math.min(60000, config.intervalMinutes * 60 * 1000));
+                return { success: false, skipped: true, reason: 'missing-token' };
+            }
+
+            if (isAutoFetching || document.getElementById('loading-indicator')) {
+                setAutoMessageFetchStatus('手动抓取正在运行，自动任务已顺延');
+                if (shouldSchedule) scheduleAutoMessageFetch(30000);
+                return { success: false, skipped: true, reason: 'manual-fetch-busy' };
+            }
+
+            autoMessageFetchInFlight = true;
+            const runButton = document.getElementById('btn-auto-fetch-now');
+            if (runButton) {
+                runButton.disabled = true;
+                runButton.textContent = '抓取中...';
+            }
+
+            let addedCount = 0;
+            let changedMemberCount = 0;
+            let failedCount = 0;
+            let skippedRoomCount = 0;
+
+            try {
+                for (let index = 0; index < config.members.length; index += 1) {
+                    const latestConfig = readAutoMessageFetchConfig();
+                    if (!manual && startup && !latestConfig.startupEnabled) break;
+                    if (!manual && !startup && !latestConfig.scheduledEnabled) break;
+
+                    const member = config.members[index];
+                    const roomLabel = config.roomType === 'small'
+                        ? '小房间'
+                        : (config.roomType === 'all' ? '所有房间' : '大房间');
+                    const scopeLabel = config.messageScope === 'all' ? '全体消息' : '成员消息';
+                    setAutoMessageFetchStatus(`正在抓取 ${member.name} · ${roomLabel} · ${scopeLabel}（${index + 1}/${config.members.length}）...`, 'running');
+                    try {
+                        const result = await fetchAutoMessageMemberRooms(member, token, {
+                            roomType: config.roomType,
+                            messageScope: config.messageScope
+                        });
+                        addedCount += result.addedCount;
+                        skippedRoomCount += result.skippedRoomCount;
+                        if (result.changed) changedMemberCount += 1;
+                    } catch (error) {
+                        failedCount += 1;
+                        console.warn(`自动抓取 ${member.name} 失败:`, error);
+                    }
+
+                    if (index < config.members.length - 1) await sleep(650);
+                }
+
+                const latestConfig = readAutoMessageFetchConfig();
+                latestConfig.lastRunAt = Date.now();
+                writeAutoMessageFetchConfig(latestConfig);
+
+                if (addedCount > 0) {
+                    window.__messageDataDirty = true;
+                    setAutoMessageFetchStatus(
+                        `本次新增 ${addedCount} 条，更新 ${changedMemberCount} 位成员${skippedRoomCount ? `，跳过 ${skippedRoomCount} 个小房间` : ''}${failedCount ? `，${failedCount} 位失败` : ''}`,
+                        failedCount ? 'error' : 'success'
+                    );
+                } else if (failedCount > 0) {
+                    setAutoMessageFetchStatus(`本次没有新增消息，${failedCount} 位成员抓取失败`, 'error');
+                } else if (skippedRoomCount > 0) {
+                    setAutoMessageFetchStatus(`检查完成，没有新消息；跳过 ${skippedRoomCount} 个缺少参数的小房间`, 'success');
+                } else {
+                    setAutoMessageFetchStatus('检查完成，没有新消息', 'success');
+                }
+
+                return { success: failedCount === 0, addedCount, changedMemberCount, failedCount, skippedRoomCount };
+            } finally {
+                autoMessageFetchInFlight = false;
+                if (runButton) {
+                    runButton.disabled = autoMessageFetchDraftDirty;
+                    runButton.textContent = '立即抓取';
+                    runButton.title = autoMessageFetchDraftDirty ? '请先保存自动抓取设置' : '';
+                }
+
+                const latestConfig = readAutoMessageFetchConfig();
+                if (latestConfig.scheduledEnabled) {
+                    scheduleAutoMessageFetch(latestConfig.intervalMinutes * 60 * 1000);
+                }
+            }
+        }
+
+        function queueStartupAutoMessageFetch(delayMs = 0) {
+            if (!autoMessageFetchStartupArmed || autoMessageFetchStartupCompleted) return;
+            if (autoMessageFetchStartupTimer) clearTimeout(autoMessageFetchStartupTimer);
+
+            autoMessageFetchStartupTimer = setTimeout(() => {
+                autoMessageFetchStartupTimer = null;
+                const config = readAutoMessageFetchConfig();
+                if (!autoMessageFetchStartupArmed || !config.startupEnabled || autoMessageFetchStartupCompleted) return;
+                if (!String(appToken || readStoredToken() || '').trim()) {
+                    setAutoMessageFetchStatus('等待账号登录，登录后执行打开软件自动抓取');
+                    return;
+                }
+                if (autoMessageFetchInFlight || isAutoFetching || document.getElementById('loading-indicator')) {
+                    queueStartupAutoMessageFetch(30000);
+                    return;
+                }
+
+                autoMessageFetchStartupCompleted = true;
+                Promise.resolve(runAutoMessageFetchNow({ startup: true })).catch(error => {
+                    console.warn('打开软件自动抓取失败:', error);
+                });
+            }, Math.max(0, Number(delayMs) || 0));
+        }
+
+        function initializeAutoMessageFetch() {
+            if (autoMessageFetchInitialized) return;
+            autoMessageFetchInitialized = true;
+            renderAutoMessageFetchUi();
+
+            document.addEventListener('pointerdown', event => {
+                const wrapper = document.querySelector('.auto-fetch-member-search');
+                const results = document.getElementById('auto-fetch-member-results');
+                if (wrapper && results && !wrapper.contains(event.target)) results.style.display = 'none';
+                if (!event.target.closest?.('.auto-fetch-dropdown')) closeAutoMessageFetchDropdowns();
+            });
+
+            const config = readAutoMessageFetchConfig();
+            autoMessageFetchStartupArmed = config.startupEnabled && config.members.length > 0;
+            if (autoMessageFetchStartupArmed) {
+                queueStartupAutoMessageFetch(4000);
+            }
+            if (config.scheduledEnabled && config.members.length > 0 && !autoMessageFetchStartupArmed) {
+                const intervalMs = config.intervalMinutes * 60 * 1000;
+                const elapsed = config.lastRunAt ? Date.now() - config.lastRunAt : intervalMs;
+                scheduleAutoMessageFetch(elapsed >= intervalMs ? 4000 : intervalMs - elapsed);
+            }
+        }
+
+        window.addEventListener('load', initializeAutoMessageFetch, { once: true });
+        window.addEventListener('member-data-loaded', () => renderAutoMessageFetchUi({ keepStatus: true }));
+
         function getTodayCheckinKey() {
             const now = new Date();
             const pad = (value) => String(value).padStart(2, '0');
@@ -1052,7 +1803,7 @@
             const fetchBtn = document.getElementById('btn-fetch-one');
             const box = document.getElementById('msg-result');
             const memberSearch = document.getElementById('member-search');
-            const exportBtn = document.getElementById('btn-export-html');
+            const exportBtn = document.getElementById('btn-export-jsonl');
             const exportLocalBtn = document.getElementById('btn-export-local');
             const toggleBtn = document.getElementById('btn-toggle-mode');
             const clearBoundaryBtn = document.getElementById('btn-clear-fetch-boundary');
@@ -1577,6 +2328,10 @@
                     refreshAccountProfileMeta();
                     if (msgBox) msgBox.innerText = '';
                     syncAutoCheckinUi();
+                    queueStartupAutoMessageFetch(1200);
+                    if (typeof startFollowedRoomNotificationPolling === 'function') {
+                        startFollowedRoomNotificationPolling(1200);
+                    }
 
                     if (accountArea && accountList) {
                         accountList.innerHTML = '';
@@ -1636,6 +2391,9 @@
                 } else {
                     clearStoredToken();
                     appToken = '';
+                    if (typeof stopFollowedRoomNotificationPolling === 'function') {
+                        stopFollowedRoomNotificationPolling();
+                    }
                     currentPocketUserId = '';
                     currentPocketProfile = { nickname: '', avatar: '', avatarUrl: '' };
                     clearWebAccountProfileCache();
@@ -1650,6 +2408,9 @@
                 }
             } catch (e) {
                 console.error(e);
+                if (typeof stopFollowedRoomNotificationPolling === 'function') {
+                    stopFollowedRoomNotificationPolling();
+                }
                 currentPocketUserId = '';
                 currentPocketProfile = { nickname: '', avatar: '', avatarUrl: '' };
                 syncWebAccountButton(currentPocketProfile, false);
@@ -1729,6 +2490,9 @@
         function logout() {
             clearStoredToken();
             appToken = '';
+            if (typeof stopFollowedRoomNotificationPolling === 'function') {
+                stopFollowedRoomNotificationPolling();
+            }
             currentPocketUserId = '';
             currentPocketProfile = { nickname: '', avatar: '', avatarUrl: '' };
             clearWebAccountProfileCache();
@@ -1769,7 +2533,7 @@
             const channelId = document.getElementById('tool-channel').value.trim();
             const serverId = document.getElementById('tool-server').value.trim();
             const box = document.getElementById('msg-result');
-            const exportBtn = document.getElementById('btn-export-html');
+            const exportBtn = document.getElementById('btn-export-jsonl');
             const exportLocalBtn = document.getElementById('btn-export-local');
 
             if (!channelId) {
@@ -2087,304 +2851,103 @@
             };
         }
 
-        async function exportMsgsToHtml() {
-            if (allFetchedMsgs.length === 0) return showToast('没有消息可导出');
-            const fix48Url = (path) => {
-                if (!path) return 'https://www.snh48.com/images/logo_snh48.jpg';
-                if (/^https?:\/\//i.test(path)) return path;
-                if (path.includes('48.cn')) {
-                    return `https://${path.replace(/^\/+/, '')}`;
-                }
-                const baseUrl = 'https://source3.48.cn';
-                return path.startsWith('/') ? `${baseUrl}${path}` : `${baseUrl}/${path}`;
-            };
-            const styleValue = `
-                    body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif; background-color: #f6f8fa; padding: 20px; }
-                    .template-body { width: 100%; max-width: 900px; margin: 0 auto; }
-                    .template-media { max-width: 600px; border-radius: 6px; margin-top: 5px; }
-                    .template-image-express-image { max-width: 85px; }
-                    .template-pre { white-space: pre-wrap; word-break: break-all; margin-bottom: 8px; }
-                    .avatar-5 { width: 32px; height: 32px; } 
-                    .color-bg-accent { background-color: #f6f8fa; } 
-                    .color-fg-accent { color: #0969da; text-decoration: none; }
-                `;
-            const buildExportKey = (message, exportUserId, rawBody) => {
-                const primaryId = message.id || message.msgId || message.messageId || message.clientMsgId || '';
-                const normalizedBody = typeof rawBody === 'string' ? rawBody : JSON.stringify(rawBody || {});
-                const seed = [
-                    primaryId,
-                    message.msgTime || '',
-                    message.msgType || '',
-                    exportUserId || '',
-                    normalizedBody
-                ].join('|');
+        function fixFetchExportUrl(path) {
+            if (!path) return 'https://www.snh48.com/images/logo_snh48.jpg';
+            if (/^https?:\/\//i.test(path)) return path;
+            if (path.includes('48.cn')) return `https://${path.replace(/^\/+/, '')}`;
+            const baseUrl = 'https://source3.48.cn';
+            return path.startsWith('/') ? `${baseUrl}${path}` : `${baseUrl}/${path}`;
+        }
 
-                let hash = 0;
-                for (let i = 0; i < seed.length; i += 1) {
-                    hash = ((hash << 5) - hash) + seed.charCodeAt(i);
-                    hash |= 0;
-                }
+        function buildFetchExportKey(message, exportUserId, rawBody) {
+            const primaryId = message.id || message.msgId || message.messageId || message.clientMsgId || '';
+            const normalizedBody = typeof rawBody === 'string' ? rawBody : JSON.stringify(rawBody || {});
+            const seed = [
+                primaryId,
+                message.msgTime || '',
+                message.msgType || '',
+                exportUserId || '',
+                normalizedBody
+            ].join('|');
 
-                return `msg_${Math.abs(hash)}_${message.msgTime || 0}`;
-            };
+            let hash = 0;
+            for (let index = 0; index < seed.length; index += 1) {
+                hash = ((hash << 5) - hash) + seed.charCodeAt(index);
+                hash |= 0;
+            }
+            return `msg_${Math.abs(hash)}_${message.msgTime || 0}`;
+        }
 
+        function buildFetchExportEntries(messages) {
             const exportEntries = [];
+            for (const m of (Array.isArray(messages) ? messages : [])) {
+                const rawBody = m.bodys || m.msgContent || '';
+                let structuredContent;
 
-            allFetchedMsgs.forEach(m => {
-                let contentHtml = '';
-                let userHtml = '';
-                let timeStr = '';
-                let exportKey = '';
-                try {
-
-
-                    let avatarUrl = 'https://www.snh48.com/images/logo_snh48.jpg';
-                    let nickName = m.senderName || '未知用户';
-                    let exportUserId = '';
-                    let exportRoleId = 0;
-
-                    if (m.senderUserId) exportUserId = m.senderUserId;
-
-                    if (m.extInfo) {
-                        try {
-                            const ext = typeof m.extInfo === 'string' ? JSON.parse(m.extInfo) : m.extInfo;
-                            if (ext.user) {
-                                nickName = ext.user.nickName;
-                                if (ext.user.avatar) avatarUrl = fix48Url(ext.user.avatar);
-                                if (!exportUserId) exportUserId = ext.user.userId || ext.user.id;
-
-                                if (ext.user.roleId) exportRoleId = ext.user.roleId;
-                            }
-                        } catch (e) { }
+                if (typeof rawBody === 'string' && (rawBody.trim().startsWith('{') || rawBody.trim().startsWith('['))) {
+                    try {
+                        structuredContent = JSON.parse(rawBody);
+                    } catch (error) {
+                        structuredContent = { text: rawBody };
                     }
-
-                    userHtml = `
-                <div class="mb-2">
-                    <img class="avatar avatar-5 mr-2" src="${avatarUrl}" loading="lazy"/>
-                    <span data-userid="${exportUserId}" data-roleid="${exportRoleId}">${nickName}</span> 
-                </div>
-            `;
-                    let body = m.bodys || m.msgContent;
-                    if (typeof body === 'string' && (body.startsWith('{') || body.startsWith('['))) {
-                        try {
-                            const json = JSON.parse(body);
-                            if (m.msgType === 'TEXT') {
-                                const text = json.bodys || json.text || body;
-                                contentHtml = `<p class="mb-2 template-pre">${text}</p>`;
-                            } else if (m.msgType === 'IMAGE') {
-                                const url = fix48Url(json.url);
-                                contentHtml = `
-                                            <div class="mb-2">
-                                            <img class="template-media" src="${url}" loading="lazy" style="cursor: default;"/>
-                                            </div>
-                                            <div class="mb-2">
-                                            </div>`;
-                            } else if (json.messageType === 'GIFT_TEXT' || m.msgType === 'GIFT_TEXT') {
-                                const info = json.giftInfo || json;
-                                contentHtml = renderPocketGiftCard(info);
-                            } else if ((json.messageType || '').toUpperCase().startsWith('RED_PACKET')) {
-                                const blessMessage = String(json.blessMessage || '送来了红包祝福').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                                const creatorName = String(json.creatorName || nickName || '未知用户').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                                const starName = String(json.starName || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                                const isDarkTheme = document.documentElement.getAttribute('data-theme') === 'dark';
-                                const packetMainTextColor = isDarkTheme ? 'rgba(255,255,255,0.96)' : '#24292f';
-                                const packetMetaTextColor = isDarkTheme ? 'rgba(255,255,255,0.82)' : '#444';
-                                const packetImage = fix48Url(json.openImgUrl || json.coverUrl);
-                                contentHtml = `
-        <div class="mb-2" style="display:flex; gap:8px; align-items:center; background:linear-gradient(135deg, rgba(255,120,117,0.12) 0%, rgba(255,120,117,0.04) 100%), rgba(0,0,0,0.02); padding:6px 8px; border-radius:10px; border:1px solid rgba(255,110,110,0.22); width: 220px; max-width: 220px; box-sizing: border-box;">
-            <img src="${packetImage}" style="width:34px; height:34px; border-radius:6px; object-fit:cover; flex-shrink:0; box-shadow:0 2px 6px rgba(0,0,0,0.12);">
-            <div style="min-width:0; flex:1;">
-                <div style="font-size:10px; color:#ff7875; font-weight:bold; margin-bottom:2px;">红包</div>
-                <div style="font-size:12px; color:${packetMainTextColor}; font-weight:bold; line-height:1.35; word-break:break-word;">${blessMessage}</div>
-                <div style="font-size:11px; color:${packetMetaTextColor}; margin-top:4px; line-height:1.35; word-break:break-word;">${creatorName}${starName ? ` · ${starName}` : ''}</div>
-            </div>
-        </div>`;
-                            } else if (m.msgType === 'VIDEO') {
-                                const url = fix48Url(json.url);
-                                contentHtml = `
-                            <div class="mb-2">
-                                <video class="template-media" src="${url}" controls></video>
-                            </div>
-                            <div class="mb-2">
-                                视频 - <a class="color-fg-accent" href="${url}" target="_blank">${url}</a>
-                            </div>`;
-                            } else if (m.msgType === 'AUDIO') {
-                                const url = fix48Url(json.url);
-                                contentHtml = `
-                            <div class="mb-2">
-                                <audio class="template-media" src="${url}" controls></audio>
-                            </div>
-                            <div class="mb-2">
-                                语音 - <a class="color-fg-accent" href="${url}" target="_blank">${url}</a>
-                            </div>`;
-                            } else if (m.msgType === 'REPLY' || m.msgType === 'GIFTREPLY') {
-                                let info = json.replyInfo || json.giftReplyInfo;
-                                if (!info && json.bodys) info = json.bodys.replyInfo || json.bodys.giftReplyInfo;
-                                const myText = info?.text || json.text || body;
-                                const rName = info?.replyName || '未知用户';
-                                const rText = info?.replyText || '未知消息';
-                                contentHtml = `<p class="mb-2 template-pre">${myText}</p>`;
-                                contentHtml += `
-                            <blockquote class="ml-2 mb-2 p-2 color-bg-accent template-pre" style="border-left: 4px solid #d0d7de; color: #57606a;">
-                                ${rName}：${rText}
-                            </blockquote>`;
-                            } else if (m.msgType === 'EXPRESSIMAGE') {
-                                let url = '';
-                                if (json.expressImgInfo) url = fix48Url(json.expressImgInfo.emotionRemote);
-                                else if (json.url) url = fix48Url(json.url);
-                                contentHtml = `<div class="mb-2"><img class="template-image-express-image" src="${url}"/></div>`;
-                            } else if (m.msgType === 'LIVEPUSH') {
-                                const info = json.livePushInfo || {};
-                                const title = info.liveTitle || '直播开始了';
-                                const liveId = info.liveId;
-
-                                let coverUrl = '';
-                                if (info.liveCover) {
-                                    if (info.liveCover.startsWith('http')) {
-                                        coverUrl = info.liveCover;
-                                    } else {
-                                        coverUrl = 'https://source.48.cn' + info.liveCover;
-                                    }
-                                }
-
-                                if (liveId) {
-                                    contentHtml = `<a href="live/playdetail?id=${liveId}" data-title="${title}" data-cover="${coverUrl}" target="_blank" style="display:none"></a>`;
-                                } else {
-                                    contentHtml = `直播 - ${title}`;
-                                }
-
-                            } else if (m.msgType === 'SHARE_LIVE' || (json && json.messageType === 'SHARE_LIVE')) {
-                                const info = json.shareInfo || {};
-                                const title = info.shareTitle || '直播分享';
-
-                                let liveId = '';
-                                if (info.jumpPath) {
-                                    const match = info.jumpPath.match(/id=(\d+)/);
-                                    if (match) liveId = match[1];
-                                }
-
-                                let coverUrl = '';
-                                if (info.sharePic) {
-                                    if (info.sharePic.startsWith('http')) {
-                                        coverUrl = info.sharePic;
-                                    } else {
-                                        coverUrl = 'https://source.48.cn' + info.sharePic;
-                                    }
-                                }
-
-                                const memberName = info.liveUserName || '';
-
-                                if (liveId) {
-                                    contentHtml = `<a href="live/playdetail?id=${liveId}" data-title="${title}" data-cover="${coverUrl}" data-member="${memberName}" target="_blank" style="display:none"></a>`;
-                                } else {
-                                    contentHtml = `[分享] ${title}`;
-                                }
-                            } else if (
-                                m.msgType === 'AUDIO_GIFT_REPLY' ||
-                                (json && json.messageType === 'AUDIO_GIFT_REPLY') ||
-                                m.msgType === 'AUDIO_REPLY' ||
-                                (json && json.messageType === 'AUDIO_REPLY')
-                            ) {
-                                const info = json.replyInfo || json.giftReplyInfo || json;
-                                const voiceUrl = fix48Url(info.voiceUrl);
-                                const rName = info.replyName || '未知用户';
-                                const rText = info.replyText || '';
-                                contentHtml = `
-        <div class="mb-2">
-            <audio class="template-media" src="${voiceUrl}" controls></audio>
-        </div>
-        <div class="mb-2">
-            语音 - <a class="color-fg-accent" href="${voiceUrl}" target="_blank">${voiceUrl}</a>
-        </div>
-        <blockquote class="ml-2 mb-2 p-2 color-bg-accent template-pre" style="border-left: 4px solid #d0d7de; color: #57606a;">
-            ${rName}：${rText}
-        </blockquote>`;
-
-                            } else if (['FLIPCARD', 'FLIPCARD_AUDIO', 'FLIPCARD_VIDEO'].includes(m.msgType)) {
-                                const possibleKeys = ['flipCardInfo', 'filpCardInfo', 'flipCardAudioInfo', 'filpCardAudioInfo', 'flipCardVideoInfo', 'filpCardVideoInfo'];
-                                let info = null;
-                                for (const key of possibleKeys) {
-                                    if (json[key]) {
-                                        info = json[key];
-                                        break;
-                                    }
-                                    if (json.bodys && json.bodys[key]) {
-                                        info = json.bodys[key];
-                                        break;
-                                    }
-                                }
-                                const q = info?.question || json.question || '问题';
-                                let a = info?.answer || json.answer || '回答';
-                                let mediaHtml = '';
-                                if (m.msgType !== 'FLIPCARD') {
-                                    try {
-                                        const answerObj = typeof a === 'string' ? JSON.parse(a) : a;
-                                        if (answerObj && answerObj.url) {
-                                            let rawUrl = answerObj.url;
-                                            let mediaUrl;
-                                            if (!rawUrl.includes('48.cn')) {
-                                                mediaUrl = `https://mp4.48.cn/${rawUrl.replace(/^\/+/, '')}`;
-                                            } else {
-                                                mediaUrl = fix48Url(rawUrl);
-                                            }
-                                            if (m.msgType === 'FLIPCARD_VIDEO') {
-                                                mediaHtml = `<div class="mb-2"><video class="template-media" src="${mediaUrl}" controls preload="metadata"></video></div>`;
-                                                a = `<a class="color-fg-accent template-pre" href="${mediaUrl}" target="_blank">${mediaUrl}</a>`;
-                                            } else {
-                                                mediaHtml = `<div class="mb-2"><audio class="template-media" src="${mediaUrl}" controls preload="metadata"></audio></div>`;
-                                                a = `<a class="color-fg-accent template-pre" href="${mediaUrl}" target="_blank">${mediaUrl}</a>`;
-                                            }
-                                        }
-                                    } catch (e) {
-                                        console.error('翻牌解析失败', e);
-                                    }
-                                }
-                                contentHtml = `
-                                        <p class="mb-2"><strong>翻牌问题：</strong>${q}</p>
-                                        <p class="mb-2"><strong>回答：</strong>${a}</p>
-                                        ${mediaHtml}
-                                    `;
-                            } else {
-                                contentHtml = `<p class="mb-2 template-pre">${replaceTencentEmoji(body)}</p>`;
-                            }
-                        } catch (e) {
-                            contentHtml = `<p class="mb-2 template-pre">${replaceTencentEmoji(body)}</p>`;
-                        }
-                    } else {
-                        contentHtml = `<p class="mb-2 template-pre">${replaceTencentEmoji(body)}</p>`;
-                    }
-                    const d = new Date(m.msgTime);
-                    const pad = (n) => String(n).padStart(2, '0');
-                    timeStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-                    exportKey = buildExportKey(m, exportUserId, body);
-                } catch (e) {
-                    console.error(e);
-                    contentHtml = `<p class="mb-2" style="color:red">解析错误</p>`;
-                    timeStr = timeStr || new Date(m.msgTime || Date.now()).toLocaleString();
-                    exportKey = buildExportKey(m, '', m.msgContent || m.bodys || '');
+                } else if (rawBody && typeof rawBody === 'object') {
+                    structuredContent = rawBody;
+                } else {
+                    structuredContent = { text: String(rawBody || '') };
                 }
 
-                const itemHtml = `
-            <li class="Box-row" data-export-key="${exportKey}">
-                ${userHtml}
-                ${contentHtml}
-                <time class="d-block">${timeStr}</time>
-            </li>
-        `;
+                let avatarUrl = 'https://www.snh48.com/images/logo_snh48.jpg';
+                let nickName = m.senderName || '未知用户';
+                let exportUserId = m.senderUserId || '';
+                let exportRoleId = 0;
+
+                if (m.extInfo) {
+                    try {
+                        const ext = typeof m.extInfo === 'string' ? JSON.parse(m.extInfo) : m.extInfo;
+                        if (ext?.user) {
+                            nickName = ext.user.nickName || nickName;
+                            if (ext.user.avatar) avatarUrl = fixFetchExportUrl(ext.user.avatar);
+                            if (!exportUserId) exportUserId = ext.user.userId || ext.user.id || '';
+                            exportRoleId = Number(ext.user.roleId) || 0;
+                        }
+                    } catch (error) {
+                    }
+                }
+
+                const sortTime = Number(m.msgTime) || Date.now();
+                const messageDate = new Date(sortTime);
+                const pad = (value) => String(value).padStart(2, '0');
+                const timeStr = `${messageDate.getFullYear()}-${pad(messageDate.getMonth() + 1)}-${pad(messageDate.getDate())} ${pad(messageDate.getHours())}:${pad(messageDate.getMinutes())}:${pad(messageDate.getSeconds())}`;
+                const exportKey = buildFetchExportKey(m, exportUserId, rawBody);
 
                 exportEntries.push({
+                    schemaVersion: 1,
                     key: exportKey,
-                    sortTime: Number(m.msgTime) || Date.parse(timeStr) || 0,
-                    itemHtml
+                    sortTime,
+                    timeStr,
+                    messageType: String(structuredContent?.messageType || m.msgType || 'TEXT'),
+                    sender: {
+                        name: String(nickName || '未知用户'),
+                        avatarUrl: String(avatarUrl || ''),
+                        userId: String(exportUserId || ''),
+                        roleId: exportRoleId
+                    },
+                    content: structuredContent
                 });
-            });
+            }
+            return exportEntries;
+        }
+
+        async function exportMsgsToJsonl() {
+            if (allFetchedMsgs.length === 0) return showToast('没有消息可导出');
+            const exportEntries = buildFetchExportEntries(allFetchedMsgs);
 
             const selectedMemberName = currentSelectedMemberName || document.getElementById('member-search').value.trim() || '未命名成员';
             const selectedChannelId = currentFetchedChannelId || document.getElementById('tool-channel').value.trim();
             const exportMeta = getFetchExportMemberMeta(selectedMemberName, selectedChannelId);
             const exportFolderName = exportMeta.memberName;
-            const exportFileName = `${exportMeta.exportPrefix}-${exportMeta.channelId}.html`;
-            const exportBtn = document.getElementById('btn-export-html');
+            const exportFileName = `${exportMeta.exportPrefix}-${exportMeta.channelId}.jsonl`;
+            const exportBtn = document.getElementById('btn-export-jsonl');
             const originalBtnText = exportBtn.innerText;
             const box = document.getElementById('msg-result');
             const tip = document.createElement('div');
@@ -2394,11 +2957,9 @@
                 exportBtn.innerText = "正在导出";
                 exportBtn.disabled = true;
 
-                const res = await window.ipcRenderer.invoke('save-export-html', {
+                const res = await window.ipcRenderer.invoke('save-export-jsonl', {
                     memberName: exportFolderName,
                     fileName: exportFileName,
-                    title: '口袋消息导出',
-                    styleValue,
                     entries: exportEntries
                 });
 
@@ -2600,6 +3161,11 @@
 
         function showUserGifts(uid, name) {
             closeGiftAnalysis();
+
+            if (typeof window.applyMessageAnalysisDrilldown === 'function') {
+                window.applyMessageAnalysisDrilldown('gift', { userId: uid, name });
+                return;
+            }
 
             const contentInput = document.getElementById('search-content-input');
 

@@ -2349,13 +2349,15 @@
             }
         }
 
-        function openFollowedChat(ownerName, channelId, serverId) {
+        function openFollowedChat(ownerName, channelId, serverId, options = {}) {
+            const initialRoomType = options?.roomType === 'small' ? 'small' : 'big';
+            const mainChannelId = String(options?.mainChannelId || channelId || '');
             activeFollowedChannel = channelId;
-            activeFollowedMainChannel = channelId;
+            activeFollowedMainChannel = mainChannelId;
             activeFollowedServer = serverId;
             activeFollowedName = ownerName;
             activeFollowedNextTime = 0;
-            isFollowedSmallRoomMode = false;
+            isFollowedSmallRoomMode = initialRoomType === 'small';
             followedStickToBottom = true;
             followedUserScrollLockUntil = 0;
             followedLastScrollTop = 0;
@@ -2373,20 +2375,23 @@
 
             const roomBtn = document.getElementById('btn-toggle-room-type');
             if (roomBtn) {
-                roomBtn.innerText = "大房间";
+                roomBtn.innerText = isFollowedSmallRoomMode ? "小房间" : "大房间";
                 roomBtn.classList.remove('btn-primary');
                 roomBtn.classList.add('btn-secondary');
             }
 
             document.querySelectorAll('.session-card').forEach(card => card.classList.remove('active'));
-            const selectedCard = document.getElementById(`session-card-${channelId}`);
+            const selectedCard = document.getElementById(`session-card-${mainChannelId}`);
             if (selectedCard) selectedCard.classList.add('active');
 
             const header = document.getElementById('followed-chat-header');
             header.style.visibility = 'visible';
+            if (typeof window.updateFollowedRoomNotificationButton === 'function') {
+                window.updateFollowedRoomNotificationButton(mainChannelId);
+            }
             showFollowedChatTitle(getFollowedFallbackTitle(ownerName));
             document.getElementById('followed-chat-subtitle').innerText = `Channel ID: ${channelId}`;
-            activeFollowedFallbackAvatarUrl = getFollowedMemberAvatarUrl(channelId);
+            activeFollowedFallbackAvatarUrl = getFollowedMemberAvatarUrl(mainChannelId);
 
             if (activeFollowedServer) {
                 setFollowedChatAvatarUrl('');

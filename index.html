@@ -6,8 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy"
         content="default-src 'self' file: https: data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net https://unpkg.com https://cdn.tailwindcss.com https://esm.sh https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https:; img-src 'self' file: https: data: blob:; media-src 'self' file: https: http: data: blob:; connect-src 'self' file: https: http: ws: wss: data: blob:; font-src 'self' https: data:;">
-    <title>牙牙消息 v2.8</title>
+    <title>牙牙消息 v2.9</title>
     <link rel="icon" href="./icon.png" type="image/x-icon">
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20,400,0,0&icon_names=notifications_active,notifications_off">
 
     <link rel="stylesheet" href="style.css">
 
@@ -49,7 +51,7 @@
                 </svg>
             </div>
             <img src="./icon.png" class="title-logo">
-            <span>牙牙消息 v2.8</span>
+            <span>牙牙消息 v2.9</span>
         </div>
         <div id="topbar-page-title" class="title-bar-center-title" aria-live="polite"></div>
         <div class="window-controls">
@@ -304,9 +306,6 @@
                     <button class="btn btn-secondary" onclick="openSpeechAnalysis()" id="speechAnalysisBtn" disabled
                         style="flex: 1;">发言榜</button>
                 </div>
-
-                <button class="btn btn-secondary btn-full"
-                    onclick="openInBrowser('https://yk1z.github.io')">其它数据</button>
             </div>
             <div class="sidebar-group" id="sb-type">
                 <div class="group-title">类型筛选</div>
@@ -606,6 +605,12 @@
                             </div>
 
                             <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+                                <button id="btn-toggle-followed-notification" type="button"
+                                    class="followed-notification-toggle" onclick="toggleActiveFollowedRoomNotification()"
+                                    title="开启通知" aria-label="开启通知" aria-pressed="false">
+                                    <span class="material-symbols-rounded" aria-hidden="true">notifications_off</span>
+                                </button>
+
                                 <button id="btn-toggle-room-type" class="btn btn-secondary"
                                     onclick="toggleFollowedRoomType()"
                                     style="height: 30px; padding: 0 10px; font-size: 12px; display: flex; justify-content: center; align-items: center; transition: all 0.2s;">
@@ -643,6 +648,7 @@
 
             <div id="view-messages"
                 style="height: 100%; overflow-y: auto; display: none; padding: 20px 40px; box-sizing: border-box;">
+                <div id="web-message-controls-host" aria-label="消息检索条件"></div>
                 <div class="list-container" id="outputList">
                     <div class="placeholder-tip">
                         <h2>正在自动读取数据...</h2>
@@ -1576,8 +1582,8 @@
                                         <button id="btn-clear-fetch-boundary" class="btn btn-secondary"
                                             onclick="clearFetchBoundary()">清除上次抓取位置</button>
                                     </div>
-                                    <button class="btn btn-secondary btn-full" onclick="exportMsgsToHtml()"
-                                        id="btn-export-html" disabled>导出至消息检索</button>
+                                    <button class="btn btn-secondary btn-full" onclick="exportMsgsToJsonl()"
+                                        id="btn-export-jsonl" disabled>导出至消息检索</button>
                                 </div>
 
                                 <div id="msg-result"
@@ -1587,6 +1593,111 @@
                                         <span style="font-size:12px; opacity:0.7">(请先选择成员并点击抓取)</span>
                                     </div>
                                 </div>
+                    </div>
+
+                    <div class="Box-row auto-fetch-card">
+                        <section class="auto-fetch-panel" aria-labelledby="auto-fetch-title">
+                            <div class="auto-fetch-panel-header">
+                                <div>
+                                    <div id="auto-fetch-title" class="auto-fetch-title">自动抓取</div>
+                                </div>
+                            </div>
+
+                            <div class="auto-fetch-mode-grid">
+                                <label class="auto-fetch-mode-option">
+                                    <span class="auto-fetch-mode-copy">
+                                        <strong>自动抓取</strong>
+                                        <small>登录状态下，每次打开软件自动执行一次</small>
+                                    </span>
+                                    <span class="auto-fetch-switch">
+                                        <input id="auto-fetch-startup-toggle" type="checkbox"
+                                            onchange="setStartupAutoMessageFetchEnabled(this.checked)">
+                                        <span>启用</span>
+                                    </span>
+                                </label>
+                                <label class="auto-fetch-mode-option">
+                                    <span class="auto-fetch-mode-copy">
+                                        <strong>定时抓取</strong>
+                                        <small>软件运行期间，按照设定间隔持续检查新消息</small>
+                                    </span>
+                                    <span class="auto-fetch-switch">
+                                        <input id="auto-fetch-schedule-toggle" type="checkbox"
+                                            onchange="setScheduledAutoMessageFetchEnabled(this.checked)">
+                                        <span>启用</span>
+                                    </span>
+                                </label>
+                            </div>
+
+                            <div class="auto-fetch-controls">
+                                <div class="search-wrapper auto-fetch-member-search">
+                                    <label for="auto-fetch-member-input">抓取成员</label>
+                                    <input id="auto-fetch-member-input" type="text" class="input-control"
+                                        placeholder="搜索并选择成员"
+                                        oninput="handleAutoFetchMemberSearch(this.value)"
+                                        onfocus="handleAutoFetchMemberSearch(this.value)">
+                                    <div id="auto-fetch-member-results" class="suggestion-box"></div>
+                                </div>
+                                <div class="auto-fetch-interval-field">
+                                    <label for="auto-fetch-room-type-display">抓取房间</label>
+                                    <div class="auto-fetch-dropdown" id="auto-fetch-room-type-wrapper">
+                                        <input id="auto-fetch-room-type-display" type="text" class="input-control"
+                                            value="大房间" readonly
+                                            onclick="toggleAutoMessageFetchDropdown('roomType')">
+                                        <span class="auto-fetch-dropdown-arrow">▼</span>
+                                        <div id="auto-fetch-room-type-dropdown" class="suggestion-box auto-fetch-option-dropdown">
+                                            <div class="suggestion-item"
+                                                onclick="selectAutoMessageFetchOption('roomType', 'all', '所有房间')">所有房间</div>
+                                            <div class="suggestion-item"
+                                                onclick="selectAutoMessageFetchOption('roomType', 'big', '大房间')">大房间</div>
+                                            <div class="suggestion-item"
+                                                onclick="selectAutoMessageFetchOption('roomType', 'small', '小房间')">小房间</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="auto-fetch-interval-field">
+                                    <label for="auto-fetch-message-scope-display">消息范围</label>
+                                    <div class="auto-fetch-dropdown" id="auto-fetch-message-scope-wrapper">
+                                        <input id="auto-fetch-message-scope-display" type="text" class="input-control"
+                                            value="只看成员" readonly
+                                            onclick="toggleAutoMessageFetchDropdown('messageScope')">
+                                        <span class="auto-fetch-dropdown-arrow">▼</span>
+                                        <div id="auto-fetch-message-scope-dropdown" class="suggestion-box auto-fetch-option-dropdown">
+                                            <div class="suggestion-item"
+                                                onclick="selectAutoMessageFetchOption('messageScope', 'member', '只看成员')">只看成员</div>
+                                            <div class="suggestion-item"
+                                                onclick="selectAutoMessageFetchOption('messageScope', 'all', '全体消息')">全体消息</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="auto-fetch-interval-field" id="auto-fetch-schedule-interval-field">
+                                    <label for="auto-fetch-interval-display">定时抓取间隔</label>
+                                    <div class="auto-fetch-dropdown" id="auto-fetch-interval-wrapper">
+                                        <input id="auto-fetch-interval-display" type="text" class="input-control"
+                                            value="10 分钟" readonly
+                                            onclick="toggleAutoMessageFetchDropdown('intervalMinutes')">
+                                        <span class="auto-fetch-dropdown-arrow">▼</span>
+                                        <div id="auto-fetch-interval-dropdown" class="suggestion-box auto-fetch-option-dropdown">
+                                            <div class="suggestion-item"
+                                                onclick="selectAutoMessageFetchOption('intervalMinutes', 5, '5 分钟')">5 分钟</div>
+                                            <div class="suggestion-item"
+                                                onclick="selectAutoMessageFetchOption('intervalMinutes', 10, '10 分钟')">10 分钟</div>
+                                            <div class="suggestion-item"
+                                                onclick="selectAutoMessageFetchOption('intervalMinutes', 30, '30 分钟')">30 分钟</div>
+                                            <div class="suggestion-item"
+                                                onclick="selectAutoMessageFetchOption('intervalMinutes', 60, '1 小时')">1 小时</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="auto-fetch-save-field">
+                                    <label aria-hidden="true">保存设置</label>
+                                    <button id="btn-save-auto-fetch-settings" type="button" class="btn btn-secondary"
+                                        onclick="saveAutoMessageFetchSettings()" disabled>保存</button>
+                                </div>
+                            </div>
+
+                            <div id="auto-fetch-member-list" class="auto-fetch-member-list"></div>
+                            <div id="auto-fetch-status" class="auto-fetch-status">尚未添加自动抓取成员</div>
+                        </section>
                     </div>
                 </div>
             </div>
