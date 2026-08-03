@@ -626,9 +626,16 @@
             const sidebar = document.querySelector('.sidebar');
             if (!sidebar) return;
 
+            // The sidebar belongs only to the message search view. Switch its
+            // visibility together with the page instead of playing a separate
+            // expand/collapse animation while entering or leaving that view.
+            const inlineTransition = sidebar.style.transition;
+            sidebar.style.transition = 'none';
             sidebar.classList.remove('collapsed');
             sidebar.classList.toggle('app-sidebar-disabled', !isVisible);
             sidebar.classList.toggle('home-hidden', !isVisible);
+            void sidebar.offsetWidth;
+            sidebar.style.transition = inlineTransition;
         }
 
         function isMessageViewVisible() {
@@ -3280,7 +3287,7 @@
         window.toggleGiftPanel = toggleGiftPanel;
         window.updateLiveBalance = updateLiveBalance;
 
-        const ACTIVE_POLL_INTERVAL = 3000;
+        const ACTIVE_POLL_INTERVAL = 2000;
         const BACKGROUND_POLL_INTERVAL = 5000;
         function getAdaptivePollDelay() {
             return (document.hidden || !document.hasFocus()) ? BACKGROUND_POLL_INTERVAL : ACTIVE_POLL_INTERVAL;

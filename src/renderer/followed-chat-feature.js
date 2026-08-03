@@ -1016,7 +1016,11 @@
             const directImages = Array.isArray(value.images)
                 ? value.images.map(url => normalizeFollowedPocketMediaUrl(url)).filter(Boolean)
                 : [];
-            const images = [...directImages, ...flattenFollowedPostItems(value, 'image').map(item => item.imageUrl).filter(Boolean)];
+            const isPostObject = !!(postId || text || isFollowedDynamicPostLikeObject(value));
+            const nestedImages = isPostObject
+                ? flattenFollowedPostItems(value, 'image').map(item => item.imageUrl).filter(Boolean)
+                : [];
+            const images = [...new Set([...directImages, ...nestedImages])];
             const key = String(postId || text || images[0] || '');
             if (key && !seen.has(key) && (text || images.length)) {
                 seen.add(key);
@@ -1034,8 +1038,60 @@
             return items;
         }
 
+        function dedupeFollowedDynamicItems(items = []) {
+            const deduped = [];
+            const scoreItem = item => (
+                (item?.text ? 4 : 0)
+                + (item?.postId ? 3 : 0)
+                + (item?.ctime ? 1 : 0)
+                + Math.min(2, Array.isArray(item?.images) ? item.images.length : 0)
+            );
+
+            items.forEach(item => {
+                if (!item || typeof item !== 'object') return;
+                const images = [...new Set((Array.isArray(item.images) ? item.images : []).filter(Boolean))];
+                const normalized = { ...item, images };
+                const imageSet = new Set(images);
+                const matchedIndex = deduped.findIndex(existing => {
+                    const samePost = normalized.postId
+                        && existing.postId
+                        && String(normalized.postId) === String(existing.postId);
+                    if (samePost) return true;
+
+                    const sharesImage = imageSet.size > 0
+                        && existing.images.some(url => imageSet.has(url));
+                    if (!sharesImage) return false;
+
+                    // 接口会把同一条动态的媒体子对象和完整动态对象同时嵌套返回。
+                    // 仅在其中一项缺少正文或动态 ID 时合并，避免误合并正常的转发/重复用图。
+                    return !normalized.text
+                        || !existing.text
+                        || !normalized.postId
+                        || !existing.postId;
+                });
+
+                if (matchedIndex < 0) {
+                    deduped.push(normalized);
+                    return;
+                }
+
+                const existing = deduped[matchedIndex];
+                const richer = scoreItem(normalized) >= scoreItem(existing) ? normalized : existing;
+                const other = richer === normalized ? existing : normalized;
+                deduped[matchedIndex] = {
+                    ...richer,
+                    text: richer.text || other.text || '',
+                    postId: richer.postId || other.postId || '',
+                    ctime: richer.ctime || other.ctime || '',
+                    images: [...new Set([...richer.images, ...other.images])]
+                };
+            });
+
+            return deduped;
+        }
+
         function renderFollowedDynamicList(dynamicContent) {
-            const posts = flattenFollowedDynamicItems(dynamicContent);
+            const posts = dedupeFollowedDynamicItems(flattenFollowedDynamicItems(dynamicContent));
             if (!posts.length) return renderFollowedPocketProfileEmpty('暂无动态数据');
 
             return `<div class="followed-pocket-dynamic-list">
@@ -1070,7 +1126,10 @@
             const previousSource = previousContent?.[sourceKey] || previousContent || {};
             const mergedItems = [];
             const seen = new Set();
-            [...flattenFollowedDynamicItems(previousSource), ...flattenFollowedDynamicItems(nextContent)].forEach(item => {
+            dedupeFollowedDynamicItems([
+                ...flattenFollowedDynamicItems(previousSource),
+                ...flattenFollowedDynamicItems(nextContent)
+            ]).forEach(item => {
                 const key = String(item.postId || item.text || item.images?.[0] || item.ctime || '');
                 if (!key || seen.has(key)) return;
                 seen.add(key);

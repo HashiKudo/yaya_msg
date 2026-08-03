@@ -984,7 +984,7 @@
 
         function markAutoMessageFetchDraftDirty() {
             autoMessageFetchDraftDirty = true;
-            renderAutoMessageFetchUi();
+            saveAutoMessageFetchSettings({ silent: true });
         }
 
         function setAutoMessageFetchStatus(message, type = '') {
@@ -1017,7 +1017,6 @@
             const intervalDisplay = document.getElementById('auto-fetch-interval-display');
             const intervalField = document.getElementById('auto-fetch-schedule-interval-field');
             const controls = document.querySelector('.auto-fetch-controls');
-            const saveButton = document.getElementById('btn-save-auto-fetch-settings');
             const runButton = document.getElementById('btn-auto-fetch-now');
             const list = document.getElementById('auto-fetch-member-list');
 
@@ -1036,14 +1035,9 @@
                 const intervalDropdown = document.getElementById('auto-fetch-interval-dropdown');
                 if (intervalDropdown) intervalDropdown.style.display = 'none';
             }
-            if (saveButton) {
-                saveButton.disabled = !autoMessageFetchDraftDirty;
-                saveButton.textContent = '保存';
-                saveButton.className = autoMessageFetchDraftDirty ? 'btn btn-primary' : 'btn btn-secondary';
-            }
             if (runButton && !autoMessageFetchInFlight) {
                 runButton.disabled = autoMessageFetchDraftDirty;
-                runButton.title = autoMessageFetchDraftDirty ? '请先保存自动抓取设置' : '';
+                runButton.title = autoMessageFetchDraftDirty ? '自动抓取设置正在保存' : '';
             }
 
             if (list) {
@@ -1069,7 +1063,7 @@
 
             if (options.keepStatus || autoMessageFetchInFlight) return;
             if (autoMessageFetchDraftDirty) {
-                setAutoMessageFetchStatus('设置已修改，点击“保存设置”后生效', 'running');
+                setAutoMessageFetchStatus('正在自动保存设置', 'running');
                 return;
             }
             if (config.members.length === 0) {
@@ -1213,36 +1207,59 @@
             markAutoMessageFetchDraftDirty();
         }
 
-        function canEnableAutoMessageFetch(config) {
-            if (config.members.length > 0) return true;
-            showToast('请先添加自动抓取成员');
-            return false;
+        function saveAutoMessageFetchEnabledState(settingName, enabled) {
+            const isScheduled = settingName === 'scheduledEnabled';
+            const settingKey = isScheduled ? 'scheduledEnabled' : 'startupEnabled';
+            const persistedConfig = readAutoMessageFetchConfig();
+            const draftConfig = getAutoMessageFetchDraftConfig(true);
+            const nextEnabled = !!enabled;
+
+            if (nextEnabled && persistedConfig.members.length === 0) {
+                draftConfig[settingKey] = false;
+                renderAutoMessageFetchUi({ keepStatus: true });
+                setAutoMessageFetchStatus('请先添加至少一位成员', 'error');
+                showToast('请先添加自动抓取成员');
+                return;
+            }
+
+            const nextConfig = cloneAutoMessageFetchConfig(persistedConfig);
+            nextConfig[settingKey] = nextEnabled;
+            if (isScheduled && nextEnabled && !persistedConfig.scheduledEnabled) {
+                nextConfig.lastRunAt = Date.now();
+            }
+            const savedConfig = writeAutoMessageFetchConfig(nextConfig);
+
+            // 同步即时保存后的开关状态。
+            draftConfig[settingKey] = savedConfig[settingKey];
+            if (!autoMessageFetchDraftDirty) {
+                autoMessageFetchDraftConfig = cloneAutoMessageFetchConfig(savedConfig);
+            }
+
+            if (settingKey === 'startupEnabled' && !savedConfig.startupEnabled) {
+                autoMessageFetchStartupArmed = false;
+                if (autoMessageFetchStartupTimer) clearTimeout(autoMessageFetchStartupTimer);
+                autoMessageFetchStartupTimer = null;
+            }
+
+            if (settingKey === 'scheduledEnabled') {
+                if (savedConfig.scheduledEnabled) {
+                    scheduleAutoMessageFetch(savedConfig.intervalMinutes * 60 * 1000);
+                } else {
+                    if (autoMessageFetchTimer) clearTimeout(autoMessageFetchTimer);
+                    autoMessageFetchTimer = null;
+                }
+            }
+
+            renderAutoMessageFetchUi();
+            showToast(`${isScheduled ? '定时抓取' : '自动抓取'}已${nextEnabled ? '开启' : '关闭'}`);
         }
 
         function setStartupAutoMessageFetchEnabled(enabled) {
-            const config = getAutoMessageFetchDraftConfig(true);
-            if (enabled && !canEnableAutoMessageFetch(config)) {
-                config.startupEnabled = false;
-                renderAutoMessageFetchUi();
-                setAutoMessageFetchStatus('请先添加至少一位成员', 'error');
-                return;
-            }
-
-            config.startupEnabled = !!enabled;
-            markAutoMessageFetchDraftDirty();
+            saveAutoMessageFetchEnabledState('startupEnabled', enabled);
         }
 
         function setScheduledAutoMessageFetchEnabled(enabled) {
-            const config = getAutoMessageFetchDraftConfig(true);
-            if (enabled && !canEnableAutoMessageFetch(config)) {
-                config.scheduledEnabled = false;
-                renderAutoMessageFetchUi();
-                setAutoMessageFetchStatus('请先添加至少一位成员', 'error');
-                return;
-            }
-
-            config.scheduledEnabled = !!enabled;
-            markAutoMessageFetchDraftDirty();
+            saveAutoMessageFetchEnabledState('scheduledEnabled', enabled);
         }
 
         // 保留旧入口，已有页面缓存调用时按“定时抓取”处理。
@@ -1281,7 +1298,7 @@
             }
         }
 
-        function saveAutoMessageFetchSettings() {
+        function saveAutoMessageFetchSettings(options = {}) {
             if (!autoMessageFetchDraftDirty) return;
 
             const previousConfig = readAutoMessageFetchConfig();
@@ -1325,9 +1342,9 @@
                 const missingMessage = savedConfig.roomType === 'all'
                     ? `${missingSmallRoomCount} 位成员缺少小房间参数，将只抓取大房间`
                     : `${missingSmallRoomCount} 位成员缺少小房间参数`;
-                setAutoMessageFetchStatus(`设置已保存；${missingMessage}`, 'error');
+                setAutoMessageFetchStatus(`已自动保存；${missingMessage}`, 'error');
             }
-            showToast('自动抓取设置已保存');
+            if (!options.silent) showToast('自动抓取设置已保存');
         }
 
         function scheduleAutoMessageFetch(delayMs) {
@@ -1568,7 +1585,7 @@
                 if (runButton) {
                     runButton.disabled = autoMessageFetchDraftDirty;
                     runButton.textContent = '立即抓取';
-                    runButton.title = autoMessageFetchDraftDirty ? '请先保存自动抓取设置' : '';
+                    runButton.title = autoMessageFetchDraftDirty ? '自动抓取设置正在保存' : '';
                 }
 
                 const latestConfig = readAutoMessageFetchConfig();

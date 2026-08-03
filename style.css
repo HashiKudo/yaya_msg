@@ -5964,14 +5964,14 @@ a {
 
 .auto-fetch-controls {
     display: grid;
-    grid-template-columns: minmax(210px, 1fr) 118px 132px 104px;
+    grid-template-columns: minmax(210px, 1fr) 118px 132px;
     gap: 10px;
     align-items: end;
     margin-top: 13px;
 }
 
 .auto-fetch-controls.has-scheduled-interval {
-    grid-template-columns: minmax(210px, 1fr) 118px 132px 148px 104px;
+    grid-template-columns: minmax(210px, 1fr) 118px 132px 148px;
 }
 
 .auto-fetch-controls label:not(.auto-fetch-switch) {
@@ -6028,20 +6028,6 @@ a {
     width: 100%;
     min-width: 100%;
     max-height: 220px;
-}
-
-.auto-fetch-save-field {
-    min-width: 0;
-}
-
-.auto-fetch-save-field > label {
-    visibility: hidden;
-}
-
-.auto-fetch-save-field .btn {
-    width: 100%;
-    height: 40px;
-    padding: 0 10px;
 }
 
 .auto-fetch-member-list {
@@ -6122,9 +6108,6 @@ a {
         grid-column: 1 / -1;
     }
 
-    .auto-fetch-save-field {
-        grid-column: 1 / -1;
-    }
 }
 
 input::-webkit-calendar-picker-indicator {

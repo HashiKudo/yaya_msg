@@ -125,6 +125,11 @@
             word-break: break-word;
         }
 
+        .body-sender {
+            color: #FF85AD;
+            font-weight: 700;
+        }
+
         @keyframes enter {
             from {
                 opacity: 0;
@@ -171,7 +176,18 @@
         window.renderYayaNotification = function renderYayaNotification(payload) {
             const value = payload || {};
             document.getElementById('title').textContent = value.title || '牙牙消息';
-            document.getElementById('body').textContent = value.body || '收到一条新消息';
+            const body = document.getElementById('body');
+            const bodyText = String(value.body || '收到一条新消息');
+            const separatorIndex = bodyText.indexOf('：');
+            body.replaceChildren();
+            if (separatorIndex > 0) {
+                const sender = document.createElement('span');
+                sender.className = 'body-sender';
+                sender.textContent = bodyText.slice(0, separatorIndex + 1);
+                body.append(sender, document.createTextNode(bodyText.slice(separatorIndex + 1)));
+            } else {
+                body.textContent = bodyText;
+            }
             const avatar = document.getElementById('avatar');
             avatar.onerror = function () {
                 avatar.onerror = null;

@@ -33,7 +33,7 @@
         const FOLLOWED_PINNED_CHANNELS_KEY = 'yaya_followed_pinned_channels';
         const FOLLOWED_NOTIFICATION_ROOMS_KEY = 'yaya_followed_notification_rooms';
         const FOLLOWED_NOTIFICATION_CURSORS_KEY = 'yaya_followed_notification_cursors';
-        const FOLLOWED_NOTIFICATION_POLL_INTERVAL = 3000;
+        const FOLLOWED_NOTIFICATION_POLL_INTERVAL = 2000;
 
         function readJsonSetting(key, fallbackValue) {
             if (typeof window.readStoredJsonSetting === 'function') {
