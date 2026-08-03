@@ -8,6 +8,7 @@ import wasmRuntime from '../rust-wasm.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.join(__dirname, '..');
+const apiVersion = '2026-08-04-login-v2';
 const port = Number(process.env.PORT || 3001);
 const allowedOrigins = String(process.env.ALLOWED_ORIGINS || 'https://gnz.hk,https://www.gnz.hk,http://localhost:8787,http://127.0.0.1:8787')
     .split(',')
@@ -128,7 +129,8 @@ const server = http.createServer(async (req, res) => {
             return writeFetchResponse(res, applyCorsHeaders(json({
                 success: true,
                 runtime: 'node',
-                service: 'yaya-api'
+                service: 'yaya-api',
+                version: apiVersion
             }), origin));
         }
 
