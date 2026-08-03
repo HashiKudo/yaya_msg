@@ -274,9 +274,10 @@
             followedRoomNotificationRunning = false;
         }
 
-        function startFollowedRoomNotificationPolling(delayMs = 1000) {
+        function startFollowedRoomNotificationPolling(delayMs = 1000, options = {}) {
             stopFollowedRoomNotificationPolling();
             followedRoomNotificationEnabled = true;
+            let silentInitialSyncPending = options?.silentInitialSync === true;
 
             const scheduleNext = (delay) => {
                 if (!followedRoomNotificationEnabled) return;
@@ -327,14 +328,22 @@
 
                     for (const room of rooms) {
                         const lastMessage = lastMessages.find(item => String(item.channelId || '') === room.channelId);
+                        if (silentInitialSyncPending && !lastMessage) {
+                            if (Object.prototype.hasOwnProperty.call(cursors, room.channelId)) {
+                                delete cursors[room.channelId];
+                                cursorChanged = true;
+                            }
+                            continue;
+                        }
                         if (!lastMessage) continue;
 
                         const nextTime = getFollowedMessageTime(lastMessage);
                         const nextKey = getFollowedMessageKey(lastMessage);
                         const previous = cursors[room.channelId];
 
-                        // 第一次开启或迁移旧游标时，读取详细消息建立可靠位置，不弹出历史消息。
-                        if (!previous || !(Number(previous.msgTime) > 0)) {
+                        // 软件启动后的第一次检查只同步到最新位置，不补发关闭期间的消息。
+                        // 第一次开启或迁移旧游标时也读取详细消息建立可靠位置，不弹出历史消息。
+                        if (silentInitialSyncPending || !previous || !(Number(previous.msgTime) > 0)) {
                             try {
                                 const initialMessages = await fetchFollowedRoomNotificationMessages(room, token, pa);
                                 const newest = initialMessages[0] || lastMessage;
@@ -422,6 +431,7 @@
                     if (cursorChanged) {
                         writeJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, cursors);
                     }
+                    silentInitialSyncPending = false;
                 } catch (error) {
                     console.warn('[口袋通知] 后台检查失败:', error);
                 } finally {

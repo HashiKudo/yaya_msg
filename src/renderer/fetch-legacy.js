@@ -2347,7 +2347,7 @@
                     syncAutoCheckinUi();
                     queueStartupAutoMessageFetch(1200);
                     if (typeof startFollowedRoomNotificationPolling === 'function') {
-                        startFollowedRoomNotificationPolling(1200);
+                        startFollowedRoomNotificationPolling(1200, { silentInitialSync: true });
                     }
 
                     if (accountArea && accountList) {
