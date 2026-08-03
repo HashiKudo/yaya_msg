@@ -465,7 +465,7 @@ async function applyWebTransforms() {
     indexHtml = replaceOnce(
         indexHtml,
         '                    </section>\r\n                    <div class="home-footer-credit">presented by yk1z</div>',
-                        `                    </section>\r\n                    <div class="web-limit-notice">\r\n                        <span class="web-limit-copy">由于网页限制，使用完整功能请下载桌面端。</span>\r\n                        <div class="web-download-actions" aria-label="桌面端下载">\r\n                            <a class="web-desktop-download-btn" href="/downloads/yaya_msg-v2.8-win.zip?v=20260602" download><span class="web-platform-icon" aria-hidden="true">⊞</span><span>Windows</span></a>\r\n                            <a class="web-desktop-download-btn" href="/downloads/yaya_msg-v2.8-mac.zip?v=20260602" download><span class="web-platform-icon" aria-hidden="true"></span><span>macOS</span></a>\r\n                            <a class="web-desktop-download-btn" href="/downloads/yaya_msg-v2.8-linux.tar.gz?v=20260602" download><span class="web-platform-icon" aria-hidden="true">◆</span><span>Linux</span></a>\r\n                        </div>\r\n                    </div>\r\n                    <div class="home-footer-credit">presented by yk1z</div>`
+                        `                    </section>\r\n                    <div class="web-limit-notice">\r\n                        <span class="web-limit-copy">由于网页限制，使用完整功能请下载桌面端。</span>\r\n                        <div class="web-download-actions" aria-label="桌面端下载">\r\n                            <a class="web-desktop-download-btn" href="/downloads/yaya_msg-v2.9-win.zip?v=20260803" download><span class="web-platform-icon" aria-hidden="true">⊞</span><span>Windows</span></a>\r\n                            <a class="web-desktop-download-btn" href="/downloads/yaya_msg-v2.9-mac.zip?v=20260803" download><span class="web-platform-icon" aria-hidden="true"></span><span>macOS</span></a>\r\n                            <a class="web-desktop-download-btn" href="/downloads/yaya_msg-v2.9-linux.tar.gz?v=20260803" download><span class="web-platform-icon" aria-hidden="true">◆</span><span>Linux</span></a>\r\n                        </div>\r\n                    </div>\r\n                    <div class="home-footer-credit">presented by yk1z</div>`
     );
     indexHtml = indexHtml.replace(/<span class="web-platform-icon" aria-hidden="true">.*?<\/span><span>(Windows|macOS|Linux)<\/span>/g, '$1');
     indexHtml = indexHtml.replace(
@@ -2858,8 +2858,7 @@ if (buildDatabaseRuntimeOnly) {
         'style.css',
         'web-icon.png',
         '2.wasm',
-        'rust-wasm-browser.js',
-        '4fb13b5a010b5eb4c05ec3fdfd5504e0.txt'
+        'rust-wasm-browser.js'
     ].forEach(copyFile);
 
     copyDir('src/renderer');

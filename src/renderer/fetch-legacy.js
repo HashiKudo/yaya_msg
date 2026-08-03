@@ -2131,6 +2131,16 @@
 
         let currentVerifyAnswer = null;
 
+        async function getLoginPa() {
+            if (window.yayaWasmReadyPromise) {
+                try {
+                    await window.yayaWasmReadyPromise;
+                } catch (error) {
+                }
+            }
+            return typeof window.getPA === 'function' ? window.getPA() : null;
+        }
+
         async function handleSendSms(answer = null) {
             const mobile = document.getElementById('login-mobile').value.trim();
             const area = document.getElementById('login-area').value.trim() || '86';
@@ -2154,7 +2164,8 @@
             msgBox.innerText = '';
 
             try {
-                const res = await ipcRenderer.invoke('login-send-sms', { mobile, area, answer });
+                const pa = await getLoginPa();
+                const res = await ipcRenderer.invoke('login-send-sms', { mobile, area, answer, pa });
 
                 if (res.success) {
                     if (verifyArea) verifyArea.style.display = 'none';
@@ -2253,7 +2264,8 @@
             msgDiv.style.color = 'var(--primary)';
 
             try {
-                const res = await ipcRenderer.invoke('login-by-code', { mobile, code });
+                const pa = await getLoginPa();
+                const res = await ipcRenderer.invoke('login-by-code', { mobile, code, pa });
 
                 if (res.status === 200 && res.success) {
                     const token = res.content.token;

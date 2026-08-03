@@ -4,6 +4,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import wasmRuntime from '../rust-wasm.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.join(__dirname, '..');
@@ -12,6 +13,15 @@ const allowedOrigins = String(process.env.ALLOWED_ORIGINS || 'https://gnz.hk,htt
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
+
+async function createServerPaGenerator() {
+    const wasmPath = path.join(projectRoot, '2.wasm');
+    const wasmBuffer = fs.readFileSync(wasmPath);
+    await wasmRuntime.default(wasmBuffer);
+    return () => wasmRuntime.__x6c2adf8__();
+}
+
+const generateServerPa = await createServerPaGenerator();
 
 function loadWorkerRuntime() {
     const workerPath = path.join(projectRoot, 'workers', 'yaya-web.js');
@@ -27,6 +37,7 @@ function loadWorkerRuntime() {
         setTimeout,
         clearTimeout,
         crypto: globalThis.crypto || crypto.webcrypto,
+        __yayaGeneratePa: generateServerPa,
         globalThis: {}
     });
     context.globalThis = context;

@@ -1468,10 +1468,26 @@ async function resolveServerId(channelId, headers) {
     return null;
 }
 
-async function loginSendSms({ mobile, area, answer }) {
+function getLoginRequestPa(pa) {
+    const clientPa = String(pa || '').trim();
+    if (clientPa) return clientPa;
+    try {
+        if (typeof globalThis.__yayaGeneratePa === 'function') {
+            return String(globalThis.__yayaGeneratePa() || '').trim();
+        }
+    } catch (error) {
+    }
+    return '';
+}
+
+async function loginSendSms({ mobile, area, answer, pa }) {
     const payload = { mobile, area: area || '86' };
     if (answer) payload.answer = answer;
-    const response = await postJson('https://pocketapi.48.cn/user/api/v1/sms/send2', payload, createHeaders());
+    const response = await postJson(
+        'https://pocketapi.48.cn/user/api/v1/sms/send2',
+        payload,
+        createPocketAndroidHeaders(null, getLoginRequestPa(pa))
+    );
     if (response.status === 200 && response.data?.status === 200) return { success: true };
     if (response.data?.status === 2001) {
         try {
@@ -1488,7 +1504,7 @@ async function loginByCode({ mobile, code, pa }) {
     const response = await postJson(
         'https://pocketapi.48.cn/user/api/v1/login/app/mobile/code',
         { mobile, code },
-        createHeaders(null, pa)
+        createPocketAndroidHeaders(null, getLoginRequestPa(pa))
     );
     return response.data;
 }
