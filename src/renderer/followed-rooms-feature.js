@@ -4,6 +4,7 @@
     window.YayaRendererFeatures.createFollowedRoomsFeature = function createFollowedRoomsFeature(deps) {
         const {
             getActiveFollowedChannel,
+            getAdaptivePollDelay,
             getAppToken,
             getMemberData,
             getMemberDataLoaded,
@@ -23,9 +24,16 @@
         let followedRoomsAutoRefreshRunning = false;
         let followedRoomContextMenu = null;
         let followedRoomContextTarget = null;
+        let followedRoomNotificationTimer = null;
+        let followedRoomNotificationRunning = false;
+        let followedRoomNotificationEnabled = false;
+        const followedNotificationServerDetailCache = new Map();
         window.allFollowedIds = window.allFollowedIds || new Set();
         const FOLLOWED_CUSTOM_ORDER_KEY = 'yaya_followed_custom_order';
         const FOLLOWED_PINNED_CHANNELS_KEY = 'yaya_followed_pinned_channels';
+        const FOLLOWED_NOTIFICATION_ROOMS_KEY = 'yaya_followed_notification_rooms';
+        const FOLLOWED_NOTIFICATION_CURSORS_KEY = 'yaya_followed_notification_cursors';
+        const FOLLOWED_NOTIFICATION_POLL_INTERVAL = 2000;
 
         function readJsonSetting(key, fallbackValue) {
             if (typeof window.readStoredJsonSetting === 'function') {
@@ -45,6 +53,434 @@
             }
             localStorage.setItem(key, JSON.stringify(value));
             return value;
+        }
+
+        function getFollowedNotificationConfigs() {
+            const savedConfigs = readJsonSetting(FOLLOWED_NOTIFICATION_ROOMS_KEY, []);
+            if (!Array.isArray(savedConfigs)) return [];
+            const members = Array.isArray(getMemberData()) ? getMemberData() : [];
+            return savedConfigs
+                .filter((config) => config && config.channelId && config.serverId)
+                .map((config) => {
+                    const memberId = String(config.memberId || '');
+                    const mainChannelId = String(config.channelId || '');
+                    const memberName = String(config.memberName || '成员');
+                    const member = members.find(
+                        (item) =>
+                            (memberId && String(item.id || item.userId || '') === memberId) ||
+                            String(item.channelId || '') === mainChannelId ||
+                            String(item.ownerName || '') === memberName
+                    );
+                    return {
+                        channelId: mainChannelId,
+                        smallChannelId: String(config.smallChannelId || member?.smallChannelId || member?.yklzId || ''),
+                        serverId: String(config.serverId),
+                        memberId,
+                        memberName,
+                        avatarUrl: String(config.avatarUrl || getFollowedNotificationAvatar(member || {}) || '')
+                    };
+                });
+        }
+
+        function getFollowedNotificationRooms() {
+            return getFollowedNotificationConfigs().flatMap((config) => {
+                const rooms = [
+                    {
+                        ...config,
+                        mainChannelId: config.channelId,
+                        roomType: 'big',
+                        roomLabel: '大房间'
+                    }
+                ];
+                if (config.smallChannelId) {
+                    rooms.push({
+                        ...config,
+                        channelId: config.smallChannelId,
+                        mainChannelId: config.channelId,
+                        roomType: 'small',
+                        roomLabel: '小房间'
+                    });
+                }
+                return rooms;
+            });
+        }
+
+        function writeFollowedNotificationConfigs(configs) {
+            writeJsonSetting(FOLLOWED_NOTIFICATION_ROOMS_KEY, configs);
+        }
+
+        function isFollowedRoomNotificationEnabled(channelId) {
+            const target = String(channelId || '');
+            return getFollowedNotificationConfigs().some((config) => config.channelId === target);
+        }
+
+        function getActiveFollowedRoomCard(channelId = getActiveFollowedChannel()) {
+            const target = String(channelId || '').trim();
+            const cards = Array.from(document.querySelectorAll('#followed-rooms-container .session-card'));
+            return (
+                cards.find((card) => String(card.dataset.channelid || '') === target || String(card.dataset.smallChannelId || '') === target) ||
+                document.querySelector('#followed-rooms-container .session-card.active')
+            );
+        }
+
+        function updateFollowedRoomNotificationButton(channelId = getActiveFollowedChannel()) {
+            const button = document.getElementById('btn-toggle-followed-notification');
+            if (!button) return;
+
+            const card = getActiveFollowedRoomCard(channelId);
+            const mainChannelId = String(card?.dataset?.channelid || '').trim();
+            const enabled = !!mainChannelId && isFollowedRoomNotificationEnabled(mainChannelId);
+            const label = enabled ? '关闭通知' : '开启通知';
+            button.classList.toggle('is-enabled', enabled);
+            const icon = button.querySelector('.material-symbols-rounded');
+            if (icon) icon.textContent = enabled ? 'notifications_active' : 'notifications_off';
+            button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+            button.setAttribute('aria-label', label);
+            button.title = label;
+        }
+
+        function normalizeFollowedNotificationAvatar(value) {
+            const raw = String(value || '').trim();
+            if (!raw) return '';
+            if (/^https?:\/\//i.test(raw)) return raw;
+            if (raw.startsWith('//')) return `https:${raw}`;
+            return `https://source.48.cn/${raw.replace(/^\/+/, '')}`;
+        }
+
+        function getFollowedNotificationAvatar(source = {}) {
+            return normalizeFollowedNotificationAvatar(
+                source.starAvatar || source.avatarUrl || source.avatar || source.userAvatar || source.headImage || source.faceImage || source.picPath || ''
+            );
+        }
+
+        function getFollowedMessageKey(message = {}) {
+            return String(
+                message.msgidClient ||
+                    message.msgIdClient ||
+                    message.msgIdServer ||
+                    message.msgId ||
+                    message.messageId ||
+                    `${message.msgTime || 0}:${message.msgContent || message.bodys || ''}`
+            );
+        }
+
+        function getFollowedMessageTime(message = {}) {
+            return Number(message.msgTime || message.messageTime || 0) || 0;
+        }
+
+        function getFollowedMessageExtUser(message = {}) {
+            if (!message.extInfo) return null;
+            try {
+                const safeExtInfo = typeof message.extInfo === 'string' ? message.extInfo.replace(/:\s*([0-9]{16,})/g, ':"$1"') : message.extInfo;
+                const ext = typeof safeExtInfo === 'string' ? JSON.parse(safeExtInfo) : safeExtInfo;
+                return ext?.user || null;
+            } catch (error) {
+                return null;
+            }
+        }
+
+        function getFollowedMessageSenderAvatar(message = {}) {
+            let avatarUrl = getFollowedNotificationAvatar(message);
+            const extUser = getFollowedMessageExtUser(message);
+            avatarUrl = getFollowedNotificationAvatar(extUser || {}) || avatarUrl;
+            return avatarUrl;
+        }
+
+        function getFollowedMessageSenderName(message = {}, fallbackName = '成员') {
+            const extUser = getFollowedMessageExtUser(message);
+            return String(extUser?.nickName || extUser?.nickname || message.senderName || message.nickName || fallbackName).trim() || fallbackName;
+        }
+
+        function getFollowedMessagePreview(message = {}) {
+            const messageType = String(message.msgType || message.messageType || '').toUpperCase();
+            const typeLabels = {
+                AUDIO: '[语音消息]',
+                EXPRESSIMAGE: '[表情消息]',
+                IMAGE: '[图片消息]',
+                VIDEO: '[视频消息]'
+            };
+            if (typeLabels[messageType]) return typeLabels[messageType];
+            return replaceTencentEmoji(parseFollowedPreviewText(message.bodys || message.msgContent || message.content || ''));
+        }
+
+        async function fetchFollowedRoomNotificationMessages(room, token, pa) {
+            const response = await ipcRenderer.invoke('fetch-room-messages', {
+                token,
+                pa,
+                serverId: room.serverId,
+                channelId: room.channelId,
+                nextTime: 0,
+                fetchAll: false
+            });
+            if (!response?.success || !response?.data?.content) {
+                throw new Error(response?.msg || '获取房间消息失败');
+            }
+            const content = response.data.content;
+            const list = content.messageList || content.message || [];
+            return Array.isArray(list) ? list : [];
+        }
+
+        async function getFollowedNotificationRoomName(room, token, pa) {
+            const serverId = String(room.serverId || '').trim();
+            if (!serverId) return room.roomLabel;
+
+            let detail = followedNotificationServerDetailCache.get(serverId);
+            if (!detail) {
+                try {
+                    const response = await ipcRenderer.invoke('fetch-seine-server-detail', {
+                        token,
+                        pa,
+                        serverId
+                    });
+                    if (response?.success && response.content) {
+                        detail = response.content;
+                        followedNotificationServerDetailCache.set(serverId, detail);
+                    }
+                } catch (error) {
+                    console.warn(`[口袋通知] 获取 ${room.memberName} 的真实房间名失败:`, error);
+                }
+            }
+
+            const channels = Array.isArray(detail?.channelInfoList) ? detail.channelInfoList : [];
+            const matchedChannel = channels.find((channel) => String(channel.channelId || '') === String(room.channelId || ''));
+            return String(matchedChannel?.channelName || room.roomLabel).trim() || room.roomLabel;
+        }
+
+        function stopFollowedRoomNotificationPolling() {
+            followedRoomNotificationEnabled = false;
+            if (followedRoomNotificationTimer) {
+                clearTimeout(followedRoomNotificationTimer);
+                followedRoomNotificationTimer = null;
+            }
+            followedRoomNotificationRunning = false;
+        }
+
+        function startFollowedRoomNotificationPolling(delayMs = 1000, options = {}) {
+            stopFollowedRoomNotificationPolling();
+            followedRoomNotificationEnabled = true;
+            let silentInitialSyncPending = options?.silentInitialSync === true;
+
+            const scheduleNext = (delay) => {
+                if (!followedRoomNotificationEnabled) return;
+                followedRoomNotificationTimer = setTimeout(
+                    runPoll,
+                    Math.max(FOLLOWED_NOTIFICATION_POLL_INTERVAL, Number(delay) || FOLLOWED_NOTIFICATION_POLL_INTERVAL)
+                );
+            };
+
+            const runPoll = async () => {
+                if (!followedRoomNotificationEnabled) return;
+                if (followedRoomNotificationRunning) {
+                    scheduleNext(FOLLOWED_NOTIFICATION_POLL_INTERVAL);
+                    return;
+                }
+
+                const token = String(getAppToken() || '').trim();
+                const savedConfigs = readJsonSetting(FOLLOWED_NOTIFICATION_ROOMS_KEY, []);
+                if (!token || !Array.isArray(savedConfigs) || savedConfigs.length === 0) {
+                    scheduleNext(10000);
+                    return;
+                }
+
+                if (!getMemberDataLoaded()) {
+                    try {
+                        await loadMemberData();
+                    } catch (error) {}
+                }
+                const rooms = getFollowedNotificationRooms();
+                if (rooms.length === 0) {
+                    scheduleNext(10000);
+                    return;
+                }
+
+                followedRoomNotificationRunning = true;
+                try {
+                    const pa = window.getPA ? window.getPA() : null;
+                    const serverIdList = [...new Set(rooms.map((room) => room.serverId).filter(Boolean))];
+                    const latestResponse = await ipcRenderer.invoke('fetch-last-messages', {
+                        token,
+                        pa,
+                        serverIdList
+                    });
+                    const lastMessages = latestResponse?.content?.lastMsgList || [];
+                    const cursors = readJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, {});
+                    let cursorChanged = false;
+
+                    for (const room of rooms) {
+                        const lastMessage = lastMessages.find((item) => String(item.channelId || '') === room.channelId);
+                        if (silentInitialSyncPending && !lastMessage) {
+                            if (Object.prototype.hasOwnProperty.call(cursors, room.channelId)) {
+                                delete cursors[room.channelId];
+                                cursorChanged = true;
+                            }
+                            continue;
+                        }
+                        if (!lastMessage) continue;
+
+                        const nextTime = getFollowedMessageTime(lastMessage);
+                        const nextKey = getFollowedMessageKey(lastMessage);
+                        const previous = cursors[room.channelId];
+
+                        // 软件启动后的第一次检查只同步到最新位置，不补发关闭期间的消息。
+                        // 第一次开启或迁移旧游标时也读取详细消息建立可靠位置，不弹出历史消息。
+                        if (silentInitialSyncPending || !previous || !(Number(previous.msgTime) > 0)) {
+                            try {
+                                const initialMessages = await fetchFollowedRoomNotificationMessages(room, token, pa);
+                                const newest = initialMessages[0] || lastMessage;
+                                cursors[room.channelId] = {
+                                    previewKey: nextKey,
+                                    messageKey: getFollowedMessageKey(newest),
+                                    msgTime: getFollowedMessageTime(newest)
+                                };
+                            } catch (error) {
+                                cursors[room.channelId] = {
+                                    previewKey: nextKey,
+                                    messageKey: '',
+                                    msgTime: nextTime
+                                };
+                            }
+                            cursorChanged = true;
+                            continue;
+                        }
+
+                        const previousTime = Number(previous.msgTime) || 0;
+                        const previousPreviewKey = String(previous.previewKey || previous.key || '');
+                        if (nextKey === previousPreviewKey) continue;
+
+                        let freshMessages = [];
+                        let detailMessages = [];
+                        try {
+                            detailMessages = await fetchFollowedRoomNotificationMessages(room, token, pa);
+                            const previousMessageKey = String(previous.messageKey || '');
+                            const previousIndex = previousMessageKey
+                                ? detailMessages.findIndex((message) => getFollowedMessageKey(message) === previousMessageKey)
+                                : -1;
+                            const candidates =
+                                previousIndex >= 0
+                                    ? detailMessages.slice(0, previousIndex)
+                                    : detailMessages.filter((message) => getFollowedMessageTime(message) > previousTime);
+                            freshMessages = candidates
+                                .filter((message) => {
+                                    const senderId = String(message.senderUserId || message.senderId || message.uid || '');
+                                    return senderId !== '121569667';
+                                })
+                                .sort((left, right) => getFollowedMessageTime(left) - getFollowedMessageTime(right));
+                        } catch (error) {
+                            console.warn(`[口袋通知] 获取 ${room.memberName} 的新增消息失败:`, error);
+                        }
+
+                        const newestMessage = freshMessages[freshMessages.length - 1] || detailMessages[0] || lastMessage;
+                        const messageCount = Math.max(1, freshMessages.length);
+                        const senderName = getFollowedMessageSenderName(newestMessage, room.memberName);
+                        const roomName = await getFollowedNotificationRoomName(room, token, pa);
+                        const title = messageCount > 1 ? `${room.memberName} · ${roomName}（${messageCount} 条）` : `${room.memberName} · ${roomName}`;
+                        const messagePreview = getFollowedMessagePreview(newestMessage);
+                        const body = `${senderName}：${messagePreview}`;
+                        const iconUrl = getFollowedMessageSenderAvatar(newestMessage) || getFollowedNotificationAvatar(lastMessage) || room.avatarUrl;
+
+                        try {
+                            const notificationResult = await ipcRenderer.invoke('show-system-notification', {
+                                title,
+                                body,
+                                iconUrl,
+                                memberName: room.memberName,
+                                channelId: room.channelId,
+                                mainChannelId: room.mainChannelId,
+                                serverId: room.serverId,
+                                roomType: room.roomType
+                            });
+                            if (notificationResult?.success === false) {
+                                showToast(notificationResult.msg || '系统通知发送失败');
+                            }
+                        } catch (error) {
+                            console.warn('[口袋通知] 系统通知发送失败:', error);
+                        }
+
+                        const newestDetailMessage = detailMessages[0] || newestMessage;
+                        cursors[room.channelId] = {
+                            previewKey: nextKey,
+                            messageKey: getFollowedMessageKey(newestDetailMessage),
+                            msgTime: getFollowedMessageTime(newestDetailMessage) || previousTime
+                        };
+                        cursorChanged = true;
+                    }
+
+                    if (cursorChanged) {
+                        writeJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, cursors);
+                    }
+                    silentInitialSyncPending = false;
+                } catch (error) {
+                    console.warn('[口袋通知] 后台检查失败:', error);
+                } finally {
+                    followedRoomNotificationRunning = false;
+                    scheduleNext();
+                }
+            };
+
+            followedRoomNotificationTimer = setTimeout(runPoll, Math.max(0, Number(delayMs) || 0));
+        }
+
+        function removeFollowedRoomNotification(channelId) {
+            const targetChannelId = String(channelId || '');
+            if (!targetChannelId) return;
+            const removedConfig = getFollowedNotificationConfigs().find((config) => config.channelId === targetChannelId);
+            writeFollowedNotificationConfigs(getFollowedNotificationConfigs().filter((config) => config.channelId !== targetChannelId));
+            const cursors = readJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, {});
+            const cursorIds = [targetChannelId, removedConfig?.smallChannelId].filter(Boolean);
+            let cursorsChanged = false;
+            cursorIds.forEach((cursorId) => {
+                if (!Object.prototype.hasOwnProperty.call(cursors, cursorId)) return;
+                delete cursors[cursorId];
+                cursorsChanged = true;
+            });
+            if (cursorsChanged) {
+                writeJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, cursors);
+            }
+        }
+
+        async function toggleFollowedRoomNotification(card) {
+            const channelId = String(card?.dataset?.channelid || '').trim();
+            const smallChannelId = String(card?.dataset?.smallChannelId || '').trim();
+            const serverId = String(card?.dataset?.serverId || '').trim();
+            const memberName = String(card?.dataset?.ownerName || '成员').trim();
+            if (!channelId || !serverId) {
+                showToast('无法开启通知：缺少房间参数');
+                return;
+            }
+
+            const configs = getFollowedNotificationConfigs();
+            const existingIndex = configs.findIndex((config) => config.channelId === channelId);
+            if (existingIndex >= 0) {
+                removeFollowedRoomNotification(channelId);
+                showToast(`已关闭 ${memberName} 的发言通知`);
+            } else {
+                configs.push({
+                    channelId,
+                    smallChannelId,
+                    serverId,
+                    memberId: String(card.dataset.memberId || ''),
+                    memberName,
+                    avatarUrl: String(card.dataset.avatarUrl || '')
+                });
+                writeFollowedNotificationConfigs(configs);
+                const cursors = readJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, {});
+                delete cursors[channelId];
+                if (smallChannelId) delete cursors[smallChannelId];
+                writeJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, cursors);
+                startFollowedRoomNotificationPolling(0);
+                showToast(`已开启 ${memberName} 的发言通知`);
+            }
+            sortFollowedRooms();
+            updateFollowedRoomNotificationButton(channelId);
+        }
+
+        function toggleActiveFollowedRoomNotification() {
+            const card = getActiveFollowedRoomCard();
+            if (!card) {
+                showToast('请先选择成员房间');
+                return;
+            }
+            toggleFollowedRoomNotification(card);
         }
 
         function escapeHtml(value) {
@@ -96,6 +532,39 @@
                 if (info.giftName && info.giftNum) {
                     return `🎁 送出了 [${info.giftName}] x${info.giftNum}`;
                 }
+            }
+
+            if (messageType === 'REPLY' || messageType === 'GIFTREPLY') {
+                const info = json.replyInfo || json.giftReplyInfo || json;
+                if (typeof info.text === 'string' && info.text.trim()) {
+                    return info.text;
+                }
+                const replyName = String(info.replyName || '用户').trim();
+                const replyText = String(info.replyText || '').trim();
+                return replyText ? `[回复 ${replyName}] ${replyText}` : '[回复消息]';
+            }
+
+            if (messageType === 'AUDIO_REPLY' || messageType === 'AUDIO_GIFT_REPLY') {
+                const info = json.replyInfo || json.giftReplyInfo || json;
+                return typeof info.text === 'string' && info.text.trim() ? info.text : '[语音回复消息]';
+            }
+
+            if (messageType === 'IMAGE') return '[图片消息]';
+            if (messageType === 'EXPRESSIMAGE') return '[表情消息]';
+            if (messageType === 'AUDIO') return '[语音消息]';
+            if (messageType === 'VIDEO') return '[视频消息]';
+
+            if (messageType.includes('FLIPCARD')) {
+                const info =
+                    json.flipCardInfo ||
+                    json.filpCardInfo ||
+                    json.flipCardAudioInfo ||
+                    json.filpCardAudioInfo ||
+                    json.flipCardVideoInfo ||
+                    json.filpCardVideoInfo ||
+                    json;
+                const answer = String(info.answer || '').trim();
+                return answer && !answer.startsWith('{') ? answer : '[翻牌回复]';
             }
 
             if (typeof json.text === 'string' && json.text.trim()) {
@@ -498,7 +967,6 @@
             }
 
             const pinnedIdSet = new Set(getPinnedChannelIds());
-
             const html = renderData
                 .map((item, index) => {
                     const teamName = item.team || '';
@@ -519,6 +987,7 @@
                         item.unread > 0
                             ? `<span style="background:#ff4d4f; color:#fff; font-size:10px; padding:0 6px; border-radius:10px; margin-left:8px; font-weight:bold;">${item.unread}</span>`
                             : '';
+                    const notificationAvatarUrl = getFollowedNotificationAvatar(item);
 
                     const isActive = String(getActiveFollowedChannel()) === String(item.channelId) ? 'active' : '';
                     const draggableAttr = isCustomSort ? 'draggable="true"' : '';
@@ -526,7 +995,7 @@
 
                     return `
         ${pinnedDividerHtml}
-        <div class="session-card ${isActive}" id="session-card-${escapeHtml(item.channelId)}" data-channelid="${escapeHtml(item.channelId)}" data-member-id="${escapeHtml(item.id || item.userId || '')}" data-owner-name="${escapeHtml(item.bigDisplayName)}" data-server-id="${escapeHtml(item.serverId)}" ${draggableAttr} style="padding: 12px 16px; border-bottom: 1px solid var(--border); transition: 0.2s; ${cursorStyle}">
+        <div class="session-card ${isActive}" id="session-card-${escapeHtml(item.channelId)}" data-channelid="${escapeHtml(item.channelId)}" data-small-channel-id="${escapeHtml(item.smallChannelId || item.yklzId || '')}" data-member-id="${escapeHtml(item.id || item.userId || '')}" data-owner-name="${escapeHtml(item.bigDisplayName)}" data-server-id="${escapeHtml(item.serverId)}" data-avatar-url="${escapeHtml(notificationAvatarUrl)}" ${draggableAttr} style="padding: 12px 16px; border-bottom: 1px solid var(--border); transition: 0.2s; ${cursorStyle}">
             <div class="session-info" style="flex: 1; min-width: 0; pointer-events: none;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
                     <div style="display: flex; align-items: center; min-width: 0; flex: 1;">
@@ -573,6 +1042,7 @@
                     card.addEventListener('dragend', handleDragEnd);
                 });
             }
+            updateFollowedRoomNotificationButton();
         }
 
         let contextMenuEl = null;
@@ -713,6 +1183,7 @@
             menu.style.cssText = ['position: fixed', 'z-index: 99999', 'display: none', 'min-width: 132px'].join(';');
 
             menu.innerHTML = `
+                <button type="button" data-action="notify" class="yaya-context-menu-item">开启通知</button>
                 <button type="button" data-action="pin" class="yaya-context-menu-item">置顶</button>
                 <button type="button" data-action="unfollow" class="yaya-context-menu-item yaya-context-menu-danger">取关</button>
             `;
@@ -724,7 +1195,9 @@
                     const target = followedRoomContextTarget;
                     hideFollowedRoomContextMenu();
                     if (!target) return;
-                    if (action === 'pin') {
+                    if (action === 'notify') {
+                        toggleFollowedRoomNotification(target);
+                    } else if (action === 'pin') {
                         toggleFollowedRoomPinned(target);
                     } else if (action === 'unfollow') {
                         unfollowFromFollowedRoomCard(target);
@@ -748,10 +1221,14 @@
             const menu = ensureFollowedRoomContextMenu();
             followedRoomContextTarget = card;
             const pinButton = menu.querySelector('[data-action="pin"]');
+            const notificationButton = menu.querySelector('[data-action="notify"]');
             const channelId = String(card.dataset.channelid || '').trim();
             const isPinned = getPinnedChannelIds().includes(channelId);
             if (pinButton) {
                 pinButton.textContent = isPinned ? '取消置顶' : '置顶';
+            }
+            if (notificationButton) {
+                notificationButton.textContent = isFollowedRoomNotificationEnabled(channelId) ? '关闭通知' : '开启通知';
             }
 
             menu.style.display = 'block';
@@ -859,6 +1336,7 @@
                     window.allFollowedIds.delete(String(memberId));
                     currentFollowedData = currentFollowedData.filter((item) => String(item.id || item.userId) !== String(memberId));
                     removeChannelFromCustomOrder(channelId);
+                    removeFollowedRoomNotification(channelId);
                     sortFollowedRooms();
                     showToast(`已取消关注 ${memberName}`);
                     setTimeout(() => loadFollowedRooms({ silent: true, preserveScroll: true }), 500);
@@ -970,6 +1448,7 @@
                         window.allFollowedIds.delete(String(memberId));
                         currentFollowedData = currentFollowedData.filter((item) => String(item.id || item.userId) !== String(memberId));
                         removeChannelFromCustomOrder(removed?.channelId);
+                        removeFollowedRoomNotification(removed?.channelId);
                         sortFollowedRooms();
                     } else {
                         window.allFollowedIds.add(String(memberId));
@@ -996,10 +1475,14 @@
             resetFollowedRoomsState,
             selectFollowedSort,
             selectQuickFollowMember,
+            startFollowedRoomNotificationPolling,
             startFollowedRoomsPolling,
+            stopFollowedRoomNotificationPolling,
             stopFollowedRoomsPolling,
             sortFollowedRooms,
-            toggleFollowedSortDropdown
+            toggleActiveFollowedRoomNotification,
+            toggleFollowedSortDropdown,
+            updateFollowedRoomNotificationButton
         };
     };
 })();

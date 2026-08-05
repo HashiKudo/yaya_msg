@@ -4,14 +4,25 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import wasmRuntime from '../rust-wasm.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.join(__dirname, '..');
+const apiVersion = '2026-08-04-login-v2';
 const port = Number(process.env.PORT || 3001);
 const allowedOrigins = String(process.env.ALLOWED_ORIGINS || 'https://gnz.hk,https://www.gnz.hk,http://localhost:8787,http://127.0.0.1:8787')
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
+
+async function createServerPaGenerator() {
+    const wasmPath = path.join(projectRoot, '2.wasm');
+    const wasmBuffer = fs.readFileSync(wasmPath);
+    await wasmRuntime.default(wasmBuffer);
+    return () => wasmRuntime.__x6c2adf8__();
+}
+
+const generateServerPa = await createServerPaGenerator();
 
 function loadWorkerRuntime() {
     const workerPath = path.join(projectRoot, 'workers', 'yaya-web.js');
@@ -27,6 +38,7 @@ function loadWorkerRuntime() {
         setTimeout,
         clearTimeout,
         crypto: globalThis.crypto || crypto.webcrypto,
+        __yayaGeneratePa: generateServerPa,
         globalThis: {}
     });
     context.globalThis = context;
@@ -117,7 +129,8 @@ const server = http.createServer(async (req, res) => {
             return writeFetchResponse(res, applyCorsHeaders(json({
                 success: true,
                 runtime: 'node',
-                service: 'yaya-api'
+                service: 'yaya-api',
+                version: apiVersion
             }), origin));
         }
 

@@ -351,6 +351,323 @@
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
+    const WEB_MESSAGE_DB_NAME = 'yaya_web_messages_v1';
+    const WEB_MESSAGE_DB_VERSION = 1;
+    const WEB_MESSAGE_STORE_NAME = 'messages';
+    let webMessageDbPromise = null;
+
+    function openWebMessageDb() {
+        if (webMessageDbPromise) return webMessageDbPromise;
+        if (!window.indexedDB) {
+            return Promise.reject(new Error('当前浏览器不支持本地消息数据库'));
+        }
+
+        webMessageDbPromise = new Promise((resolve, reject) => {
+            const request = window.indexedDB.open(WEB_MESSAGE_DB_NAME, WEB_MESSAGE_DB_VERSION);
+            request.onupgradeneeded = () => {
+                const db = request.result;
+                if (!db.objectStoreNames.contains(WEB_MESSAGE_STORE_NAME)) {
+                    const store = db.createObjectStore(WEB_MESSAGE_STORE_NAME, { keyPath: 'id' });
+                    store.createIndex('sortTime', 'sortTime', { unique: false });
+                    store.createIndex('memberName', 'memberName', { unique: false });
+                }
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => {
+                webMessageDbPromise = null;
+                reject(request.error || new Error('打开本地消息数据库失败'));
+            };
+            request.onblocked = () => {
+                webMessageDbPromise = null;
+                reject(new Error('本地消息数据库正在被其它页面占用，请关闭旧页面后重试'));
+            };
+        });
+
+        return webMessageDbPromise;
+    }
+
+    function waitForIndexedDbRequest(request) {
+        return new Promise((resolve, reject) => {
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error || new Error('本地消息数据库操作失败'));
+        });
+    }
+
+    function waitForIndexedDbTransaction(transaction) {
+        return new Promise((resolve, reject) => {
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error || new Error('保存本地消息失败'));
+            transaction.onabort = () => reject(transaction.error || new Error('保存本地消息已取消'));
+        });
+    }
+
+    function extractWebMessageMetadata(itemHtml, memberName, fallbackSortTime = 0) {
+        const documentNode = new DOMParser().parseFromString(`<ul>${String(itemHtml || '')}</ul>`, 'text/html');
+        const row = documentNode.querySelector('.Box-row');
+        if (!row) {
+            return {
+                memberName: String(memberName || ''),
+                contentText: '',
+                contentHtml: '',
+                senderName: '',
+                userId: '',
+                sortTime: Number(fallbackSortTime) || 0,
+                hasImg: false,
+                hasVideo: false,
+                hasAudio: false,
+                isReply: false,
+                isLive: false
+            };
+        }
+
+        const sender = row.querySelector('div.mb-2 span[data-userid], div.mb-2 span');
+        const timeText = String(row.querySelector('time')?.textContent || '').trim();
+        const parsedTime = Date.parse(timeText.replace(/-/g, '/'));
+        const contentNode = row.cloneNode(true);
+        contentNode.querySelector('time')?.remove();
+        contentNode.querySelector('div.mb-2')?.remove();
+        const contentText = String(contentNode.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const contentHtml = String(contentNode.innerHTML || '').toLowerCase();
+        const rawText = `${contentText} ${contentHtml}`;
+        const hasVideo = !!row.querySelector('video') || /https?:\/\/[^\s<"']+\.(?:mp4|mov|m4v|webm)/i.test(rawText);
+        const hasAudio = !!row.querySelector('audio') || /https?:\/\/[^\s<"']+\.(?:mp3|aac|m4a)/i.test(rawText) || /(?:音频|语音)\s*[-–—]/.test(rawText);
+        const isReply = /翻牌问题[:：]|翻牌提问|成员回答/.test(rawText);
+        const liveLink = row.querySelector('a[href*="live/playdetail"], a[href*="liveId="], a[href*="?id="]');
+        const isLive = !!liveLink || /直播(?:通知|回放|记录)?\s*[-–—:：~]/.test(contentText);
+
+        return {
+            memberName: String(memberName || ''),
+            contentText,
+            contentHtml,
+            senderName: String(sender?.textContent || '').trim().toLowerCase(),
+            userId: String(sender?.getAttribute('data-userid') || '').trim().toLowerCase(),
+            sortTime: Number(fallbackSortTime) || (Number.isFinite(parsedTime) ? parsedTime : 0),
+            hasImg: !!row.querySelector('img.template-media') && !isReply,
+            hasVideo: hasVideo && !isReply,
+            hasAudio: hasAudio && !isReply,
+            isReply,
+            isLive
+        };
+    }
+
+    function extractStructuredWebMessageMetadata(entry, memberName) {
+        if (entry?.itemHtml) {
+            return extractWebMessageMetadata(entry.itemHtml, memberName, entry.sortTime);
+        }
+
+        const sender = entry?.sender && typeof entry.sender === 'object' ? entry.sender : {};
+        const content = entry?.content && typeof entry.content === 'object' ? entry.content : { text: entry?.text || '' };
+        const messageType = String(entry?.messageType || entry?.msgType || content.messageType || 'TEXT').toUpperCase();
+        let contentText = '';
+        try {
+            contentText = JSON.stringify(content).toLowerCase();
+        } catch (error) {
+            contentText = String(content.text || '').toLowerCase();
+        }
+
+        return {
+            memberName: String(memberName || ''),
+            contentText,
+            contentHtml: '',
+            senderName: String(sender.name || entry?.senderName || '').trim().toLowerCase(),
+            userId: String(sender.userId || entry?.userId || '').trim().toLowerCase(),
+            sortTime: Number(entry?.sortTime) || 0,
+            hasImg: messageType === 'IMAGE',
+            hasVideo: messageType === 'VIDEO' || messageType === 'FLIPCARD_VIDEO',
+            hasAudio: ['AUDIO', 'AUDIO_REPLY', 'AUDIO_GIFT_REPLY', 'FLIPCARD_AUDIO'].includes(messageType),
+            isReply: messageType.startsWith('FLIPCARD'),
+            isLive: messageType === 'LIVEPUSH' || messageType === 'SHARE_LIVE'
+        };
+    }
+
+    function matchesWebMessageFilters(record, filters = {}) {
+        const search = record.search || extractStructuredWebMessageMetadata(record, record.memberName);
+        const member = String(filters.member || '').trim();
+        if (member && member !== 'all' && search.memberName !== member) return false;
+
+        const query = String(filters.query || '').trim().toLowerCase();
+        if (query) {
+            if (query.includes('|')) {
+                try {
+                    const expression = new RegExp(query, 'i');
+                    if (!expression.test(search.contentText) && !expression.test(search.contentHtml)) return false;
+                } catch (error) {
+                    if (!search.contentText.includes(query) && !search.contentHtml.includes(query)) return false;
+                }
+            } else if (!search.contentText.includes(query) && !search.contentHtml.includes(query)) {
+                return false;
+            }
+        }
+
+        const user = String(filters.user || '').trim().toLowerCase();
+        if (user && !search.senderName.includes(user) && search.userId !== user) return false;
+
+        const type = String(filters.type || 'all');
+        if (type === 'image' && !search.hasImg) return false;
+        if (type === 'video' && !search.hasVideo) return false;
+        if (type === 'audio' && !search.hasAudio) return false;
+        if (type === 'reply' && !search.isReply) return false;
+        if (type === 'live-record' && !search.isLive) return false;
+        if (type === 'text' && (search.hasImg || search.hasVideo || search.hasAudio || search.isReply || search.isLive)) return false;
+        const drilldown = String(filters.drilldown || '');
+        const messageType = String(record.messageType || record.msgType || record.content?.messageType || '').toUpperCase();
+        if (drilldown === 'gift' && messageType !== 'GIFT_TEXT') return false;
+        if (drilldown === 'interaction' && !['REPLY', 'GIFTREPLY', 'AUDIO_REPLY', 'AUDIO_GIFT_REPLY'].includes(messageType)) return false;
+        return true;
+    }
+
+    async function saveWebMessageExport(payload = {}) {
+        const entries = Array.isArray(payload.entries) ? payload.entries : [];
+        if (!entries.length) {
+            return { success: false, msg: '没有可保存的消息' };
+        }
+
+        const db = await openWebMessageDb();
+        const existingKeysTransaction = db.transaction(WEB_MESSAGE_STORE_NAME, 'readonly');
+        const existingKeys = await waitForIndexedDbRequest(
+            existingKeysTransaction.objectStore(WEB_MESSAGE_STORE_NAME).getAllKeys()
+        );
+        const existingKeySet = new Set(existingKeys.map(String));
+        const memberName = String(payload.memberName || '未命名成员').trim() || '未命名成员';
+        const fileName = String(payload.fileName || 'messages.jsonl').trim() || 'messages.jsonl';
+        const updatedAt = Date.now();
+        let addedCount = 0;
+
+        const transaction = db.transaction(WEB_MESSAGE_STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(WEB_MESSAGE_STORE_NAME);
+        entries.forEach((entry, index) => {
+            const key = String(entry?.key || `${entry?.sortTime || 0}_${index}`);
+            const id = `${memberName}\u0000${key}`;
+            if (!existingKeySet.has(id)) addedCount += 1;
+            store.put({
+                ...entry,
+                id,
+                key,
+                memberName,
+                fileName,
+                sortTime: Number(entry?.sortTime) || 0,
+                search: extractStructuredWebMessageMetadata(entry, memberName),
+                updatedAt
+            });
+        });
+        await waitForIndexedDbTransaction(transaction);
+
+        const countTransaction = db.transaction(WEB_MESSAGE_STORE_NAME, 'readonly');
+        const totalCount = await waitForIndexedDbRequest(
+            countTransaction.objectStore(WEB_MESSAGE_STORE_NAME).count()
+        );
+
+        return {
+            success: true,
+            changed: addedCount > 0,
+            addedCount,
+            totalCount,
+            path: '浏览器本地消息库'
+        };
+    }
+
+    async function getAllWebMessages() {
+        const db = await openWebMessageDb();
+        const transaction = db.transaction(WEB_MESSAGE_STORE_NAME, 'readonly');
+        const store = transaction.objectStore(WEB_MESSAGE_STORE_NAME);
+        const index = store.index('sortTime');
+        const records = await waitForIndexedDbRequest(index.getAll());
+        return Array.isArray(records) ? records : [];
+    }
+
+    async function getWebMessageSummary() {
+        const db = await openWebMessageDb();
+        const countTransaction = db.transaction(WEB_MESSAGE_STORE_NAME, 'readonly');
+        const totalCount = await waitForIndexedDbRequest(
+            countTransaction.objectStore(WEB_MESSAGE_STORE_NAME).count()
+        );
+        const memberTransaction = db.transaction(WEB_MESSAGE_STORE_NAME, 'readonly');
+        const memberIndex = memberTransaction.objectStore(WEB_MESSAGE_STORE_NAME).index('memberName');
+        const members = [];
+        await new Promise((resolve, reject) => {
+            const request = memberIndex.openKeyCursor(null, 'nextunique');
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor) {
+                    resolve();
+                    return;
+                }
+                members.push(String(cursor.key || ''));
+                cursor.continue();
+            };
+            request.onerror = () => reject(request.error || new Error('读取成员列表失败'));
+        });
+        return { totalCount, members: members.filter(Boolean) };
+    }
+
+    async function queryWebMessagePage(filters = {}) {
+        const db = await openWebMessageDb();
+        const limit = Math.max(1, Math.min(200, Math.trunc(Number(filters.limit) || 100)));
+        const offset = Math.max(0, Math.trunc(Number(filters.offset) || 0));
+        const hasFromTime = filters.fromTime !== null && filters.fromTime !== undefined && filters.fromTime !== '';
+        const hasToTime = filters.toTime !== null && filters.toTime !== undefined && filters.toTime !== '';
+        const fromTime = hasFromTime ? Number(filters.fromTime) : Number.NaN;
+        const toTime = hasToTime ? Number(filters.toTime) : Number.NaN;
+        let range = null;
+        if (Number.isFinite(fromTime) && Number.isFinite(toTime)) {
+            range = IDBKeyRange.bound(fromTime, toTime);
+        } else if (Number.isFinite(fromTime)) {
+            range = IDBKeyRange.lowerBound(fromTime);
+        } else if (Number.isFinite(toTime)) {
+            range = IDBKeyRange.upperBound(toTime);
+        }
+
+        const transaction = db.transaction(WEB_MESSAGE_STORE_NAME, 'readonly');
+        const index = transaction.objectStore(WEB_MESSAGE_STORE_NAME).index('sortTime');
+        const direction = String(filters.sortOrder || 'desc') === 'asc' ? 'next' : 'prev';
+        const records = [];
+        let matchedCount = 0;
+        let hasMore = false;
+
+        await new Promise((resolve, reject) => {
+            const request = index.openCursor(range, direction);
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor) {
+                    resolve();
+                    return;
+                }
+
+                const record = cursor.value;
+                if (matchesWebMessageFilters(record, filters)) {
+                    if (matchedCount >= offset && records.length < limit) {
+                        records.push(record);
+                    } else if (matchedCount >= offset + limit) {
+                        hasMore = true;
+                        resolve();
+                        return;
+                    }
+                    matchedCount += 1;
+                }
+                cursor.continue();
+            };
+            request.onerror = () => reject(request.error || new Error('检索浏览器消息失败'));
+        });
+
+        return { records, hasMore, offset, limit };
+    }
+
+    async function clearWebMessages() {
+        const db = await openWebMessageDb();
+        const transaction = db.transaction(WEB_MESSAGE_STORE_NAME, 'readwrite');
+        transaction.objectStore(WEB_MESSAGE_STORE_NAME).clear();
+        await waitForIndexedDbTransaction(transaction);
+        return { success: true };
+    }
+
+    window.yayaWebMessageStore = {
+        saveExport: saveWebMessageExport,
+        getAll: getAllWebMessages,
+        getSummary: getWebMessageSummary,
+        queryPage: queryWebMessagePage,
+        clear: clearWebMessages
+    };
+
     function saveBackgroundFromDataUrlSync(dataUrl) {
         setSettingValueSync('customBackgroundDataUrl', dataUrl || '');
         return dataUrl || '';
@@ -945,8 +1262,74 @@
             if (channel === 'open-message-data-folder') {
                 return { success: false, msg: '网页版没有本地数据文件夹' };
             }
-            if (channel === 'save-export-html') {
-                downloadTextFile(payload?.fileName || 'messages.html', payload?.htmlContent || '', 'text/html;charset=utf-8');
+            if (channel === 'save-export-jsonl' || channel === 'save-export-html') {
+                return saveWebMessageExport(payload || {});
+            }
+            if (channel === 'show-system-notification') {
+                let host = document.getElementById('yaya-web-notification-host');
+                if (!host) {
+                    host = document.createElement('div');
+                    host.id = 'yaya-web-notification-host';
+                    host.style.cssText = 'position:fixed;right:16px;bottom:16px;width:442px;max-width:calc(100vw - 32px);z-index:2147483647;display:flex;flex-direction:column;gap:10px;pointer-events:none;';
+                    document.body.appendChild(host);
+                }
+                const toast = document.createElement('div');
+                toast.style.cssText = 'position:relative;min-height:112px;padding:12px 48px 14px 18px;color:#f7f8fa;background:#1d2025;border:1px solid rgba(255,255,255,.14);border-radius:13px;box-shadow:0 10px 32px rgba(0,0,0,.42);pointer-events:auto;cursor:pointer;font-family:"Segoe UI","Microsoft YaHei",sans-serif;';
+                const header = document.createElement('div');
+                header.style.cssText = 'height:20px;display:flex;align-items:center;gap:7px;color:#d8dce3;font-size:12px;';
+                const appIcon = document.createElement('img');
+                appIcon.src = './web-icon.png';
+                appIcon.style.cssText = 'width:16px;height:16px;border-radius:3px;object-fit:cover;';
+                const appName = document.createElement('span');
+                appName.textContent = '牙牙消息';
+                header.append(appIcon, appName);
+                const content = document.createElement('div');
+                content.style.cssText = 'display:flex;align-items:center;gap:15px;padding-top:7px;';
+                const avatar = document.createElement('img');
+                avatar.src = payload?.iconUrl || './web-icon.png';
+                avatar.onerror = () => { avatar.src = './web-icon.png'; };
+                avatar.style.cssText = 'width:58px;height:58px;flex:0 0 58px;border-radius:50%;object-fit:cover;background:#30343b;';
+                const copy = document.createElement('div');
+                copy.style.cssText = 'min-width:0;';
+                const title = document.createElement('div');
+                title.textContent = payload?.title || '牙牙消息';
+                title.style.cssText = 'margin-bottom:5px;overflow:hidden;color:#fff;font-size:18px;font-weight:650;line-height:23px;text-overflow:ellipsis;white-space:nowrap;';
+                const body = document.createElement('div');
+                body.textContent = payload?.body || '收到一条新消息';
+                body.style.cssText = 'overflow:hidden;color:#f0f1f3;font-size:15px;line-height:20px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;word-break:break-word;';
+                copy.append(title, body);
+                content.append(avatar, copy);
+                const close = document.createElement('button');
+                close.type = 'button';
+                close.textContent = '×';
+                close.setAttribute('aria-label', '关闭');
+                close.style.cssText = 'position:absolute;top:7px;right:9px;width:32px;height:32px;border:0;border-radius:7px;color:#d8dce3;background:transparent;font-size:25px;line-height:28px;cursor:pointer;';
+                close.onclick = event => {
+                    event.stopPropagation();
+                    toast.remove();
+                };
+                toast.append(header, close, content);
+                toast.onclick = () => {
+                    window.focus();
+                    if (typeof window.switchView === 'function') window.switchView('followed-rooms');
+                    window.setTimeout(() => {
+                        if (typeof window.openFollowedChat === 'function') {
+                            window.openFollowedChat(
+                                payload?.memberName || '成员',
+                                payload?.channelId || '',
+                                payload?.serverId || '',
+                                {
+                                    mainChannelId: payload?.mainChannelId || payload?.channelId || '',
+                                    roomType: payload?.roomType === 'small' ? 'small' : 'big'
+                                }
+                            );
+                        }
+                    }, 180);
+                    toast.remove();
+                };
+                host.appendChild(toast);
+                while (host.children.length > 4) host.firstElementChild?.remove();
+                window.setTimeout(() => toast.remove(), 8000);
                 return { success: true };
             }
             if (channel === 'open-external-player') {

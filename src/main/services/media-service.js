@@ -540,7 +540,11 @@ async function startProxy(remotePayload, { streamPrefix, inputOptions, outputOpt
         };
 
         const settleFailure = (error) => {
-            console.error(`${errorPrefix}:`, error.message);
+            const errorMessage = String(error?.message || error || '');
+            const wasStoppedIntentionally = /(?:SIGKILL|SIGTERM|was killed)/i.test(errorMessage);
+            if (!wasStoppedIntentionally) {
+                console.error(`${errorPrefix}:`, errorMessage);
+            }
             if (settled) {
                 if (currentProxyCommand === command) {
                     currentProxyCommand = null;

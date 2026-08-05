@@ -309,6 +309,7 @@
         }
 
         function stopRoomRadio(updateUI = true) {
+            const hadActiveRadio = !!(radioMpegtsPlayer || radioMediaElement || isRoomRadioRecording);
             clearRoomRadioEndWatchdog();
             if (isRoomRadioRecording) {
                 toggleRoomRadioRecord();
@@ -330,7 +331,9 @@
                 radioMediaElement = null;
             }
 
-            ipcRenderer.invoke('stop-live-proxy');
+            if (hadActiveRadio) {
+                ipcRenderer.invoke('stop-live-proxy');
+            }
 
             if (updateUI) {
                 const container = document.getElementById('room-radio-result-container');

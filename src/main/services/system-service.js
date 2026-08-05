@@ -5,98 +5,176 @@ const { spawn } = require('child_process');
 const { execFileSync } = require('child_process');
 const { pathToFileURL } = require('url');
 const axios = require('axios');
-const { dialog, nativeImage, session, shell } = require('electron');
+const { BrowserWindow, dialog, nativeImage, screen, session, shell } = require('electron');
 const { ensureStoragePaths } = require('../../common/storage-paths');
 
 const IMAGE_THUMB_CACHE_LIMIT_BYTES = 500 * 1024 * 1024;
 const imageThumbInflight = new Map();
+const jsonlKeyCache = new Map();
+const activeDesktopToasts = [];
+const DESKTOP_TOAST_WIDTH = 456;
+const DESKTOP_TOAST_HEIGHT = 126;
+const DESKTOP_TOAST_GAP = 10;
+const DESKTOP_TOAST_MARGIN = 16;
+const DESKTOP_TOAST_DURATION_MS = 8000;
+const DESKTOP_TOAST_MAX_VISIBLE = 4;
 
-function escapeScriptJson(jsonText) {
-    return jsonText.replace(/<\/script/gi, '<\\/script');
+function truncateNotificationText(value, maxLength) {
+    const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+    if (normalized.length <= maxLength) return normalized;
+    return `${normalized.slice(0, Math.max(1, maxLength - 1))}…`;
 }
 
-function buildExportDocument({ title, styleValue, entries }) {
-    const listHtml = entries.map((entry) => entry.itemHtml).join('\n');
-    const payload = escapeScriptJson(JSON.stringify({
-        version: 2,
-        entries
-    }));
-
-    return `<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>${title}</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="https://unpkg.com/@primer/css@20.8.3/dist/primer.css" />
-    <style>${styleValue}</style>
-</head>
-<body class="template-body">
-    <div class="d-flex flex-column">
-        <div class="flex-auto p-2">
-            <div class="Box">
-                <ul class="f5" style="list-style: none; padding: 0; margin: 0;">
-${listHtml}
-                </ul>
-            </div>
-        </div>
-    </div>
-    <script id="yaya-export-data" type="application/json">${payload}</script>
-</body>
-</html>`;
-}
-
-function parseStoredEntries(htmlContent) {
-    const match = htmlContent.match(/<script id="yaya-export-data" type="application\/json">([\s\S]*?)<\/script>/i);
-    if (!match) {
-        return null;
-    }
-
+function getDesktopToastDisplay(mainWindow) {
     try {
-        const payload = JSON.parse(match[1]);
-        if (payload && Array.isArray(payload.entries)) {
-            return payload.entries;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            return screen.getDisplayMatching(mainWindow.getBounds());
         }
     } catch (error) {
     }
-
-    return null;
+    return screen.getPrimaryDisplay();
 }
 
-function migrateLegacyEntries(htmlContent) {
-    const entries = [];
-    const itemRegex = /<li class="Box-row">([\s\S]*?)<time class="d-block">([\s\S]*?)<\/time>\s*<\/li>/gi;
-    let match;
+function repositionDesktopToasts(mainWindow) {
+    const display = getDesktopToastDisplay(mainWindow);
+    const workArea = display.workArea;
+    const aliveEntries = activeDesktopToasts.filter(entry => !entry.window.isDestroyed());
 
-    while ((match = itemRegex.exec(htmlContent)) !== null) {
-        const itemBody = match[1];
-        const timeStr = String(match[2] || '').trim();
-        const itemHtml = `<li class="Box-row">${itemBody}<time class="d-block">${timeStr}</time></li>`;
-        const sortTime = Date.parse(timeStr);
-        const key = crypto.createHash('sha1').update(itemHtml).digest('hex');
+    aliveEntries.forEach((entry, index) => {
+        const distanceFromBottom = aliveEntries.length - index - 1;
+        const x = workArea.x + workArea.width - DESKTOP_TOAST_WIDTH - DESKTOP_TOAST_MARGIN;
+        const y = workArea.y + workArea.height - DESKTOP_TOAST_HEIGHT - DESKTOP_TOAST_MARGIN
+            - distanceFromBottom * (DESKTOP_TOAST_HEIGHT + DESKTOP_TOAST_GAP);
+        entry.window.setBounds({
+            x: Math.round(x),
+            y: Math.round(y),
+            width: DESKTOP_TOAST_WIDTH,
+            height: DESKTOP_TOAST_HEIGHT
+        }, true);
+    });
+}
 
-        entries.push({
-            key,
-            sortTime: Number.isFinite(sortTime) ? sortTime : 0,
-            itemHtml
+function removeDesktopToast(toastWindow, mainWindow) {
+    const index = activeDesktopToasts.findIndex(entry => entry.window === toastWindow);
+    if (index >= 0) {
+        const [entry] = activeDesktopToasts.splice(index, 1);
+        if (entry.timer) clearTimeout(entry.timer);
+        if (entry.closeTimer) clearTimeout(entry.closeTimer);
+    }
+    repositionDesktopToasts(mainWindow);
+}
+
+function fadeOutDesktopToast(entry) {
+    const toastWindow = entry?.window;
+    if (!toastWindow || toastWindow.isDestroyed() || entry.closing) return;
+    entry.closing = true;
+    if (entry.timer) {
+        clearTimeout(entry.timer);
+        entry.timer = null;
+    }
+
+    toastWindow.webContents.executeJavaScript("window.dismissYayaNotification('close')")
+        .catch(() => {
+            if (!toastWindow.isDestroyed()) toastWindow.close();
         });
-    }
-
-    return entries;
+    entry.closeTimer = setTimeout(() => {
+        if (!toastWindow.isDestroyed()) toastWindow.close();
+    }, 360);
 }
 
-function loadExistingEntries(filePath) {
-    if (!fs.existsSync(filePath)) {
-        return [];
+function openDesktopToastTarget(payload, title, mainWindow) {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send('open-followed-room-from-notification', {
+        memberName: String(payload.memberName || title),
+        channelId: String(payload.channelId || ''),
+        mainChannelId: String(payload.mainChannelId || payload.channelId || ''),
+        serverId: String(payload.serverId || ''),
+        roomType: payload.roomType === 'small' ? 'small' : 'big'
+    });
+}
+
+async function showSystemNotification(payload = {}, mainWindow) {
+    if (!BrowserWindow || !screen) {
+        return { success: false, msg: '当前环境不支持桌面弹窗' };
     }
 
-    const previousContent = fs.readFileSync(filePath, 'utf8');
-    const storedEntries = parseStoredEntries(previousContent);
-    if (storedEntries) {
-        return storedEntries;
-    }
+    const title = truncateNotificationText(payload.title || '牙牙消息', 80);
+    const body = truncateNotificationText(payload.body || '收到一条新消息', 220);
+    const appIcon = nativeImage.createFromPath(path.join(__dirname, '../../../icon.png'));
+    const appIconDataUrl = appIcon.isEmpty() ? '' : appIcon.toDataURL();
+    const rawAvatarUrl = String(payload.iconUrl || '').trim();
+    const avatarUrl = /^(?:https?:\/\/|data:image\/)/i.test(rawAvatarUrl)
+        ? rawAvatarUrl
+        : appIconDataUrl;
+    const display = getDesktopToastDisplay(mainWindow);
+    const workArea = display.workArea;
+    const toastWindow = new BrowserWindow({
+        x: Math.round(workArea.x + workArea.width - DESKTOP_TOAST_WIDTH - DESKTOP_TOAST_MARGIN),
+        y: Math.round(workArea.y + workArea.height - DESKTOP_TOAST_HEIGHT - DESKTOP_TOAST_MARGIN),
+        width: DESKTOP_TOAST_WIDTH,
+        height: DESKTOP_TOAST_HEIGHT,
+        show: false,
+        frame: false,
+        transparent: true,
+        resizable: false,
+        movable: false,
+        minimizable: false,
+        maximizable: false,
+        fullscreenable: false,
+        skipTaskbar: true,
+        alwaysOnTop: true,
+        focusable: true,
+        hasShadow: false,
+        backgroundColor: '#00000000',
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true
+        }
+    });
 
-    return migrateLegacyEntries(previousContent);
+    toastWindow.setAlwaysOnTop(true, 'pop-up-menu');
+    toastWindow.setMenuBarVisibility(false);
+    const entry = { window: toastWindow, timer: null, closeTimer: null, closing: false };
+    activeDesktopToasts.push(entry);
+    while (activeDesktopToasts.length > DESKTOP_TOAST_MAX_VISIBLE) {
+        const oldest = activeDesktopToasts.shift();
+        fadeOutDesktopToast(oldest);
+    }
+    repositionDesktopToasts(mainWindow);
+
+    toastWindow.webContents.on('will-navigate', (event, url) => {
+        if (!url.startsWith('yaya-notification://')) return;
+        event.preventDefault();
+        if (url.startsWith('yaya-notification://open')) {
+            openDesktopToastTarget(payload, title, mainWindow);
+        }
+        if (!toastWindow.isDestroyed()) toastWindow.close();
+    });
+    toastWindow.on('closed', () => removeDesktopToast(toastWindow, mainWindow));
+    try {
+        await toastWindow.loadFile(path.join(__dirname, '../notification-toast.html'));
+        if (toastWindow.isDestroyed()) {
+            return { success: false, msg: '软件通知弹窗已关闭' };
+        }
+
+        const renderPayload = JSON.stringify({ title, body, avatarUrl, appIconDataUrl })
+            .replace(/</g, '\\u003c')
+            .replace(/>/g, '\\u003e');
+        await toastWindow.webContents.executeJavaScript(`window.renderYayaNotification(${renderPayload})`);
+        toastWindow.showInactive();
+        entry.timer = setTimeout(() => {
+            fadeOutDesktopToast(entry);
+        }, DESKTOP_TOAST_DURATION_MS);
+        return { success: true };
+    } catch (error) {
+        console.warn('[软件通知] 弹窗加载失败:', error.message);
+        if (!toastWindow.isDestroyed()) toastWindow.close();
+        return { success: false, msg: '软件通知弹窗加载失败' };
+    }
 }
 
 function normalizeIncomingEntries(entries) {
@@ -105,12 +183,58 @@ function normalizeIncomingEntries(entries) {
     }
 
     return entries
-        .filter((entry) => entry && entry.key && entry.itemHtml)
+        .filter((entry) => entry && entry.key)
         .map((entry) => ({
+            ...entry,
             key: String(entry.key),
-            sortTime: Number(entry.sortTime) || 0,
-            itemHtml: String(entry.itemHtml)
+            sortTime: Number(entry.sortTime) || 0
         }));
+}
+
+function loadExistingJsonlKeys(filePath) {
+    if (!fs.existsSync(filePath)) {
+        return new Set();
+    }
+
+    const stat = fs.statSync(filePath);
+    const cached = jsonlKeyCache.get(filePath);
+    if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+        return new Set(cached.keys);
+    }
+
+    const keys = new Set();
+    const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+            const record = JSON.parse(trimmed);
+            if (record && record.key) keys.add(String(record.key));
+        } catch (error) {
+            console.warn(`[JSONL 跳过] 无法解析消息记录: ${filePath}`);
+        }
+    }
+
+    jsonlKeyCache.set(filePath, {
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        keys
+    });
+    return new Set(keys);
+}
+
+function fileEndsWithNewline(filePath) {
+    const size = fs.statSync(filePath).size;
+    if (size === 0) return true;
+
+    const descriptor = fs.openSync(filePath, 'r');
+    try {
+        const lastByte = Buffer.alloc(1);
+        fs.readSync(descriptor, lastByte, 0, 1, size - 1);
+        return lastByte[0] === 10 || lastByte[0] === 13;
+    } finally {
+        fs.closeSync(descriptor);
+    }
 }
 
 function safeFileName(value, fallback = '未命名成员') {
@@ -290,33 +414,7 @@ async function createCachedImageThumbnail({ url, width } = {}) {
     return promise;
 }
 
-function mergeEntries(existingEntries, incomingEntries) {
-    const mergedMap = new Map();
-
-    for (const entry of existingEntries) {
-        mergedMap.set(entry.key, entry);
-    }
-
-    let addedCount = 0;
-    for (const entry of incomingEntries) {
-        if (!mergedMap.has(entry.key)) {
-            addedCount += 1;
-        }
-        mergedMap.set(entry.key, entry);
-    }
-
-    const mergedEntries = Array.from(mergedMap.values()).sort((left, right) => {
-        if (left.sortTime !== right.sortTime) {
-            return left.sortTime - right.sortTime;
-        }
-
-        return left.key.localeCompare(right.key);
-    });
-
-    return { mergedEntries, addedCount };
-}
-
-function saveExportHtml({ memberName, fileName, title, styleValue, entries }) {
+function saveExportJsonl({ memberName, fileName, entries }) {
     try {
         const { htmlDir: baseDir } = ensureStoragePaths();
         const safeMemberName = safeFileName(memberName, '未命名成员');
@@ -326,38 +424,50 @@ function saveExportHtml({ memberName, fileName, title, styleValue, entries }) {
             fs.mkdirSync(memberDir, { recursive: true });
         }
 
-        const safeHtmlFileName = safeFileName(fileName || 'yaya_export.html', 'yaya_export.html')
-            .replace(/\.html$/i, '') + '.html';
-        const filePath = path.join(memberDir, safeHtmlFileName);
-        const existingEntries = loadExistingEntries(filePath);
+        const safeJsonlFileName = safeFileName(fileName || 'yaya_export.jsonl', 'yaya_export.jsonl')
+            .replace(/\.(?:html|jsonl|json)$/i, '') + '.jsonl';
+        const filePath = path.join(memberDir, safeJsonlFileName);
         const incomingEntries = normalizeIncomingEntries(entries);
-        const { mergedEntries, addedCount } = mergeEntries(existingEntries, incomingEntries);
+        const existingKeys = loadExistingJsonlKeys(filePath);
+        const newEntries = [];
 
-        if (addedCount === 0 && existingEntries.length > 0) {
+        for (const entry of incomingEntries) {
+            if (existingKeys.has(entry.key)) continue;
+            existingKeys.add(entry.key);
+            newEntries.push(entry);
+        }
+
+        if (newEntries.length === 0) {
             console.log(`[导出跳过] 没有新增消息: ${filePath}`);
             return {
                 success: true,
                 changed: false,
                 path: filePath,
                 addedCount: 0,
-                totalCount: existingEntries.length
+                totalCount: existingKeys.size
             };
         }
 
-        const htmlContent = buildExportDocument({
-            title: title || '口袋消息导出',
-            styleValue: styleValue || '',
-            entries: mergedEntries
+        const jsonlContent = newEntries.map(entry => JSON.stringify(entry)).join('\n') + '\n';
+        if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) {
+            const prefix = fileEndsWithNewline(filePath) ? '' : '\n';
+            fs.appendFileSync(filePath, prefix + jsonlContent, 'utf8');
+        } else {
+            fs.writeFileSync(filePath, jsonlContent, 'utf8');
+        }
+        const updatedStat = fs.statSync(filePath);
+        jsonlKeyCache.set(filePath, {
+            size: updatedStat.size,
+            mtimeMs: updatedStat.mtimeMs,
+            keys: existingKeys
         });
-
-        fs.writeFileSync(filePath, htmlContent, 'utf8');
         console.log(`[导出成功] ${filePath}`);
         return {
             success: true,
-            changed: addedCount > 0,
+            changed: true,
             path: filePath,
-            addedCount,
-            totalCount: mergedEntries.length
+            addedCount: newEntries.length,
+            totalCount: existingKeys.size
         };
     } catch (error) {
         console.error('[导出失败]', error);
@@ -648,7 +758,8 @@ async function openExternalPlayer({ url }) {
 }
 
 module.exports = {
-    saveExportHtml,
+    showSystemNotification,
+    saveExportJsonl,
     openDirectoryDialog,
     openMessageDataFolder,
     fetchRemoteImageDataUrl,

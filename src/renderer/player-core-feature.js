@@ -31,6 +31,18 @@
             syncDanmuHighlight
         } = deps;
 
+        let pendingLiveReconnectTimer = null;
+        const LIVE_STALL_RECOVERY_DELAY = 5000;
+
+        function getLiveReconnectDelay(attempt = 0) {
+            return Math.min(5000 + Math.max(0, (Number(attempt) || 0) - 1) * 5000, 30000);
+        }
+
+        function isLivePlayerViewOpen() {
+            const playerView = document.getElementById('live-player-view');
+            return !!playerView && playerView.style.display !== 'none';
+        }
+
         function applyDPlayerVideoTransform(dp) {
             if (!dp || !dp.video) return;
             const degree = Number(dp.yayaRotateDegree) || 0;
@@ -620,7 +632,10 @@
         }
 
         async function startPlayer(url, title = '直播/回放', isLiveContent = false, chatroomId = null, vodDanmuData = [], options = {}) {
-            const { clearAuxPanels = false } = options || {};
+            const {
+                clearAuxPanels = false,
+                autoRecoveryAttempt = 0
+            } = options || {};
             destroyPlayers({ clearTimeline: isLiveContent, clearAuxPanels });
             const container = document.getElementById('live-player-container');
             if (!container) return;
@@ -665,6 +680,7 @@
 
                     setDp(nextDp);
                     enhanceDPlayerControls(nextDp);
+                    nextDp.yayaFlvPlayer = flvPlayer;
                     setArt({
                         get currentTime() {
                             return nextDp.video.currentTime;
@@ -679,18 +695,133 @@
                         }
                     });
 
-                    setInterval(() => {
+                    let disposed = false;
+                    let recovering = false;
+                    let stallRecoveryTimer = null;
+                    let lastVideoTime = Number(nextDp.video.currentTime) || 0;
+                    let lastProgressAt = Date.now();
+                    let stableProgressStartedAt = 0;
+                    let recoveryAttempt = Math.max(0, Number(autoRecoveryAttempt) || 0);
+
+                    const clearStallTimer = () => {
+                        if (stallRecoveryTimer) {
+                            clearTimeout(stallRecoveryTimer);
+                            stallRecoveryTimer = null;
+                        }
+                    };
+
+                    const markPlaybackProgress = () => {
+                        if (disposed) return;
+                        const currentTime = Number(nextDp.video.currentTime) || 0;
+                        const now = Date.now();
+                        if (currentTime > lastVideoTime + 0.03) {
+                            if (!stableProgressStartedAt) stableProgressStartedAt = now;
+                            if (now - stableProgressStartedAt >= 10000) recoveryAttempt = 0;
+                            lastVideoTime = currentTime;
+                            lastProgressAt = now;
+                            clearStallTimer();
+                        }
+                    };
+
+                    const reloadStalledLive = async (reason = '播放停滞') => {
+                        if (disposed || recovering || getDp() !== nextDp || !isLivePlayerViewOpen()) return;
+                        const video = nextDp.video;
+                        if (!video || video.paused || video.ended) return;
+
+                        const stalledFor = Date.now() - lastProgressAt;
+                        if (video.readyState >= 3 && stalledFor < LIVE_STALL_RECOVERY_DELAY) return;
+
+                        recovering = true;
+                        clearStallTimer();
+                        const nextAttempt = recoveryAttempt + 1;
+                        console.warn(`[直播播放器] ${reason}，自动重新加载 #${nextAttempt}`);
+                        if (typeof nextDp.notice === 'function') {
+                            nextDp.notice('直播卡顿，正在自动重新加载…');
+                        }
+                        await startPlayer(url, title, true, chatroomId, vodDanmuData, {
+                            clearAuxPanels: false,
+                            autoRecoveryAttempt: nextAttempt
+                        });
+                    };
+
+                    const scheduleStallRecovery = (reason = '缓冲超时') => {
+                        if (disposed || recovering || stallRecoveryTimer) return;
+                        const video = nextDp.video;
+                        if (!video || video.paused || video.ended) return;
+                        stallRecoveryTimer = setTimeout(() => {
+                            stallRecoveryTimer = null;
+                            reloadStalledLive(reason);
+                        }, LIVE_STALL_RECOVERY_DELAY);
+                    };
+
+                    const handlePlaying = () => {
+                        lastProgressAt = Date.now();
+                        stableProgressStartedAt = lastProgressAt;
+                        clearStallTimer();
+                    };
+                    const handleWaiting = () => scheduleStallRecovery('持续缓冲');
+                    const handleStalled = () => scheduleStallRecovery('视频流停滞');
+                    const handleError = () => scheduleStallRecovery('播放错误');
+
+                    nextDp.video.addEventListener('timeupdate', markPlaybackProgress);
+                    nextDp.video.addEventListener('playing', handlePlaying);
+                    nextDp.video.addEventListener('waiting', handleWaiting);
+                    nextDp.video.addEventListener('stalled', handleStalled);
+                    nextDp.video.addEventListener('error', handleError);
+
+                    const bufferSyncTimer = setInterval(() => {
                         if (flvPlayer && flvPlayer.buffered.length) {
                             const diff = flvPlayer.buffered.end(0) - flvPlayer.currentTime;
                             if (diff > 2) flvPlayer.currentTime = flvPlayer.buffered.end(0) - 0.1;
                         }
                     }, 3000);
 
+                    const liveHealthTimer = setInterval(() => {
+                        if (disposed || recovering || getDp() !== nextDp || !isLivePlayerViewOpen()) return;
+                        const video = nextDp.video;
+                        if (!video || video.paused || video.ended) {
+                            lastProgressAt = Date.now();
+                            lastVideoTime = Number(video?.currentTime) || 0;
+                            stableProgressStartedAt = 0;
+                            clearStallTimer();
+                            return;
+                        }
+
+                        markPlaybackProgress();
+                        if (Date.now() - lastProgressAt >= LIVE_STALL_RECOVERY_DELAY) {
+                            reloadStalledLive('播放时间停止推进');
+                        }
+                    }, 2000);
+
+                    nextDp.yayaLiveCleanup = () => {
+                        if (disposed) return;
+                        disposed = true;
+                        clearStallTimer();
+                        clearInterval(bufferSyncTimer);
+                        clearInterval(liveHealthTimer);
+                        nextDp.video.removeEventListener('timeupdate', markPlaybackProgress);
+                        nextDp.video.removeEventListener('playing', handlePlaying);
+                        nextDp.video.removeEventListener('waiting', handleWaiting);
+                        nextDp.video.removeEventListener('stalled', handleStalled);
+                        nextDp.video.removeEventListener('error', handleError);
+                    };
+
                     if (chatroomId) {
                         initLiveDanmu(chatroomId);
                     }
                 } catch (err) {
-                    container.innerHTML = `<div style="color:red">播放失败: ${err.message}</div>`;
+                    const nextAttempt = Math.max(0, Number(autoRecoveryAttempt) || 0) + 1;
+                    const retryDelay = getLiveReconnectDelay(nextAttempt);
+                    container.innerHTML = `<div style="color:white;display:flex;height:100%;align-items:center;justify-content:center;">直播连接失败，${Math.ceil(retryDelay / 1000)} 秒后自动重试…</div>`;
+                    console.warn(`[直播播放器] 连接失败，准备自动重试 #${nextAttempt}:`, err);
+                    pendingLiveReconnectTimer = setTimeout(() => {
+                        pendingLiveReconnectTimer = null;
+                        if (!isLivePlayerViewOpen()) return;
+                        startPlayer(url, title, true, chatroomId, vodDanmuData, {
+                            clearAuxPanels: false,
+                            autoRecoveryAttempt: nextAttempt
+                        });
+                    }, retryDelay);
                 }
                 return;
             }
@@ -951,6 +1082,11 @@
             const currentDp = getDp();
             const nimInstance = getNimInstance();
 
+            if (pendingLiveReconnectTimer) {
+                clearTimeout(pendingLiveReconnectTimer);
+                pendingLiveReconnectTimer = null;
+            }
+
             if (typeof stopRoomRadio === 'function') {
                 stopRoomRadio(false);
             }
@@ -969,6 +1105,16 @@
             }
 
             if (currentDp) {
+                if (typeof currentDp.yayaLiveCleanup === 'function') {
+                    currentDp.yayaLiveCleanup();
+                    currentDp.yayaLiveCleanup = null;
+                }
+                if (currentDp.yayaFlvPlayer && typeof currentDp.yayaFlvPlayer.destroy === 'function') {
+                    try {
+                        currentDp.yayaFlvPlayer.destroy();
+                    } catch (error) {}
+                    currentDp.yayaFlvPlayer = null;
+                }
                 currentDp.destroy();
                 setDp(null);
             }

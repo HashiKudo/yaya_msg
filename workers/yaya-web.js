@@ -1,7 +1,7 @@
 const APP_VERSION = '7.0.41';
 const APP_BUILD = '24011601';
 const DEFAULT_API_BACKEND = 'https://api.gnz.hk';
-const DESKTOP_DOWNLOAD_FILE = 'yaya_msg-v2.8-win.zip';
+const DESKTOP_DOWNLOAD_FILE = 'yaya_msg-v2.9-win.zip';
 const MEET48_APP_VERSION = '2.0.3';
 const MEET48_APP_BUILD = '2602062';
 const MEET48_BUNDLE_ID = 'com.dapp.meet48';
@@ -10,11 +10,16 @@ const R2_MUSIC_LIST_CACHE_TTL_SECONDS = 6 * 60 * 60;
 const R2_MUSIC_LIST_CACHE_TTL_MS = R2_MUSIC_LIST_CACHE_TTL_SECONDS * 1000;
 let deviceId = '';
 let r2MusicListCache = null;
+const live48QrLoginSessions = new Map();
 
 const pocketChannels = {
     'login-send-sms': loginSendSms,
     'login-by-code': loginByCode,
     'login-check-token': loginCheckToken,
+    'login-create-qr': loginCreateQr,
+    'login-poll-qr': loginPollQr,
+    'login-cancel-qr': loginCancelQr,
+    'login-qr-status': loginQrStatus,
     'pocket-checkin': checkIn,
     'switch-big-small': switchBigSmall,
     'fetch-room-messages': fetchRoomMessages,
@@ -962,6 +967,92 @@ function getDeviceId() {
     return deviceId;
 }
 
+function createLive48BrowserId() {
+    const chars = 'ABCDEFGHJKMNPQRSTWXYZabcdefhijkmnprstwxyz012345678_@';
+    let value = 'liveweb';
+    for (let i = 0; i < 8; i += 1) {
+        value += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return value;
+}
+
+function getSetCookieList(headers) {
+    if (typeof headers.getSetCookie === 'function') {
+        return headers.getSetCookie();
+    }
+    const value = headers.get('set-cookie');
+    return value ? [value] : [];
+}
+
+function mergeCookieHeader(currentCookie = '', setCookies = [], extraCookies = {}) {
+    const cookieMap = new Map();
+    String(currentCookie || '').split(';').forEach(part => {
+        const trimmed = part.trim();
+        if (!trimmed) return;
+        const index = trimmed.indexOf('=');
+        if (index <= 0) return;
+        cookieMap.set(trimmed.slice(0, index), trimmed.slice(index + 1));
+    });
+
+    Object.entries(extraCookies || {}).forEach(([key, value]) => {
+        if (key && value != null) cookieMap.set(key, String(value));
+    });
+
+    const list = Array.isArray(setCookies) ? setCookies : (setCookies ? [setCookies] : []);
+    list.forEach(cookie => {
+        const firstPart = String(cookie || '').split(';')[0].trim();
+        const index = firstPart.indexOf('=');
+        if (index <= 0) return;
+        cookieMap.set(firstPart.slice(0, index), firstPart.slice(index + 1));
+    });
+
+    return Array.from(cookieMap.entries()).map(([key, value]) => `${key}=${value}`).join('; ');
+}
+
+function stripHtml(value = '') {
+    return String(value || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function decodeHtmlEntities(value = '') {
+    return String(value || '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&#(\d+);/g, (match, code) => String.fromCharCode(Number(code) || 0))
+        .trim();
+}
+
+function parseLive48AccountInfoFromHtml(html = '') {
+    const text = String(html || '');
+    const nickname = decodeHtmlEntities(stripHtml(text.match(/class=["']signin["'][^>]*>([\s\S]*?)<\/b>/i)?.[1] || ''));
+    const avatarUrl = text.match(/class=["']headimg["'][\s\S]*?<img[^>]+src=["']([^"']+)/i)?.[1]
+        || text.match(/https:\/\/uc\.48\.cn\/avatar\.php\?uid=\d+/i)?.[0]
+        || '';
+    const userId = avatarUrl.match(/[?&]uid=(\d+)/i)?.[1] || '';
+
+    if (!nickname && !avatarUrl && !userId) return null;
+    return {
+        nickname: nickname || 'live.48.cn 用户',
+        userId,
+        avatarUrl
+    };
+}
+
+async function fetchLive48AccountInfo(cookie) {
+    if (!cookie) return null;
+    const response = await fetch('https://live.48.cn/', {
+        headers: {
+            Cookie: cookie,
+            Referer: 'https://live.48.cn/'
+        }
+    });
+    if (!response.ok) return null;
+    return parseLive48AccountInfoFromHtml(await response.text());
+}
+
 function createHeaders(token, pa) {
     const headers = {
         'Content-Type': 'application/json;charset=utf-8',
@@ -1377,10 +1468,26 @@ async function resolveServerId(channelId, headers) {
     return null;
 }
 
+function getLoginRequestPa(pa) {
+    const clientPa = String(pa || '').trim();
+    if (clientPa) return clientPa;
+    try {
+        if (typeof globalThis.__yayaGeneratePa === 'function') {
+            return String(globalThis.__yayaGeneratePa() || '').trim();
+        }
+    } catch (error) {
+    }
+    return '';
+}
+
 async function loginSendSms({ mobile, area, answer }) {
     const payload = { mobile, area: area || '86' };
     if (answer) payload.answer = answer;
-    const response = await postJson('https://pocketapi.48.cn/user/api/v1/sms/send2', payload, createHeaders());
+    const response = await postJson(
+        'https://pocketapi.48.cn/user/api/v1/sms/send2',
+        payload,
+        createHeaders()
+    );
     if (response.status === 200 && response.data?.status === 200) return { success: true };
     if (response.data?.status === 2001) {
         try {
@@ -1397,7 +1504,7 @@ async function loginByCode({ mobile, code, pa }) {
     const response = await postJson(
         'https://pocketapi.48.cn/user/api/v1/login/app/mobile/code',
         { mobile, code },
-        createHeaders(null, pa)
+        createHeaders(null, getLoginRequestPa(pa))
     );
     return response.data;
 }
@@ -1415,6 +1522,101 @@ async function loginCheckToken({ token, pa }) {
         return { success: true, userInfo: finalInfo };
     }
     return { success: false, msg: response.data?.message || 'Token 无效' };
+}
+
+async function loginCreateQr() {
+    const browserId = createLive48BrowserId();
+    const initialCookie = mergeCookieHeader('', [], { browser: browserId });
+    const response = await fetch('https://live.48.cn/Public/create_code/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+            Referer: 'https://live.48.cn/',
+            Cookie: initialCookie
+        },
+        body: new URLSearchParams({
+            data: browserId,
+            timestamp: String(Date.now())
+        }).toString()
+    });
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data || data.status !== '00' || !data.code || !data.desc) {
+        return {
+            success: false,
+            msg: stripHtml(data?.desc) || data?.message || `创建二维码失败: HTTP ${response.status}`
+        };
+    }
+
+    const cookie = mergeCookieHeader(initialCookie, getSetCookieList(response.headers));
+    const qrImage = String(data.desc || '').match(/src=["']([^"']+)["']/i)?.[1] || '';
+    const code = String(data.code);
+    live48QrLoginSessions.set(code, {
+        code,
+        browserId,
+        cookie,
+        createdAt: Date.now()
+    });
+
+    return {
+        success: true,
+        code,
+        qrImage,
+        expiresInSeconds: 300
+    };
+}
+
+async function loginPollQr({ code } = {}) {
+    const normalizedCode = String(code || '').trim();
+    const session = live48QrLoginSessions.get(normalizedCode);
+    if (!normalizedCode || !session) {
+        return { success: false, loggedIn: false, expired: true, msg: '二维码已过期，请重新生成' };
+    }
+
+    const response = await fetch('https://live.48.cn/Base/checklogin/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+            Referer: 'https://live.48.cn/',
+            Cookie: session.cookie
+        },
+        body: new URLSearchParams({ data: normalizedCode }).toString()
+    });
+
+    const data = await response.json().catch(() => null);
+    session.cookie = mergeCookieHeader(session.cookie, getSetCookieList(response.headers));
+    if (response.ok && data && data.status === '00') {
+        const accountInfo = await fetchLive48AccountInfo(session.cookie)
+            .catch(() => null)
+            || parseLive48AccountInfoFromHtml(data.desc);
+        live48QrLoginSessions.delete(normalizedCode);
+        return {
+            success: true,
+            loggedIn: true,
+            msg: stripHtml(data.desc) || '扫码登录成功',
+            accountInfo,
+            cookieSaved: false
+        };
+    }
+
+    return {
+        success: true,
+        loggedIn: false,
+        status: data?.status || String(response.status),
+        msg: stripHtml(data?.desc) || data?.message || '等待 App 确认'
+    };
+}
+
+async function loginCancelQr({ code } = {}) {
+    const normalizedCode = String(code || '').trim();
+    if (normalizedCode) live48QrLoginSessions.delete(normalizedCode);
+    return { success: true };
+}
+
+async function loginQrStatus() {
+    return { success: true, loggedIn: false };
 }
 
 async function checkIn({ token, pa }) {

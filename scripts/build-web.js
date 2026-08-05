@@ -417,6 +417,7 @@ async function applyWebTransforms() {
     );
     fs.writeFileSync(sdkInitPath, sdkInit);
 
+    indexHtml = addClass(indexHtml, '<div class="home-panel home-panel-messages">', 'web-hidden');
     indexHtml = addClass(indexHtml, '<button class="home-card" onclick="switchView(\'bilibili-live\')">', 'web-hidden');
     indexHtml = addClass(indexHtml, '<div class="home-panel home-panel-settings">', 'web-hidden');
     indexHtml = indexHtml
@@ -464,7 +465,7 @@ async function applyWebTransforms() {
     indexHtml = replaceOnce(
         indexHtml,
         '                    </section>\r\n                    <div class="home-footer-credit">presented by yk1z</div>',
-                        `                    </section>\r\n                    <div class="web-limit-notice">\r\n                        <span class="web-limit-copy">由于网页限制，使用完整功能请下载桌面端。</span>\r\n                        <div class="web-download-actions" aria-label="桌面端下载">\r\n                            <a class="web-desktop-download-btn" href="/downloads/yaya_msg-v2.8-win.zip?v=20260602" download><span class="web-platform-icon" aria-hidden="true">⊞</span><span>Windows</span></a>\r\n                            <a class="web-desktop-download-btn" href="/downloads/yaya_msg-v2.8-mac.zip?v=20260602" download><span class="web-platform-icon" aria-hidden="true"></span><span>macOS</span></a>\r\n                            <a class="web-desktop-download-btn" href="/downloads/yaya_msg-v2.8-linux.tar.gz?v=20260602" download><span class="web-platform-icon" aria-hidden="true">◆</span><span>Linux</span></a>\r\n                        </div>\r\n                    </div>\r\n                    <div class="home-footer-credit">presented by yk1z</div>`
+                        `                    </section>\r\n                    <div class="web-limit-notice">\r\n                        <span class="web-limit-copy">由于网页限制，使用完整功能请下载桌面端。</span>\r\n                        <div class="web-download-actions" aria-label="桌面端下载">\r\n                            <a class="web-desktop-download-btn" href="/downloads/yaya_msg-v2.9-win.zip?v=20260803" download><span class="web-platform-icon" aria-hidden="true">⊞</span><span>Windows</span></a>\r\n                            <a class="web-desktop-download-btn" href="/downloads/yaya_msg-v2.9-mac.zip?v=20260803" download><span class="web-platform-icon" aria-hidden="true"></span><span>macOS</span></a>\r\n                            <a class="web-desktop-download-btn" href="/downloads/yaya_msg-v2.9-linux.tar.gz?v=20260803" download><span class="web-platform-icon" aria-hidden="true">◆</span><span>Linux</span></a>\r\n                        </div>\r\n                    </div>\r\n                    <div class="home-footer-credit">presented by yk1z</div>`
     );
     indexHtml = indexHtml.replace(/<span class="web-platform-icon" aria-hidden="true">.*?<\/span><span>(Windows|macOS|Linux)<\/span>/g, '$1');
     indexHtml = indexHtml.replace(
@@ -691,6 +692,7 @@ async function applyWebTransforms() {
             const title = getWebRouteTitle(viewName, mode);
             document.title = title ? \`牙牙消息 - \${title}\` : '牙牙消息';
             document.body.classList.toggle('web-secondary-page', !!title);
+            document.body.classList.toggle('web-message-page', viewName === 'messages');
 
             let slug = WEB_VIEW_TO_SLUG.get(getWebViewKey(viewName, mode)) || 'home';
             const liveId = options.liveId ? String(options.liveId) : '';
@@ -878,7 +880,7 @@ async function applyWebTransforms() {
     appLegacy = replaceOnce(
         appLegacy,
         '        updateTopbarPageTitle(currentViewName, currentViewMode);',
-        "        const pendingWebSwitchView = Array.isArray(window.__yayaPendingSwitchView)\n            ? window.__yayaPendingSwitchView\n            : null;\n        window.__yayaPendingSwitchView = null;\n        window.switchView = switchView;\n        window.toggleSidebar = toggleSidebar;\n        window.getAppTopbarTitle = getAppTopbarTitle;\n        updateTopbarPageTitle(currentViewName, currentViewMode);\n        if (window.desktop && window.desktop.platform === 'web') {\n            window.addEventListener('popstate', applyWebRouteFromLocation);\n            window.addEventListener('hashchange', () => {\n                if (!isApplyingWebRoute) applyWebRouteFromLocation();\n            });\n            const initialWebSlug = getWebSlugFromLocation();\n            if (initialWebSlug && initialWebSlug !== 'home') {\n                applyWebRouteFromLocation();\n                scheduleWebRouteStabilizer();\n            } else if (pendingWebSwitchView) {\n                setTimeout(() => {\n                    try {\n                        switchView(...pendingWebSwitchView);\n                    } finally {\n                        document.documentElement.classList.remove('web-route-pending');\n                    }\n                }, 0);\n            } else {\n                applyWebRouteFromLocation();\n            }\n        }"
+        "        const pendingWebSwitchView = Array.isArray(window.__yayaPendingSwitchView)\n            ? window.__yayaPendingSwitchView\n            : null;\n        window.__yayaPendingSwitchView = null;\n        window.switchView = switchView;\n        window.toggleSidebar = toggleSidebar;\n        window.getAppTopbarTitle = getAppTopbarTitle;\n        updateTopbarPageTitle(currentViewName, currentViewMode);\n        if (window.desktop && window.desktop.platform === 'web') {\n            window.addEventListener('popstate', applyWebRouteFromLocation);\n            window.addEventListener('hashchange', () => {\n                if (!isApplyingWebRoute) applyWebRouteFromLocation();\n            });\n            const initialWebSlug = getWebSlugFromLocation();\n            if (initialWebSlug && initialWebSlug !== 'home') {\n                setTimeout(() => {\n                    applyWebRouteFromLocation();\n                    scheduleWebRouteStabilizer();\n                }, 0);\n            } else if (pendingWebSwitchView) {\n                setTimeout(() => {\n                    try {\n                        switchView(...pendingWebSwitchView);\n                    } finally {\n                        document.documentElement.classList.remove('web-route-pending');\n                    }\n                }, 0);\n            } else {\n                setTimeout(applyWebRouteFromLocation, 0);\n            }\n        }"
     );
     fs.writeFileSync(appLegacyPath, appLegacy);
 
@@ -899,8 +901,56 @@ async function applyWebTransforms() {
         '    display: none !important;',
         '}',
         '',
-        'html[data-platform="web"] .home-panel-messages {',
-        '    display: none !important;',
+        'html[data-platform="web"] #web-message-controls-host {',
+        '    display: none;',
+        '}',
+        '',
+        'html[data-platform="web"] .web-message-page-header {',
+        '    display: flex;',
+        '    align-items: flex-start;',
+        '    justify-content: space-between;',
+        '    gap: 16px;',
+        '    margin-bottom: 14px;',
+        '}',
+        '',
+        'html[data-platform="web"] .web-message-page-header .page-title {',
+        '    margin: 0 0 5px;',
+        '}',
+        '',
+        'html[data-platform="web"] .web-message-page-header p {',
+        '    margin: 0;',
+        '    color: var(--text-sub);',
+        '    font-size: 12px;',
+        '}',
+        '',
+        'html[data-platform="web"] .web-message-page-header #statusMsg {',
+        '    display: block !important;',
+        '    flex: 0 0 auto;',
+        '    max-width: 42%;',
+        '    white-space: normal;',
+        '    text-align: right;',
+        '}',
+        '',
+        'html[data-platform="web"] .web-message-controls-grid {',
+        '    grid-template-columns: repeat(3, minmax(0, 1fr));',
+        '}',
+        '',
+        'html[data-platform="web"] .web-message-controls-grid .sidebar-group {',
+        '    display: flex !important;',
+        '    min-width: 0;',
+        '    white-space: normal;',
+        '}',
+        '',
+        'html[data-platform="web"] #view-messages {',
+        '    padding: 20px 40px !important;',
+        '    overflow-y: auto !important;',
+        '    overflow-x: hidden !important;',
+        '}',
+        '',
+        '@media (min-width: 901px) {',
+        '    html[data-platform="web"] body.web-message-page .sidebar {',
+        '        display: flex !important;',
+        '    }',
         '}',
         '',
         'html[data-platform="web"].web-mobile-device #clip-toolbar,',
@@ -1569,6 +1619,19 @@ async function applyWebTransforms() {
         '}',
         '',
         '@media (max-width: 900px) {',
+        '    html[data-platform="web"] #web-message-controls-host {',
+        '        display: block;',
+        '        margin-bottom: 18px;',
+        '    }',
+        '',
+        '    html[data-platform="web"] #view-messages {',
+        '        padding: 12px !important;',
+        '    }',
+        '',
+        '    html[data-platform="web"] .web-message-controls-grid {',
+        '        grid-template-columns: repeat(2, minmax(0, 1fr));',
+        '    }',
+        '',
         '    html[data-platform="web"] .main-content.home-mode {',
         '        padding: 12px;',
         '    }',
@@ -1910,6 +1973,24 @@ async function applyWebTransforms() {
         '}',
         '',
         '@media (max-width: 520px) {',
+        '    html[data-platform="web"] #view-messages {',
+        '        padding: 10px !important;',
+        '    }',
+        '',
+        '    html[data-platform="web"] .web-message-page-header {',
+        '        display: block;',
+        '    }',
+        '',
+        '    html[data-platform="web"] .web-message-page-header #statusMsg {',
+        '        max-width: none;',
+        '        margin-top: 8px;',
+        '        text-align: left;',
+        '    }',
+        '',
+        '    html[data-platform="web"] .web-message-controls-grid {',
+        '        grid-template-columns: 1fr;',
+        '    }',
+        '',
         '    html[data-platform="web"] .main-content.home-mode {',
         '        padding: 10px;',
         '    }',

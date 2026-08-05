@@ -95,6 +95,7 @@ function getStoragePaths() {
         htmlDir: path.join(exportRootDir, 'html'),
         cacheFile: path.join(internalDataDir, 'data_cache.json'),
         manifestFile: path.join(internalDataDir, 'scan_manifest.json'),
+        messageIndexFile: path.join(internalDataDir, 'messages-index.sqlite'),
         settingsFile: path.join(internalDataDir, 'settings.json'),
         runtimeCacheFile: path.join(internalDataDir, 'runtime-cache.json')
     };

@@ -1,6 +1,6 @@
 # 牙牙消息
 > 一个口袋48电脑端工具
-<img width="689" height="495" alt="9a029bd4-9de8-48c8-acd2-cc2952b936ea" src="https://github.com/user-attachments/assets/411a5851-7c60-4e65-b1af-4205f1117fed" />
+<img width="689" height="495" alt="ScreenShot_2026-07-28_135511_018" src="https://github.com/user-attachments/assets/afbdb153-8382-40bd-aef8-1278525500c3" />
 
 
 ## 主要功能
@@ -35,7 +35,7 @@
 - 切换账号：支持大、小号切换。
 - 修改资料：修改账号头像、昵称。
 - 自动签到：打开软件自动进行口袋签到。
-- B站登录：登录B站账号后可查看B站直播原画。
+- B站登录：登录B站账号后可查看B站原画直播。
 
 ### 数据类
 - 鸡腿榜：成员鸡腿榜单。

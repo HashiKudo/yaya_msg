@@ -7,6 +7,7 @@
             escapeHtml,
             getAllPosts,
             getCurrentFilteredPosts,
+            loadAnalysis,
             getMemberIdSet,
             getMemberNameMap,
             getPocketGiftData,
@@ -25,6 +26,13 @@
             return selectedGroup;
         }
 
+        function showAnalysisError(container, error) {
+            console.error('消息统计失败:', error);
+            if (container) {
+                container.innerHTML = `<div class="empty-state">统计失败：${escapeHtml(error?.message || '未知错误')}</div>`;
+            }
+        }
+
         function openUserAnalysis() {
             const modal = document.getElementById('userModal');
             const container = document.getElementById('userListContainer');
@@ -35,9 +43,14 @@
                 container.scrollTop = 0;
             }
 
-            setTimeout(() => {
-                performUserAnalysis();
-            }, 50);
+            if (typeof loadAnalysis === 'function') {
+                Promise.resolve(loadAnalysis('interaction'))
+                    .then(renderPreparedUserAnalysis)
+                    .catch(error => showAnalysisError(container, error));
+                return;
+            }
+
+            setTimeout(() => performUserAnalysis(), 50);
         }
 
         function closeUserAnalysis() {
@@ -177,8 +190,58 @@
             container.innerHTML = html;
         }
 
+        function renderPreparedUserAnalysis(result = {}) {
+            const container = document.getElementById('userListContainer');
+            if (!container) return;
+            const selectedGroup = getSelectedGroupValue();
+            const modalTitle = document.querySelector('#userModal .modal-title');
+            if (modalTitle) {
+                modalTitle.innerText = selectedGroup === 'all'
+                    ? '房间消息互动榜 (全部)'
+                    : `房间消息互动榜 (${selectedGroup})`;
+            }
+            const sortedList = Array.isArray(result.items) ? result.items : [];
+            if (!sortedList.length) {
+                container.innerHTML = '<div class="empty-state">暂无互动数据</div>';
+                return;
+            }
+            let html = `
+                <div style="padding: 15px; background: rgba(114, 46, 209, 0.1); border-bottom: 1px solid #d3adf7; margin-bottom: 10px; border-radius: 4px;">
+                    <div style="font-weight: bold; color: #722ed1; font-size: 14px; text-align: center;">
+                        互动总数: <span style="font-size: 18px;">${Number(result.totalInteractions) || 0}</span> 次
+                    </div>
+                </div>`;
+            sortedList.forEach((user, index) => {
+                const rClass = index === 0 ? 'rank-1' : (index === 1 ? 'rank-2' : (index === 2 ? 'rank-3' : ''));
+                const avatarSrc = escapeHtml(user.avatarUrl || './icon.png');
+                const aliasArray = (Array.isArray(user.aliases) ? user.aliases : [user.name])
+                    .filter(Boolean)
+                    .map(name => String(name).replace(/'/g, "\\'"));
+                const clickAction = `showInteractions(['${aliasArray.join("','")}'])`;
+                html += `
+                    <div class="list-item" onclick="${clickAction}" style="cursor: pointer; align-items: center; padding: 10px 8px;">
+                        <div class="rank-num ${rClass}">${index + 1}</div>
+                        <div style="margin-right: 12px;"><img src="${avatarSrc}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;"></div>
+                        <div class="item-main" style="display: flex; flex-direction: column; justify-content: center; flex: 1; min-width: 0;">
+                            <span class="item-title" style="font-size: 14px; line-height: 1.4; margin-bottom: 2px;">
+                                ${escapeHtml(user.name || '未知用户')}
+                                ${user.realId ? `<span style="font-size:10px; color:#aaa; font-weight:normal;">(ID:${escapeHtml(user.realId)})</span>` : ''}
+                            </span>
+                        </div>
+                        <div class="item-count" style="color: #722ed1; font-size: 13px; font-weight:bold;">${Number(user.count) || 0} 次</div>
+                    </div>`;
+            });
+            container.innerHTML = html;
+        }
+
         function showInteractions(names) {
             closeUserAnalysis();
+
+            if (typeof window.applyMessageAnalysisDrilldown === 'function') {
+                const normalizedNames = Array.isArray(names) ? names : [names];
+                window.applyMessageAnalysisDrilldown('interaction', { names: normalizedNames.filter(Boolean) });
+                return;
+            }
 
             const contentInput = document.getElementById('search-content-input');
             const userInput = document.getElementById('search-user-input');
@@ -203,6 +266,23 @@
 
             if (modal) modal.style.display = 'flex';
             if (container) container.innerHTML = '<div class="empty-state">正在分析数据...</div>';
+
+            if (typeof loadAnalysis === 'function') {
+                Promise.resolve(loadAnalysis('date'))
+                    .then(result => {
+                        dateStats = Array.isArray(result?.items) ? result.items : [];
+                        const selectedGroup = getSelectedGroupValue();
+                        const modalTitle = document.querySelector('#dateModal .modal-title');
+                        if (modalTitle) {
+                            modalTitle.innerText = selectedGroup === 'all'
+                                ? '每日消息统计 (全部)'
+                                : `每日消息统计 (${selectedGroup})`;
+                        }
+                        renderDateList();
+                    })
+                    .catch(error => showAnalysisError(container, error));
+                return;
+            }
 
             setTimeout(() => {
                 performDateAnalysis();
@@ -300,6 +380,7 @@
 
         function filterByUser(username) {
             closeUserAnalysis();
+            closeSpeechAnalysis();
 
             const userInput = document.getElementById('search-user-input');
             const contentInput = document.getElementById('search-content-input');
@@ -316,6 +397,7 @@
 
         function filterByUserId(userId) {
             if (window.event) window.event.stopPropagation();
+            closeSpeechAnalysis();
 
             const userInput = document.getElementById('search-user-input');
             const contentInput = document.getElementById('search-content-input');
@@ -357,9 +439,14 @@
                 container.scrollTop = 0;
             }
 
-            setTimeout(() => {
-                performGiftAnalysis();
-            }, 50);
+            if (typeof loadAnalysis === 'function') {
+                Promise.resolve(loadAnalysis('gift'))
+                    .then(renderPreparedGiftAnalysis)
+                    .catch(error => showAnalysisError(container, error));
+                return;
+            }
+
+            setTimeout(() => performGiftAnalysis(), 50);
         }
 
         function closeGiftAnalysis() {
@@ -477,6 +564,48 @@
             container.innerHTML = html;
         }
 
+        function renderPreparedGiftAnalysis(result = {}) {
+            const container = document.getElementById('giftAnalysisList');
+            if (!container) return;
+            const selectedGroup = getSelectedGroupValue();
+            const modalTitle = document.querySelector('#giftAnalysisModal .modal-title');
+            if (modalTitle) {
+                modalTitle.innerText = selectedGroup === 'all'
+                    ? '房间礼物贡献榜 (全部)'
+                    : `房间礼物贡献榜 (${selectedGroup})`;
+            }
+            const sortedList = Array.isArray(result.items) ? result.items : [];
+            if (!sortedList.length) {
+                container.innerHTML = '<div class="empty-state">未检测到礼物数据</div>';
+                return;
+            }
+            let html = `
+                <div style="padding: 15px; background: rgba(250, 140, 22, 0.1); border-bottom: 1px solid #ffd591; margin-bottom: 10px; border-radius: 4px;">
+                    <div style="font-weight: bold; color: #d46b08; font-size: 14px; text-align: center;">
+                        鸡腿总数: <span style="font-size: 18px;">${Number(result.totalRevenue) || 0}</span> 🍗
+                    </div>
+                </div>`;
+            sortedList.forEach((user, index) => {
+                const rClass = index === 0 ? 'rank-1' : (index === 1 ? 'rank-2' : (index === 2 ? 'rank-3' : ''));
+                const avatarSrc = escapeHtml(user.avatarUrl || './icon.png');
+                const clickAction = `showUserGifts('${String(user.realUserId || '').replace(/'/g, "\\'")}', '${String(user.name || '').replace(/'/g, "\\'")}')`;
+                html += `
+                    <div class="list-item" onclick="${clickAction}" style="cursor: pointer; align-items: center; padding: 10px 8px;">
+                        <div class="rank-num ${rClass}">${index + 1}</div>
+                        <div style="margin-right: 12px;"><img src="${avatarSrc}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;"></div>
+                        <div class="item-main" style="display: flex; flex-direction: column; justify-content: center; flex: 1; min-width: 0;">
+                            <span class="item-title" style="font-size: 14px; line-height: 1.4; margin-bottom: 2px;">
+                                ${escapeHtml(user.name || '未知用户')}
+                                ${user.realUserId ? `<span style="font-size:10px; color:#aaa; font-weight:normal;">(ID:${escapeHtml(user.realUserId)})</span>` : ''}
+                            </span>
+                            <span style="font-size: 11px; color: #999; line-height: 1.3;">送出 ${Number(user.totalCount) || 0} 个礼物</span>
+                        </div>
+                        <div class="item-count" style="color: #fa8c16; font-size: 13px; font-weight:bold;">${Number(user.totalCost) || 0} 🍗</div>
+                    </div>`;
+            });
+            container.innerHTML = html;
+        }
+
         function openSpeechAnalysis() {
             const modal = document.getElementById('speechAnalysisModal');
             const container = document.getElementById('speechAnalysisList');
@@ -487,9 +616,14 @@
                 container.scrollTop = 0;
             }
 
-            setTimeout(() => {
-                performSpeechAnalysis();
-            }, 50);
+            if (typeof loadAnalysis === 'function') {
+                Promise.resolve(loadAnalysis('speech'))
+                    .then(renderPreparedSpeechAnalysis)
+                    .catch(error => showAnalysisError(container, error));
+                return;
+            }
+
+            setTimeout(() => performSpeechAnalysis(), 50);
         }
 
         function closeSpeechAnalysis() {
@@ -600,6 +734,54 @@
         </div>`;
             });
 
+            container.innerHTML = html;
+        }
+
+        function renderPreparedSpeechAnalysis(result = {}) {
+            const container = document.getElementById('speechAnalysisList');
+            if (!container) return;
+            const selectedGroup = getSelectedGroupValue();
+            const modalTitle = document.querySelector('#speechAnalysisModal .modal-title');
+            if (modalTitle) {
+                modalTitle.innerText = selectedGroup === 'all'
+                    ? '用户发言活跃榜 (全部)'
+                    : `用户发言活跃榜 (${selectedGroup})`;
+            }
+            const sortedList = Array.isArray(result.items) ? result.items : [];
+            if (!sortedList.length) {
+                container.innerHTML = '<div class="empty-state">无纯发言数据</div>';
+                return;
+            }
+            let html = `
+                <div style="padding: 15px; background: rgba(24, 144, 255, 0.1); border-bottom: 1px solid #91d5ff; margin-bottom: 10px; border-radius: 4px;">
+                    <div style="font-weight: bold; color: #096dd9; font-size: 14px; text-align: center;">
+                        发言总数: <span style="font-size: 18px;">${Number(result.totalMessages) || 0}</span> 条
+                    </div>
+                </div>`;
+            sortedList.forEach((user, index) => {
+                const rClass = index === 0 ? 'rank-1' : (index === 1 ? 'rank-2' : (index === 2 ? 'rank-3' : ''));
+                const avatarSrc = escapeHtml(user.avatarUrl || './icon.png');
+                let previewText = String(user.lastText || '').trim();
+                if (previewText.length > 10) previewText = `${previewText.substring(0, 10)}...`;
+                if (!previewText) previewText = '图片/表情';
+                const date = new Date(Number(user.latestTime) || 0);
+                const pad = value => String(value).padStart(2, '0');
+                const timeStr = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+                const clickAction = user.realUserId
+                    ? `filterByUserId('${String(user.realUserId).replace(/'/g, "\\'")}')`
+                    : `filterByUser('${String(user.name || '').replace(/'/g, "\\'")}')`;
+                html += `
+                    <div class="list-item" onclick="${clickAction}" style="cursor: pointer; align-items: center; padding: 10px 8px;">
+                        <div class="rank-num ${rClass}">${index + 1}</div>
+                        <div style="margin-right: 12px;"><img src="${avatarSrc}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;"></div>
+                        <div class="item-main" style="display: flex; flex-direction: column; justify-content: center; flex: 1; min-width: 0;">
+                            <span class="item-title" style="font-size: 14px; line-height: 1.4; margin-bottom: 2px;">${escapeHtml(user.name || '未知用户')}</span>
+                            <span style="font-size: 11px; color: #888; line-height: 1.3;">最近一条：${escapeHtml(previewText)}</span>
+                            <span style="font-size: 10px; color: #bbb; line-height: 1.3;">活跃时间：${timeStr}</span>
+                        </div>
+                        <div class="item-count" style="color: #1890ff; font-size: 13px; font-weight:bold;">${Number(user.count) || 0} 条</div>
+                    </div>`;
+            });
             container.innerHTML = html;
         }
 

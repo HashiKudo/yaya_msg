@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: transparent;
+            font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+        }
+
+        .toast {
+            position: absolute;
+            inset: 7px;
+            overflow: hidden;
+            color: #f7f8fa;
+            background: #1d2025;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 13px;
+            box-shadow: none;
+            cursor: pointer;
+            user-select: none;
+            animation: enter 0.22s ease-out both;
+        }
+
+        .toast:active {
+            transform: scale(0.992);
+        }
+
+        .toast.is-exiting {
+            pointer-events: none;
+            animation: exit 0.22s ease-in both;
+        }
+
+        .header {
+            height: 34px;
+            padding: 10px 17px 0;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            color: #d8dce3;
+            font-size: 12px;
+        }
+
+        .app-icon {
+            width: 16px;
+            height: 16px;
+            object-fit: cover;
+            border-radius: 3px;
+        }
+
+        .close {
+            position: absolute;
+            top: 7px;
+            right: 9px;
+            width: 32px;
+            height: 32px;
+            border: 0;
+            border-radius: 7px;
+            color: #d8dce3;
+            background: transparent;
+            font-size: 25px;
+            font-weight: 200;
+            line-height: 28px;
+            cursor: pointer;
+        }
+
+        .close:hover {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.09);
+        }
+
+        .content {
+            height: 78px;
+            padding: 5px 18px 13px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .avatar {
+            width: 58px;
+            height: 58px;
+            flex: 0 0 58px;
+            border-radius: 50%;
+            object-fit: cover;
+            background: #30343b;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+        }
+
+        .copy {
+            min-width: 0;
+            padding-right: 14px;
+        }
+
+        .title {
+            margin-bottom: 5px;
+            overflow: hidden;
+            color: #fff;
+            font-size: 18px;
+            font-weight: 650;
+            line-height: 23px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .body {
+            display: -webkit-box;
+            overflow: hidden;
+            color: #f0f1f3;
+            font-size: 15px;
+            line-height: 20px;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            word-break: break-word;
+        }
+
+        .body-sender {
+            color: #FF85AD;
+            font-weight: 700;
+        }
+
+        @keyframes enter {
+            from {
+                opacity: 0;
+                transform: translateX(20px) scale(0.98);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(0) scale(1);
+            }
+        }
+
+        @keyframes exit {
+            from {
+                opacity: 1;
+                transform: translateX(0) scale(1);
+            }
+
+            to {
+                opacity: 0;
+                transform: translateX(18px) scale(0.98);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="toast" id="toast">
+        <div class="header">
+            <img class="app-icon" id="app-icon" alt="">
+            <span>牙牙消息</span>
+        </div>
+        <button class="close" id="close" type="button" aria-label="关闭">×</button>
+        <div class="content">
+            <img class="avatar" id="avatar" alt="">
+            <div class="copy">
+                <div class="title" id="title">牙牙消息</div>
+                <div class="body" id="body">收到一条新消息</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        window.renderYayaNotification = function renderYayaNotification(payload) {
+            const value = payload || {};
+            document.getElementById('title').textContent = value.title || '牙牙消息';
+            const body = document.getElementById('body');
+            const bodyText = String(value.body || '收到一条新消息');
+            const separatorIndex = bodyText.indexOf('：');
+            body.replaceChildren();
+            if (separatorIndex > 0) {
+                const sender = document.createElement('span');
+                sender.className = 'body-sender';
+                sender.textContent = bodyText.slice(0, separatorIndex + 1);
+                body.append(sender, document.createTextNode(bodyText.slice(separatorIndex + 1)));
+            } else {
+                body.textContent = bodyText;
+            }
+            const avatar = document.getElementById('avatar');
+            avatar.onerror = function () {
+                avatar.onerror = null;
+                avatar.src = value.appIconDataUrl || '';
+            };
+            avatar.src = value.avatarUrl || value.appIconDataUrl || '';
+            document.getElementById('app-icon').src = value.appIconDataUrl || '';
+        };
+
+        let notificationDismissing = false;
+        window.dismissYayaNotification = function dismissYayaNotification(action) {
+            if (notificationDismissing) return;
+            notificationDismissing = true;
+            document.getElementById('toast').classList.add('is-exiting');
+            window.setTimeout(function () {
+                window.location.href = `yaya-notification://${action === 'open' ? 'open' : 'close'}`;
+            }, 220);
+        };
+
+        document.getElementById('toast').addEventListener('click', function () {
+            window.dismissYayaNotification('open');
+        });
+
+        document.getElementById('close').addEventListener('click', function (event) {
+            event.stopPropagation();
+            window.dismissYayaNotification('close');
+        });
+    </script>
+</body>
+
+</html>
