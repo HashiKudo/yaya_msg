@@ -122,7 +122,7 @@
 
             titleEl.textContent = config.title;
             subtitleEl.textContent = config.subtitle;
-            actionsEl.innerHTML = '';
+            actionsEl.replaceChildren();
 
             const fragment = document.createDocumentFragment();
             config.buttons.forEach(button => {

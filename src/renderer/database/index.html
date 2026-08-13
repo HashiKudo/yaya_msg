@@ -5,53 +5,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>牙牙消息数据库 | presented by yk1z</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        gray: {
-                            750: '#2d3748',
-                            850: '#1a202c',
-                            950: '#0d1117',
-                        },
-                        gold: {
-                            500: '#EAB308',
-                            100: '#FEF9C3'
-                        },
-                        silver: {
-                            500: '#94A3B8',
-                            100: '#F1F5F9'
-                        },
-                        bronze: {
-                            500: '#B45309',
-                            100: '#FFEDD5'
-                        }
-                    }
-                }
-            }
-        }
-    </script>
-    <script type="importmap">
-    {
-        "imports": {
-            "react": "https://esm.sh/react@18.2.0",
-            "react/jsx-runtime": "https://esm.sh/react@18.2.0/jsx-runtime",
-            "react/jsx-dev-runtime": "https://esm.sh/react@18.2.0/jsx-dev-runtime",
-            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-            "lucide-react": "https://esm.sh/lucide-react@0.292.0"
-        }
-    }
-    </script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="../renderer-utils.js"></script>
+    <link rel="stylesheet" href="./tailwind.css">
     <link rel="stylesheet" href="./styles.css">
 </head>
 
 <body class="bg-gray-50 text-gray-900 font-sans transition-colors duration-300 dark:bg-gray-950 dark:text-gray-100">
     <div id="root"></div>
-    <script type="text/babel" data-type="module" src="./app.jsx"></script>
+    <script type="module" src="./runtime.js"></script>
 </body>
 
 </html>

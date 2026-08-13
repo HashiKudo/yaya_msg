@@ -2,6 +2,7 @@
     window.YayaRendererFeatures = window.YayaRendererFeatures || {};
 
     window.YayaRendererFeatures.createTripFeature = function createTripFeature(deps) {
+        const { escapeHtml, escapeJsString } = window.YayaRendererUtils;
         const {
             getAppToken,
             getMemberData,
@@ -17,23 +18,6 @@
 
         let tripLastTime = '0';
         let tripLoading = false;
-
-        function escapeHtml(value) {
-            return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#39;'
-            }[char]));
-        }
-
-        function escapeJsString(value) {
-            return String(value == null ? '' : value)
-                .replace(/\\/g, '\\\\')
-                .replace(/'/g, "\\'")
-                .replace(/\r?\n/g, ' ');
-        }
 
         function getResultBox() {
             return document.getElementById('trip-search-results');
@@ -208,7 +192,7 @@
         function renderTrips(list, append) {
             const container = document.getElementById('trip-result-container');
             if (!container) return;
-            if (!append) container.innerHTML = '';
+            if (!append) container.replaceChildren();
             if (!list.length && !append) {
                 container.innerHTML = '<div class="empty-state">暂无行程</div>';
                 return;

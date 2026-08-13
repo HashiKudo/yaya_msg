@@ -147,7 +147,7 @@
                 }
             }
 
-            const folderName = `【房间相册】${memberName}`;
+            const folderName = `【${memberName}】房间相册`;
             isBatchDownloadingRoom = true;
             const originalText = '一键下载';
             const originalBg = '';
@@ -310,7 +310,7 @@
                 }
 
                 if (!isLoadMore) {
-                    container.innerHTML = '';
+                    container.replaceChildren();
                 }
 
                 if (!list || !list.length) {
@@ -395,7 +395,7 @@
                 const card = document.createElement('div');
                 card.className = 'photo-nft-card';
                 const ext = bodyObj.ext || (isVideo ? 'mp4' : 'jpg');
-                const dlFilename = `【${memberName}】房间记录_${item.createTime || Date.now()}.${ext}`;
+                const dlFilename = `【${memberName}】房间相册_${item.createTime || Date.now()}.${ext}`;
                 const dateStr = formatRoomAlbumTime(item.createTime);
                 const downloadIcon = `
             <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;">
@@ -424,7 +424,7 @@
             <div style="font-size: 11px; color: var(--text-sub); margin-bottom: 10px;">${dateStr}</div>
             
             <div>
-                <button class="btn btn-secondary btn-full album-single-dl-btn" data-url="${safeUrl}" data-filename="${dlFilename}" style="height: 30px; font-size: 12px; border-radius: 6px;" onclick="downloadMediaFileIconMode('${safeUrl}', '${dlFilename}', this, this.innerHTML, 'media', '【房间相册】${memberName}')">
+                <button class="btn btn-secondary btn-full album-single-dl-btn" data-url="${safeUrl}" data-filename="${dlFilename}" style="height: 30px; font-size: 12px; border-radius: 6px;" onclick="downloadMediaFileIconMode('${safeUrl}', '${dlFilename}', this, this.innerHTML, 'media', '【${memberName}】房间相册')">
                     ${downloadIcon}
                 </button>
             </div>

@@ -1,9 +1,10 @@
 (function initDatabaseEmbed() {
     const DATABASE_STYLES_PATH = 'src/renderer/database/styles.css';
+    const DATABASE_TAILWIND_PATH = 'src/renderer/database/tailwind.css';
     const DESKTOP_DATABASE_RUNTIME_PATH = './database/runtime.js';
     const WEB_DATABASE_RUNTIME_PATH = '/src/renderer/database/runtime.js';
     const WEB_DATABASE_STYLES_PATH = '/src/renderer/database/styles.css';
-    const TAILWIND_URL = 'https://cdn.tailwindcss.com';
+    const WEB_DATABASE_TAILWIND_PATH = '/src/renderer/database/tailwind.css';
     const EMBED_SCRIPT_SRC = document.currentScript && document.currentScript.src ? document.currentScript.src : '';
 
     let runtimePromise = null;
@@ -29,7 +30,7 @@
         let version = '';
         try {
             version = new URL(EMBED_SCRIPT_SRC).searchParams.get('v') || '';
-        } catch (error) { }
+        } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/database-embed.js'); }
         return version
             ? `${runtimePath}?v=${encodeURIComponent(version)}`
             : runtimePath;
@@ -41,67 +42,9 @@
         host.innerHTML = `<div class="${className}">${html}</div>`;
     }
 
-    function loadExternalScript(src, id) {
-        const existing = id ? document.getElementById(id) : null;
-        if (existing) return Promise.resolve(existing);
-
-        return new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = src;
-            script.async = true;
-            if (id) script.id = id;
-            script.onload = () => resolve(script);
-            script.onerror = () => reject(new Error(`加载脚本失败: ${src}`));
-            document.head.appendChild(script);
-        });
-    }
-
-    function ensureTailwindConfig() {
-        if (document.getElementById('database-tailwind-config')) return;
-        const script = document.createElement('script');
-        script.id = 'database-tailwind-config';
-        script.textContent = `
-            window.tailwind = window.tailwind || {};
-            window.tailwind.config = {
-                darkMode: 'class',
-                theme: {
-                    extend: {
-                        colors: {
-                            gray: {
-                                750: '#2d3748',
-                                850: '#1a202c',
-                                950: '#0d1117'
-                            },
-                            gold: {
-                                500: '#EAB308',
-                                100: '#FEF9C3'
-                            },
-                            silver: {
-                                500: '#94A3B8',
-                                100: '#F1F5F9'
-                            },
-                            bronze: {
-                                500: '#B45309',
-                                100: '#FFEDD5'
-                            }
-                        }
-                    }
-                }
-            };
-        `;
-        document.head.appendChild(script);
-    }
-
     async function ensureRuntime() {
         if (runtimePromise) return runtimePromise;
-
-        runtimePromise = (async () => {
-            ensureTailwindConfig();
-            if (!document.getElementById('database-tailwind-runtime')) {
-                await loadExternalScript(TAILWIND_URL, 'database-tailwind-runtime');
-            }
-        })();
-
+        runtimePromise = Promise.resolve();
         return runtimePromise;
     }
 
@@ -123,8 +66,12 @@
         return desktop.fs.readFileSync(assetPath, 'utf8');
     }
 
-    function readDatabaseStyles() {
-        return readDatabaseAsset(DATABASE_STYLES_PATH, WEB_DATABASE_STYLES_PATH);
+    async function readDatabaseStyles() {
+        const [tailwindStyles, databaseStyles] = await Promise.all([
+            readDatabaseAsset(DATABASE_TAILWIND_PATH, WEB_DATABASE_TAILWIND_PATH),
+            readDatabaseAsset(DATABASE_STYLES_PATH, WEB_DATABASE_STYLES_PATH)
+        ]);
+        return `${tailwindStyles}\n${databaseStyles}`;
     }
 
     function injectDatabaseStyles(styles) {
@@ -151,13 +98,13 @@
                 await ensureRuntime();
 
                 if (isWebRuntime()) {
-                    host.innerHTML = '';
+                    host.replaceChildren();
                     await import(getWebDatabaseRuntimeUrl());
                     host.dataset.databaseMounted = 'true';
                     return;
                 }
 
-                host.innerHTML = '';
+                host.replaceChildren();
                 await import(getDesktopDatabaseRuntimeUrl());
                 host.dataset.databaseMounted = 'true';
             } catch (error) {

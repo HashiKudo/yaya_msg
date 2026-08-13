@@ -149,7 +149,7 @@
                 scrollEl.style.display = 'block';
                 return;
             }
-            linesEl.innerHTML = '';
+            linesEl.replaceChildren();
             scrollEl.style.display = 'none';
             emptyEl.style.display = 'block';
             emptyEl.innerText = message || '当前歌曲暂无歌词';

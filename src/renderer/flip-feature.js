@@ -350,7 +350,7 @@
                             downloadBtn.onclick = (e) => {
                                 e.stopPropagation();
                                 if (typeof downloadMediaFileIconMode === 'function') {
-                                    downloadMediaFileIconMode(url, `【${memberName}】翻牌语音_${item.questionId}.mp3`, downloadBtn, downloadIcon);
+                                    downloadMediaFileIconMode(url, `【${memberName}】翻牌回答_${item.questionId}.mp3`, downloadBtn, downloadIcon);
                                 }
                             };
 
@@ -494,7 +494,7 @@
                 return toFlipDateValue(now.getFullYear(), now.getMonth(), now.getDate());
             })();
 
-            grid.innerHTML = '';
+            grid.replaceChildren();
 
             for (let index = 0; index < 42; index += 1) {
                 let day;
@@ -728,7 +728,7 @@
             const dropdown = document.getElementById('flip-member-filter-dropdown');
             if (!input || !dropdown) return;
 
-            dropdown.innerHTML = '';
+            dropdown.replaceChildren();
 
             const allItem = document.createElement('div');
             allItem.className = 'suggestion-item';
@@ -929,7 +929,7 @@
                     setFlipData(nextData);
                     saveFlipCache(nextData);
                 }
-            } catch (e) { }
+            } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/flip-feature.js'); }
 
             if (typeof setCurrentSearchKeyword === 'function') {
                 setCurrentSearchKeyword('');
@@ -1001,8 +1001,7 @@
                         hasMore = false;
                     }
                 }
-            } catch (e) {
-            } finally {
+            } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/flip-feature.js'); } finally {
                 const nextData = shouldReset
                     ? mergeFlipItems([], fetchedData)
                     : (fetchedData.length > 0 ? mergeFlipItems([], fetchedData) : getFlipData());
@@ -1087,7 +1086,7 @@
                 }
             }
 
-            statusText.innerHTML = '';
+            statusText.replaceChildren();
             const headerBtn = document.createElement('button');
             headerBtn.className = 'btn btn-secondary';
             headerBtn.style.cssText = 'padding: 0 15px; transition: all 0.2s;';
@@ -1108,7 +1107,7 @@
 
             statusText.appendChild(headerBtn);
 
-            container.innerHTML = '';
+            container.replaceChildren();
             if (pageData.length === 0) {
                 container.innerHTML = '<div class="empty-state">没有符合条件的数据</div>';
                 updateFlipSevenDayCountdowns();
@@ -1140,7 +1139,7 @@
             const paginationContainer = document.querySelector('#view-flip .pagination-container');
             if (!paginationContainer) return;
 
-            paginationContainer.innerHTML = '';
+            paginationContainer.replaceChildren();
             const totalPages = Math.ceil(totalCount / getFlipPageSize()) || 1;
             const currentPage = typeof getCurrentFlipPage === 'function' ? getCurrentFlipPage() : 0;
 
@@ -1380,7 +1379,7 @@
             const answerDisplay = document.getElementById('flip-answer-display');
             if (!container) return;
 
-            container.innerHTML = '';
+            container.replaceChildren();
 
             const typeNames = { 1: '文字翻牌', 2: '语音翻牌', 3: '视频翻牌' };
 

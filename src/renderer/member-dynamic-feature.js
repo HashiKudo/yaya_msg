@@ -2,6 +2,7 @@
     window.YayaRendererFeatures = window.YayaRendererFeatures || {};
 
     window.YayaRendererFeatures.createMemberDynamicFeature = function createMemberDynamicFeature(deps) {
+        const { escapeHtml, escapeJsString, normalize48Url } = window.YayaRendererUtils;
         const {
             getAppToken,
             getMemberData,
@@ -18,23 +19,6 @@
 
         let currentDynamicNextTime = 0;
         let isFetchingDynamic = false;
-
-        function escapeHtml(value) {
-            return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#39;'
-            }[char]));
-        }
-
-        function escapeJsString(value) {
-            return String(value == null ? '' : value)
-                .replace(/\\/g, '\\\\')
-                .replace(/'/g, "\\'")
-                .replace(/\r?\n/g, ' ');
-        }
 
         function stripHtml(value) {
             const html = String(value || '').replace(/<br\s*\/?>/gi, '\n');
@@ -108,14 +92,6 @@
 
             div.childNodes.forEach(walk);
             return parts.join('').replace(/\n{3,}/g, '\n\n').trim() || renderDynamicPlainText('动态');
-        }
-
-        function normalize48Url(value) {
-            const raw = String(value || '').trim();
-            if (!raw) return '';
-            if (/^https?:\/\//i.test(raw)) return raw;
-            if (raw.includes('48.cn')) return `https://${raw.replace(/^\/+/, '')}`;
-            return raw.startsWith('/') ? `https://source3.48.cn${raw}` : `https://source3.48.cn/${raw}`;
         }
 
         function getResultBox() {
@@ -300,7 +276,7 @@
                     currentDynamicNextTime = result.content.nextTime || 0;
 
                     if (!hasRendered) {
-                        container.innerHTML = '';
+                        container.replaceChildren();
                         container.className = 'member-weibo-list member-dynamic-list';
                     }
 

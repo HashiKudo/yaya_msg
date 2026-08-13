@@ -609,7 +609,7 @@
             }
 
             const sorted = privateMessageDetailState.items.slice().sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
-            bodyEl.innerHTML = '';
+            bodyEl.replaceChildren();
             const fragment = document.createDocumentFragment();
             sorted.forEach(item => {
                 fragment.appendChild(createPrivateMessageDetailElement(item));
@@ -635,7 +635,7 @@
             const previousScrollTop = bodyEl.scrollTop;
 
             if (bodyEl.querySelector('.empty-state')) {
-                bodyEl.innerHTML = '';
+                bodyEl.replaceChildren();
             }
 
             const fragment = document.createDocumentFragment();
@@ -771,7 +771,7 @@
                 answerDisplay.disabled = true;
             }
             if (answerDropdown) {
-                answerDropdown.innerHTML = '';
+                answerDropdown.replaceChildren();
                 answerDropdown.style.display = 'none';
             }
             if (privacyType) {
@@ -801,7 +801,7 @@
             const { answerType, answerDisplay, answerDropdown } = getPrivateMessageFlipPanelElements();
             if (!answerDropdown) return;
 
-            answerDropdown.innerHTML = '';
+            answerDropdown.replaceChildren();
             const enabledPrices = privateMessageFlipPrices.filter(item => Number(item.status) === 1);
             if (!enabledPrices.length) {
                 const item = document.createElement('div');

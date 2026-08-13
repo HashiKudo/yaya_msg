@@ -1,4 +1,5 @@
 (function () {
+    const { escapeHtml } = window.YayaRendererUtils;
     const INVOICE_FORM_KEY = 'yaya_invoice_form_v1';
     const INVOICE_HISTORY_START_MONTH = '2021-01';
 
@@ -19,15 +20,6 @@
 
     function $(id) {
         return document.getElementById(id);
-    }
-
-    function escapeHtml(value) {
-        return String(value == null ? '' : value)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
     }
 
     function readStoredJson(key, fallbackValue = {}) {

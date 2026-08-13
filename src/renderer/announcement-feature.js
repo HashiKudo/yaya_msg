@@ -47,7 +47,7 @@
         function writeActiveAnnouncementTabs(tabs) {
             try {
                 localStorage.setItem(ANNOUNCEMENT_TABS_KEY, JSON.stringify(tabs || {}));
-            } catch (e) { }
+            } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/announcement-feature.js'); }
         }
 
         function pruneActiveAnnouncementTabs(tabs) {
@@ -80,7 +80,7 @@
                 const tabs = readActiveAnnouncementTabs();
                 delete tabs[tabId];
                 writeActiveAnnouncementTabs(tabs);
-            } catch (e) { }
+            } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/announcement-feature.js'); }
         }
 
         function registerAnnouncementTab(tabId) {
@@ -149,7 +149,7 @@
         function markAnnouncementSeen(data) {
             try {
                 localStorage.setItem(getAnnouncementKey(data), '1');
-            } catch (e) { }
+            } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/announcement-feature.js'); }
         }
 
         function renderAnnouncement(data) {
@@ -207,8 +207,6 @@
             modal.style.display = 'flex';
             setTimeout(() => {
                 modal.style.opacity = '1';
-                const box = document.getElementById('announcement-box');
-                if (box) box.style.transform = 'translateY(0) scale(1)';
             }, 50);
         }
 
@@ -226,7 +224,7 @@
                     cache: 'no-store'
                 });
                 if (res.status === 200) handleNoticeDisplay(await res.json());
-            } catch (e) { }
+            } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/announcement-feature.js'); }
         }
 
         function handleNoticeDisplay(data) {
@@ -240,8 +238,6 @@
             const modal = document.getElementById('global-announcement-modal');
             if (modal) {
                 modal.style.opacity = '0';
-                const box = document.getElementById('announcement-box');
-                if (box) box.style.transform = 'translateY(24px) scale(0.985)';
                 setTimeout(() => {
                     modal.style.display = 'none';
                 }, 300);

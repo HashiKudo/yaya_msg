@@ -1,10 +1,9 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
-import crypto from 'node:crypto';
 import wasmRuntime from '../rust-wasm.js';
+import worker from '../workers/yaya-web.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.join(__dirname, '..');
@@ -23,30 +22,7 @@ async function createServerPaGenerator() {
 }
 
 const generateServerPa = await createServerPaGenerator();
-
-function loadWorkerRuntime() {
-    const workerPath = path.join(projectRoot, 'workers', 'yaya-web.js');
-    const source = fs.readFileSync(workerPath, 'utf8')
-        .replace('export default {', 'globalThis.__yayaWorker = {');
-    const context = vm.createContext({
-        console,
-        fetch,
-        URL,
-        Response,
-        TextEncoder,
-        TextDecoder,
-        setTimeout,
-        clearTimeout,
-        crypto: globalThis.crypto || crypto.webcrypto,
-        __yayaGeneratePa: generateServerPa,
-        globalThis: {}
-    });
-    context.globalThis = context;
-    vm.runInContext(source, context, { filename: workerPath });
-    return context.__yayaWorker;
-}
-
-const worker = loadWorkerRuntime();
+globalThis.__yayaGeneratePa = generateServerPa;
 
 function getCorsOrigin(origin) {
     if (!origin) return '';

@@ -13,6 +13,7 @@
         const AUTO_MESSAGE_FETCH_SETTING_KEY = 'autoMessageFetch';
         const AUTO_MESSAGE_FETCH_DEFAULT_INTERVAL = 10;
         const AUTO_MESSAGE_FETCH_MAX_PAGES = 200;
+        const AUTO_MESSAGE_FETCH_MEMBER_CONCURRENCY = 6;
         let autoMessageFetchTimer = null;
         let autoMessageFetchStartupTimer = null;
         let autoMessageFetchInFlight = false;
@@ -751,6 +752,16 @@
             ].join('|');
         }
 
+        function getFetchBoundaryTimestamp(boundaryKey) {
+            const timestamp = Number(String(boundaryKey || '').split('|')[1]);
+            return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+        }
+
+        function getFetchMessageTimestamp(message) {
+            const timestamp = Number(message?.msgTime || message?.messageTime || message?.time || 0);
+            return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+        }
+
         function loadFetchBoundary(serverId, channelId, fetchAllMode) {
             try {
                 return readRuntimeCacheString(getFetchBoundaryStorageKey(serverId, channelId, fetchAllMode), '');
@@ -765,8 +776,7 @@
 
             try {
                 writeRuntimeCacheString(getFetchBoundaryStorageKey(serverId, channelId, fetchAllMode), boundaryKey);
-            } catch (error) {
-            }
+            } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/fetch-legacy.js'); }
         }
 
         function escapeFetchHtml(value) {
@@ -872,8 +882,7 @@
 
             try {
                 removeRuntimeCacheValue(getFetchBoundaryStorageKey(serverId, channelId, isFetchAllMode));
-            } catch (error) {
-            }
+            } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/fetch-legacy.js'); }
 
             currentFetchStopKey = '';
             currentFetchStoppedAtPrevious = false;
@@ -905,7 +914,7 @@
         }
 
         function normalizeAutoMessageFetchConfig(value) {
-            const allowedIntervals = new Set([5, 10, 30, 60]);
+            const allowedIntervals = new Set([1, 5, 10, 30, 60]);
             const intervalMinutes = Number(value?.intervalMinutes);
             const hasSplitModeSetting = typeof value?.startupEnabled === 'boolean'
                 || typeof value?.scheduledEnabled === 'boolean';
@@ -1028,7 +1037,7 @@
                     : (config.roomType === 'all' ? '所有房间' : '大房间');
             }
             if (messageScopeDisplay) messageScopeDisplay.value = config.messageScope === 'all' ? '全体消息' : '只看成员';
-            if (intervalDisplay) intervalDisplay.value = config.intervalMinutes === 60 ? '1 小时' : `${config.intervalMinutes} 分钟`;
+            if (intervalDisplay) intervalDisplay.value = `${config.intervalMinutes} 分钟`;
             if (intervalField) intervalField.style.display = config.scheduledEnabled ? 'block' : 'none';
             if (controls) controls.classList.toggle('has-scheduled-interval', config.scheduledEnabled);
             if (!config.scheduledEnabled) {
@@ -1041,7 +1050,7 @@
             }
 
             if (list) {
-                list.innerHTML = '';
+                list.replaceChildren();
                 for (const member of config.members) {
                     const chip = document.createElement('span');
                     chip.className = 'auto-fetch-member-chip';
@@ -1112,7 +1121,7 @@
             });
 
             if (typeof memberSortLogic === 'function') matches.sort(memberSortLogic);
-            resultBox.innerHTML = '';
+            resultBox.replaceChildren();
 
             if (matches.length === 0) {
                 resultBox.innerHTML = '<div class="suggestion-item" style="cursor:default;color:var(--text-sub)">未找到该成员</div>';
@@ -1370,8 +1379,7 @@
                     try {
                         const ext = typeof message.extInfo === 'string' ? JSON.parse(message.extInfo) : message.extInfo;
                         if (ext?.user) senderId = ext.user.userId || ext.user.id;
-                    } catch (error) {
-                    }
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/fetch-legacy.js'); }
                 }
                 return String(senderId || '') !== '121569667';
             });
@@ -1386,6 +1394,7 @@
             }
 
             const previousBoundary = loadFetchBoundary(member.serverId, channelId, fetchAll);
+            const previousBoundaryTimestamp = getFetchBoundaryTimestamp(previousBoundary);
             const collectedMessages = [];
             const seenKeys = new Set();
             let nextTime = 0;
@@ -1415,6 +1424,15 @@
                     if (stopIndex >= 0) {
                         list = list.slice(0, stopIndex);
                         reachedPrevious = true;
+                    } else if (previousBoundaryTimestamp > 0) {
+                        const crossedBoundaryIndex = list.findIndex(message => {
+                            const messageTimestamp = getFetchMessageTimestamp(message);
+                            return messageTimestamp > 0 && messageTimestamp <= previousBoundaryTimestamp;
+                        });
+                        if (crossedBoundaryIndex >= 0) {
+                            list = list.slice(0, crossedBoundaryIndex);
+                            reachedPrevious = true;
+                        }
                     }
                 }
 
@@ -1534,32 +1552,50 @@
             let skippedRoomCount = 0;
 
             try {
-                for (let index = 0; index < config.members.length; index += 1) {
-                    const latestConfig = readAutoMessageFetchConfig();
-                    if (!manual && startup && !latestConfig.startupEnabled) break;
-                    if (!manual && !startup && !latestConfig.scheduledEnabled) break;
+                let nextMemberIndex = 0;
+                let completedMemberCount = 0;
+                const roomLabel = config.roomType === 'small'
+                    ? '小房间'
+                    : (config.roomType === 'all' ? '所有房间' : '大房间');
+                const scopeLabel = config.messageScope === 'all' ? '全体消息' : '成员消息';
+                const worker = async () => {
+                    while (nextMemberIndex < config.members.length) {
+                        const latestConfig = readAutoMessageFetchConfig();
+                        if (!manual && startup && !latestConfig.startupEnabled) return;
+                        if (!manual && !startup && !latestConfig.scheduledEnabled) return;
 
-                    const member = config.members[index];
-                    const roomLabel = config.roomType === 'small'
-                        ? '小房间'
-                        : (config.roomType === 'all' ? '所有房间' : '大房间');
-                    const scopeLabel = config.messageScope === 'all' ? '全体消息' : '成员消息';
-                    setAutoMessageFetchStatus(`正在抓取 ${member.name} · ${roomLabel} · ${scopeLabel}（${index + 1}/${config.members.length}）...`, 'running');
-                    try {
-                        const result = await fetchAutoMessageMemberRooms(member, token, {
-                            roomType: config.roomType,
-                            messageScope: config.messageScope
-                        });
-                        addedCount += result.addedCount;
-                        skippedRoomCount += result.skippedRoomCount;
-                        if (result.changed) changedMemberCount += 1;
-                    } catch (error) {
-                        failedCount += 1;
-                        console.warn(`自动抓取 ${member.name} 失败:`, error);
+                        const memberIndex = nextMemberIndex;
+                        nextMemberIndex += 1;
+                        const member = config.members[memberIndex];
+                        setAutoMessageFetchStatus(
+                            `正在抓取 ${member.name} · ${roomLabel} · ${scopeLabel}（已完成 ${completedMemberCount}/${config.members.length}）...`,
+                            'running'
+                        );
+                        try {
+                            const result = await fetchAutoMessageMemberRooms(member, token, {
+                                roomType: config.roomType,
+                                messageScope: config.messageScope
+                            });
+                            addedCount += result.addedCount;
+                            skippedRoomCount += result.skippedRoomCount;
+                            if (result.changed) changedMemberCount += 1;
+                        } catch (error) {
+                            failedCount += 1;
+                            console.warn(`自动抓取 ${member.name} 失败:`, error);
+                        } finally {
+                            completedMemberCount += 1;
+                            setAutoMessageFetchStatus(
+                                `正在并发抓取成员消息（${completedMemberCount}/${config.members.length}）...`,
+                                'running'
+                            );
+                        }
                     }
+                };
 
-                    if (index < config.members.length - 1) await sleep(650);
-                }
+                await Promise.all(Array.from(
+                    { length: Math.min(AUTO_MESSAGE_FETCH_MEMBER_CONCURRENCY, config.members.length) },
+                    () => worker()
+                ));
 
                 const latestConfig = readAutoMessageFetchConfig();
                 latestConfig.lastRunAt = Date.now();
@@ -1994,8 +2030,7 @@
                     renderLive48QrAccountInfo(res.accountInfo);
                     setLive48QrMessage(res.msg || 'live.48.cn 登录状态可能已失效', '#fa8c16');
                 }
-            } catch (error) {
-            }
+            } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/fetch-legacy.js'); }
         }
 
         function resetLive48QrDisplay() {
@@ -2135,8 +2170,7 @@
             if (window.yayaWasmReadyPromise) {
                 try {
                     await window.yayaWasmReadyPromise;
-                } catch (error) {
-                }
+                } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/fetch-legacy.js'); }
             }
             return typeof window.getPA === 'function' ? window.getPA() : null;
         }
@@ -2194,7 +2228,7 @@
                     if (verifyArea && verifyQuestion && verifyOptions) {
                         verifyArea.style.display = 'block';
                         verifyQuestion.innerText = res.question;
-                        verifyOptions.innerHTML = '';
+                        verifyOptions.replaceChildren();
 
                         res.options.forEach(opt => {
                             const optBtn = document.createElement('button');
@@ -2363,7 +2397,7 @@
                     }
 
                     if (accountArea && accountList) {
-                        accountList.innerHTML = '';
+                        accountList.replaceChildren();
                         let hasOtherAccounts = false;
                         const bigSmall = userInfo.bigSmallInfo;
 
@@ -2582,7 +2616,7 @@
             }
 
             if (!isLoadMore) {
-                box.innerHTML = '';
+                box.replaceChildren();
                 lastNextTime = 0;
                 allFetchedMsgs = [];
                 currentFetchStopKey = loadFetchBoundary(serverId, channelId, isFetchAllMode);
@@ -2591,7 +2625,7 @@
                 currentFetchedChannelId = channelId;
                 currentFetchedFetchAllMode = isFetchAllMode;
                 const statusEl = document.getElementById('fetch-status');
-                if (statusEl) statusEl.innerHTML = '';
+                if (statusEl) statusEl.replaceChildren();
                 if (exportBtn) exportBtn.disabled = true;
             }
 
@@ -2635,7 +2669,7 @@
                                 try {
                                     const ext = typeof m.extInfo === 'string' ? JSON.parse(m.extInfo) : m.extInfo;
                                     if (ext.user) sid = ext.user.userId || ext.user.id;
-                                } catch (e) { }
+                                } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/fetch-legacy.js'); }
                             }
                             return String(sid) !== '121569667';
                         });
@@ -2939,8 +2973,7 @@
                             if (!exportUserId) exportUserId = ext.user.userId || ext.user.id || '';
                             exportRoleId = Number(ext.user.roleId) || 0;
                         }
-                    } catch (error) {
-                    }
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/fetch-legacy.js'); }
                 }
 
                 const sortTime = Number(m.msgTime) || Date.now();

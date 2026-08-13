@@ -225,7 +225,7 @@
                 openLiveNextTime = result.content.nextTime;
 
                 if (!isLoadMore) {
-                    container.innerHTML = '';
+                    container.replaceChildren();
                 }
 
                 if (!list.length) {

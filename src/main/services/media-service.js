@@ -1,19 +1,42 @@
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
+const crypto = require('crypto');
 const { spawnSync } = require('child_process');
+const { pathToFileURL } = require('url');
 const { app } = require('electron');
 const axios = require('axios');
 const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = require('ffmpeg-static');
 const NodeMediaServer = require('node-media-server');
+const { reportIgnoredError } = require('../../common/error-utils');
+const settingsService = require('./settings-service');
 
 const activeCommands = new Map();
 const recordCommands = new Map();
+const compatVodJobs = new Map();
+const compatVodCommands = new Map();
+const compatVodFiles = new Set();
+const roomRadioRecordingSessions = new Map();
+const LIVE_RECORD_SHUTDOWN_TIMEOUT_MS = 30_000;
+const LIVE_RECORD_RECOVERY_MIN_AGE_MS = 15_000;
+let mediaShutdownInProgress = false;
+let liveRecordRecoveryPromise = null;
 
 const ffmpegName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
 const packagedFfmpegPath = process.resourcesPath ? path.join(process.resourcesPath, ffmpegName) : '';
-const staticFfmpegPath = typeof ffmpegPath === 'string' ? ffmpegPath : null;
+
+function resolveDevelopmentFfmpegPath() {
+    if (app?.isPackaged) return null;
+    try {
+        const ffmpegPath = require('ffmpeg-static');
+        return typeof ffmpegPath === 'string' ? ffmpegPath : null;
+    } catch (error) {
+        reportIgnoredError(error, 'media-service:load-development-ffmpeg');
+        return null;
+    }
+}
+
+const staticFfmpegPath = resolveDevelopmentFfmpegPath();
 
 function hasSystemFfmpeg() {
     try {
@@ -69,6 +92,12 @@ const MEDIA_SERVER_HOST = '127.0.0.1';
 const DEFAULT_RTMP_PORT = 1935;
 const DEFAULT_HTTP_PORT = 8888;
 const PROXY_START_TIMEOUT_MS = 8000;
+const CLIP_READ_TIMEOUT_US = 20_000_000;
+const CLIP_NO_PROGRESS_TIMEOUT_MS = 60_000;
+const HLS_SEEK_LEAD_IN_SECONDS = 15;
+const LIVE_RECORD_DISK_CHECK_INTERVAL_MS = 30_000;
+const LIVE_RECORD_MIN_FREE_BYTES = 512 * 1024 * 1024;
+const LIVE_RECORD_FINALIZE_RESERVE_BYTES = 256 * 1024 * 1024;
 
 function stopCommand(command, signal = 'SIGKILL') {
     if (!command) {
@@ -77,8 +106,7 @@ function stopCommand(command, signal = 'SIGKILL') {
 
     try {
         command.kill(signal);
-    } catch (error) {
-    }
+    } catch (error) { reportIgnoredError(error, 'src/main/services/media-service.js'); }
 }
 
 function isPortAvailable(port) {
@@ -122,8 +150,7 @@ function closeServerObject(server) {
 
     try {
         server.close();
-    } catch (error) {
-    }
+    } catch (error) { reportIgnoredError(error, 'src/main/services/media-service.js'); }
 }
 
 function stopMediaServer() {
@@ -223,6 +250,140 @@ function sanitizeFileName(fileName) {
     return String(fileName || '').replace(/[\\/:*?"<>|]/g, '_');
 }
 
+function getUniqueMediaPath(folderPath, baseName, extension) {
+    const safeBaseName = sanitizeFileName(baseName || `恢复的直播录制_${Date.now()}`);
+    let candidatePath = path.join(folderPath, `${safeBaseName}${extension}`);
+    let suffix = 1;
+    while (fs.existsSync(candidatePath)) {
+        candidatePath = path.join(folderPath, `${safeBaseName}_${suffix}${extension}`);
+        suffix += 1;
+    }
+    return candidatePath;
+}
+
+function getRecoveredLiveRecordBaseName(fileName) {
+    const withoutExtension = String(fileName || '').replace(/\.ts$/i, '');
+    return withoutExtension
+        .replace(/^未完成_/, '')
+        .replace(/_auto_live_record_.+?_\d+$/i, '')
+        .replace(/_rec_\d+$/i, '')
+        || `恢复的直播录制_${Date.now()}`;
+}
+
+function removeMediaFile(filePath) {
+    if (!filePath || !fs.existsSync(filePath)) return;
+
+    try {
+        fs.unlinkSync(filePath);
+    } catch (error) {
+        reportIgnoredError(error, 'media-service:remove-media-file');
+    }
+}
+
+function getClipErrorMessage(error, timedOut = false) {
+    if (timedOut) {
+        return '连接视频源超时，请确认回放仍可播放后重试';
+    }
+
+    const message = String(error?.message || '').toLowerCase();
+    if (/\b(401|403)\b|forbidden|unauthorized/.test(message)) {
+        return '视频地址已失效，请重新打开回放后重试';
+    }
+    if (/\b404\b|not found/.test(message)) {
+        return '视频源不存在或已被移除';
+    }
+    if (/timed? out|timeout|connection reset|network is unreachable/.test(message)) {
+        return '读取视频源超时，请检查网络后重试';
+    }
+    if (/invalid data|could not find codec|unsupported/.test(message)) {
+        return '无法解析视频源，请重新打开回放后重试';
+    }
+
+    return '切片失败，请重新打开回放后重试';
+}
+
+function isRemoteHlsUrl(url) {
+    return /^https?:\/\//i.test(url) && /\.m3u8(?:$|[?#])/i.test(url);
+}
+
+function normalizeRemoteMediaUrl(value) {
+    const rawUrl = String(value || '').trim();
+    try {
+        const parsed = new URL(rawUrl);
+        return (parsed.protocol === 'http:' || parsed.protocol === 'https:') ? parsed.href : '';
+    } catch (error) {
+        return '';
+    }
+}
+
+async function prepareCompatVod(remoteUrl) {
+    const sourceUrl = normalizeRemoteMediaUrl(remoteUrl);
+    if (!sourceUrl) {
+        throw new Error('视频地址无效');
+    }
+    if (!ffmpegConfig.isAvailable) {
+        throw new Error('FFmpeg 不可用，无法启动兼容播放');
+    }
+
+    const cacheKey = crypto.createHash('sha256').update(sourceUrl).digest('hex').slice(0, 20);
+    const outputPath = path.join(app.getPath('temp'), `yaya-vod-compat-${cacheKey}.mp4`);
+
+    if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) {
+        compatVodFiles.add(outputPath);
+        return { url: pathToFileURL(outputPath).href, cached: true };
+    }
+
+    if (compatVodJobs.has(sourceUrl)) {
+        return compatVodJobs.get(sourceUrl);
+    }
+
+    const job = new Promise((resolve, reject) => {
+        removeMediaFile(outputPath);
+
+        const command = ffmpeg(sourceUrl)
+            .inputOptions([
+                '-rw_timeout', String(CLIP_READ_TIMEOUT_US),
+                '-reconnect', '1',
+                '-reconnect_streamed', '1',
+                '-reconnect_on_network_error', '1',
+                '-reconnect_on_http_error', '429,5xx',
+                '-reconnect_delay_max', '5',
+                '-protocol_whitelist', 'file,http,https,tcp,tls,crypto,rtmp,rtmps'
+            ])
+            .outputOptions([
+                '-y',
+                '-map 0:v:0',
+                '-map 0:a?',
+                '-c copy',
+                '-avoid_negative_ts make_zero',
+                '-movflags +faststart'
+            ])
+            .output(outputPath);
+
+        compatVodCommands.set(sourceUrl, command);
+        command
+            .on('end', () => {
+                compatVodCommands.delete(sourceUrl);
+                compatVodFiles.add(outputPath);
+                resolve({ url: pathToFileURL(outputPath).href, cached: false });
+            })
+            .on('error', (error) => {
+                compatVodCommands.delete(sourceUrl);
+                removeMediaFile(outputPath);
+                console.error('[兼容播放] 视频转封装失败:', error);
+                reject(new Error('旧版直播兼容处理失败'));
+            })
+            .run();
+    });
+
+    compatVodJobs.set(sourceUrl, job);
+    try {
+        return await job;
+    } finally {
+        compatVodJobs.delete(sourceUrl);
+    }
+}
+
 function normalizeProxyPayload(payload) {
     if (typeof payload === 'string') {
         return {
@@ -263,25 +424,41 @@ function buildHttpInputOptions(headers = {}) {
     return options;
 }
 
-async function saveRoomRadioRecording({ arrayBuffer, fileNameBase, savePath }) {
+function createRoomRadioRecordingPaths(fileNameBase, savePath) {
     const safeBaseName = sanitizeFileName(fileNameBase || `房间电台录音_${Date.now()}`);
     const tempFolder = app.getPath('temp');
     const downloadFolder = resolveDownloadFolder(savePath);
     const tempInputPath = path.join(tempFolder, `${safeBaseName}_${Date.now()}.webm`);
     const outputPath = path.join(downloadFolder, `${safeBaseName}.mp3`);
+    const fallbackPath = path.join(downloadFolder, `${safeBaseName}.webm`);
 
-    await fs.promises.writeFile(tempInputPath, Buffer.from(arrayBuffer));
+    return { tempInputPath, outputPath, fallbackPath };
+}
+
+async function convertRoomRadioRecording({ tempInputPath, outputPath, fallbackPath }) {
+    const saveFallback = async (message) => {
+        try {
+            await fs.promises.copyFile(tempInputPath, fallbackPath);
+            return {
+                success: false,
+                fallback: true,
+                path: fallbackPath,
+                msg: message
+            };
+        } catch (error) {
+            return {
+                success: false,
+                fallback: false,
+                msg: `录音保存失败：${error.message || error}`
+            };
+        } finally {
+            await fs.promises.unlink(tempInputPath).catch(() => { });
+        }
+    };
+
 
     if (!ffmpegConfig.isAvailable) {
-        const fallbackPath = path.join(downloadFolder, `${safeBaseName}.webm`);
-        await fs.promises.copyFile(tempInputPath, fallbackPath);
-        await fs.promises.unlink(tempInputPath).catch(() => { });
-        return {
-            success: false,
-            fallback: true,
-            path: fallbackPath,
-            msg: 'FFmpeg 不可用，已改为保存 WebM'
-        };
+        return saveFallback('FFmpeg 不可用，已改为保存 WebM');
     }
 
     return await new Promise((resolve) => {
@@ -297,127 +474,534 @@ async function saveRoomRadioRecording({ arrayBuffer, fileNameBase, savePath }) {
                 });
             })
             .on('error', async () => {
-                const fallbackPath = path.join(downloadFolder, `${safeBaseName}.webm`);
-                await fs.promises.copyFile(tempInputPath, fallbackPath).catch(() => { });
-                await fs.promises.unlink(tempInputPath).catch(() => { });
-                resolve({
-                    success: false,
-                    fallback: true,
-                    path: fallbackPath,
-                    msg: '转换 MP3 失败，已改为保存 WebM'
-                });
+                await fs.promises.unlink(outputPath).catch(() => { });
+                resolve(await saveFallback('转换 MP3 失败，已改为保存 WebM'));
             })
             .save(outputPath);
     });
 }
 
-function startRecord(event, { url, taskId, savePath }) {
-    const tempFolder = app.getPath('temp');
-    const tempTsPath = path.join(tempFolder, `temp_rec_${taskId}.ts`);
+async function saveRoomRadioRecording({ arrayBuffer, fileNameBase, savePath }) {
+    const paths = createRoomRadioRecordingPaths(fileNameBase, savePath);
+    await fs.promises.writeFile(paths.tempInputPath, Buffer.from(arrayBuffer));
+    return convertRoomRadioRecording(paths);
+}
 
-    const command = ffmpeg(url)
-        .inputOptions([
+async function startRoomRadioRecording({ sessionId, fileNameBase, savePath }) {
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (!normalizedSessionId || roomRadioRecordingSessions.has(normalizedSessionId)) {
+        return { success: false, msg: '录音会话无效或已存在' };
+    }
+
+    const paths = createRoomRadioRecordingPaths(fileNameBase, savePath);
+    await fs.promises.writeFile(paths.tempInputPath, Buffer.alloc(0));
+    roomRadioRecordingSessions.set(normalizedSessionId, {
+        ...paths,
+        writeChain: Promise.resolve(),
+        finalized: false
+    });
+    return { success: true };
+}
+
+async function appendRoomRadioRecordingChunk({ sessionId, arrayBuffer }) {
+    const session = roomRadioRecordingSessions.get(String(sessionId || '').trim());
+    if (!session || session.finalized) {
+        return { success: false, msg: '录音会话不存在或已经结束' };
+    }
+
+    const chunk = Buffer.from(arrayBuffer || new ArrayBuffer(0));
+    session.writeChain = session.writeChain.then(() => fs.promises.appendFile(session.tempInputPath, chunk));
+    try {
+        await session.writeChain;
+        return { success: true };
+    } catch (error) {
+        return { success: false, msg: `录音写入失败：${error.message || error}` };
+    }
+}
+
+async function finishRoomRadioRecording({ sessionId }) {
+    const normalizedSessionId = String(sessionId || '').trim();
+    const session = roomRadioRecordingSessions.get(normalizedSessionId);
+    if (!session || session.finalized) {
+        return { success: false, msg: '录音会话不存在或已经结束' };
+    }
+
+    session.finalized = true;
+    roomRadioRecordingSessions.delete(normalizedSessionId);
+    try {
+        await session.writeChain;
+    } catch (error) {
+        await fs.promises.unlink(session.tempInputPath).catch(() => { });
+        return { success: false, msg: `录音写入失败：${error.message || error}` };
+    }
+    return convertRoomRadioRecording(session);
+}
+
+async function abortRoomRadioRecording({ sessionId }) {
+    const normalizedSessionId = String(sessionId || '').trim();
+    const session = roomRadioRecordingSessions.get(normalizedSessionId);
+    if (!session) return { success: true };
+
+    session.finalized = true;
+    roomRadioRecordingSessions.delete(normalizedSessionId);
+    await session.writeChain.catch(() => { });
+    await fs.promises.unlink(session.tempInputPath).catch(() => { });
+    return { success: true };
+}
+
+function getAvailableDiskBytes(folderPath) {
+    if (typeof fs.statfsSync !== 'function') return Number.POSITIVE_INFINITY;
+    try {
+        const stats = fs.statfsSync(folderPath);
+        return Number(stats.bavail) * Number(stats.bsize);
+    } catch (error) {
+        reportIgnoredError(error, 'media-service:live-record-disk-space');
+        return Number.POSITIVE_INFINITY;
+    }
+}
+
+function clearLiveRecordTimers(task) {
+    if (!task) return;
+    if (task.diskCheckTimer) clearInterval(task.diskCheckTimer);
+    if (task.forceStopTimer) clearTimeout(task.forceStopTimer);
+    if (task.forceFinalizeTimer) clearTimeout(task.forceFinalizeTimer);
+    task.diskCheckTimer = null;
+    task.forceStopTimer = null;
+    task.forceFinalizeTimer = null;
+}
+
+function replyMediaEvent(event, channel, payload) {
+    try {
+        if (!event || typeof event.reply !== 'function' || event.sender?.isDestroyed?.()) return;
+        event.reply(channel, payload);
+    } catch (error) {
+        reportIgnoredError(error, `media-service:reply:${channel}`);
+    }
+}
+
+function finishLiveRecordTask(event, task, { status, msg, outputPath = '' }) {
+    if (!task || task.completed) return;
+    task.completed = true;
+    clearLiveRecordTimers(task);
+    if (recordCommands.get(task.taskId) === task) {
+        recordCommands.delete(task.taskId);
+    }
+    replyMediaEvent(event, 'download-status', {
+        taskId: task.taskId,
+        msg,
+        status,
+        path: outputPath,
+        resumeRecording: task.resumeAfterUnexpectedEnd === true
+    });
+    replyMediaEvent(event, 'record-status', {
+        taskId: task.taskId,
+        msg,
+        status,
+        resumeRecording: task.resumeAfterUnexpectedEnd === true
+    });
+    if (typeof task.resolveCompletion === 'function') {
+        task.resolveCompletion({ status, msg, outputPath });
+        task.resolveCompletion = null;
+    }
+}
+
+async function moveLiveRecordingFile(sourcePath, targetPath) {
+    await fs.promises.unlink(targetPath).catch(() => { });
+    try {
+        await fs.promises.rename(sourcePath, targetPath);
+    } catch (error) {
+        if (error?.code !== 'EXDEV') throw error;
+        await fs.promises.copyFile(sourcePath, targetPath);
+        await fs.promises.unlink(sourcePath).catch(() => { });
+    }
+}
+
+async function preserveLiveRecordingAsTs(event, task, message) {
+    if (task.canceled) {
+        await fs.promises.unlink(task.tempPath).catch(() => { });
+        await fs.promises.unlink(task.outputPath || '').catch(() => { });
+        return;
+    }
+    const fallbackPath = path.join(task.downloadFolder, `${sanitizeFileName(task.fileName)}.ts`);
+    await fs.promises.unlink(task.outputPath || '').catch(() => { });
+    try {
+        await moveLiveRecordingFile(task.tempPath, fallbackPath);
+        finishLiveRecordTask(event, task, {
+            status: 'success',
+            msg: message,
+            outputPath: fallbackPath
+        });
+    } catch (error) {
+        task.resumeAfterUnexpectedEnd = false;
+        finishLiveRecordTask(event, task, {
+            status: 'error',
+            msg: `录制文件保存失败：${error.message || error}`
+        });
+    }
+}
+
+async function finalizeLiveRecording(event, taskId, { interrupted = false, emptyFileMessage = '' } = {}) {
+    const task = recordCommands.get(taskId);
+    if (!task || task.finalizing || task.completed) return;
+    task.finalizing = true;
+    clearLiveRecordTimers(task);
+
+    let tempStats;
+    try {
+        tempStats = await fs.promises.stat(task.tempPath);
+    } catch (error) {
+        finishLiveRecordTask(event, task, {
+            status: 'error',
+            msg: emptyFileMessage || '录制未产生可保存的视频文件'
+        });
+        return;
+    }
+
+    if (!tempStats.isFile() || tempStats.size <= 0) {
+        await fs.promises.unlink(task.tempPath).catch(() => { });
+        finishLiveRecordTask(event, task, {
+            status: 'error',
+            msg: emptyFileMessage || '录制未产生有效的视频数据'
+        });
+        return;
+    }
+
+    if (task.recordType === 'room-radio') {
+        const finalOutputPath = getUniqueMediaPath(task.downloadFolder, task.fileName, '.mp3');
+        task.outputPath = finalOutputPath;
+        replyMediaEvent(event, 'download-status', {
+            taskId,
+            msg: task.stopReason === 'app-quit'
+                ? '软件正在退出，正在保存上麦录制...'
+                : (interrupted ? '上麦音频已断开，正在保存已录部分...' : '正在保存上麦录制...'),
+            status: 'processing'
+        });
+        try {
+            await moveLiveRecordingFile(task.tempPath, finalOutputPath);
+            finishLiveRecordTask(event, task, {
+                status: 'success',
+                msg: task.stopReason === 'app-quit'
+                    ? '软件退出前已保存上麦录制'
+                    : (interrupted && task.resumeAfterUnexpectedEnd
+                        ? '上麦音频中断，已保存当前片段，将自动续录'
+                        : '上麦录制已保存'),
+                outputPath: finalOutputPath
+            });
+        } catch (error) {
+            task.resumeAfterUnexpectedEnd = false;
+            finishLiveRecordTask(event, task, {
+                status: 'error',
+                msg: `上麦录制保存失败：${error.message || error}`
+            });
+        }
+        return;
+    }
+
+    const finalOutputPath = path.join(task.downloadFolder, `${sanitizeFileName(task.fileName)}.mp4`);
+    task.outputPath = finalOutputPath;
+    const processingMessage = task.stopReason === 'low-disk'
+        ? '磁盘剩余空间不足，正在保存已录部分...'
+        : (task.stopReason === 'app-quit'
+            ? '软件正在退出，正在封装录制文件...'
+            : (interrupted ? '直播已断流，正在保存已录部分...' : '录制完成，正在封装...'));
+    replyMediaEvent(event, 'download-status', {
+        taskId,
+        msg: processingMessage,
+        status: 'processing'
+    });
+
+    const freeBytes = getAvailableDiskBytes(task.downloadFolder);
+    if (freeBytes < tempStats.size + LIVE_RECORD_FINALIZE_RESERVE_BYTES) {
+        task.resumeAfterUnexpectedEnd = false;
+        await preserveLiveRecordingAsTs(event, task, '磁盘空间不足以封装 MP4，已保留 TS 文件');
+        return;
+    }
+
+    const finalizeCommand = ffmpeg(task.tempPath)
+        .outputOptions(['-c copy', '-movflags faststart']);
+    task.command = finalizeCommand;
+
+    finalizeCommand
+        .on('end', async () => {
+            if (task.canceled) {
+                await fs.promises.unlink(task.tempPath).catch(() => { });
+                await fs.promises.unlink(finalOutputPath).catch(() => { });
+                return;
+            }
+            await fs.promises.unlink(task.tempPath).catch(() => { });
+            finishLiveRecordTask(event, task, {
+                status: 'success',
+                msg: task.stopReason === 'low-disk'
+                    ? '磁盘空间不足，已自动停止并保存'
+                    : (task.stopReason === 'app-quit'
+                        ? '软件退出前已保存录制文件'
+                        : (interrupted
+                            ? (task.resumeAfterUnexpectedEnd
+                                ? '直播断流，已保存当前片段，将自动续录'
+                                : '直播断流，已保存已录部分')
+                            : '完成')),
+                outputPath: finalOutputPath
+            });
+        })
+        .on('error', async () => {
+            if (task.canceled) return;
+            await preserveLiveRecordingAsTs(event, task, 'MP4 封装失败，已保留 TS 文件');
+        })
+        .save(finalOutputPath);
+}
+
+function getLiveRecordConnectionErrorMessage(task, error, stderr = '') {
+    const details = `${error?.message || error || ''}\n${stderr || ''}`;
+    const isAutoRecord = /^auto_(?:live|room_radio)_record_/.test(String(task?.taskId || ''));
+    const retryHint = isAutoRecord ? '，自动录制将稍后获取新地址重试' : '，请重新打开直播后重试';
+
+    if (/\b(?:401|403)\b|unauthorized|forbidden/i.test(details)) {
+        return `直播流地址已失效${retryHint}`;
+    }
+    if (/\b404\b|not found/i.test(details)) {
+        return `直播流暂不可用${retryHint}`;
+    }
+    if (/timed?\s*out|timeout|rw_timeout/i.test(details)) {
+        return `连接直播流超时${retryHint}`;
+    }
+    if (/invalid data|could not find codec|error when loading first segment/i.test(details)) {
+        return `直播流暂时没有有效的视频数据${retryHint}`;
+    }
+    return `无法连接直播流${retryHint}`;
+}
+
+function sanitizeLiveRecordErrorDetails(value) {
+    return String(value || '')
+        .replace(/(https?:\/\/[^\s?'\"]+)[^\s'\"]*/gi, '$1')
+        .slice(-2000);
+}
+
+function requestLiveRecordStop(event, task, reason = 'manual') {
+    if (!task || task.stopRequested || task.finalizing) return;
+    task.stopRequested = true;
+    task.stopReason = reason;
+    stopCommand(task.command, 'SIGINT');
+    task.forceStopTimer = setTimeout(() => {
+        if (recordCommands.get(task.taskId) !== task || task.finalizing) return;
+        stopCommand(task.command, 'SIGKILL');
+        task.forceFinalizeTimer = setTimeout(() => {
+            finalizeLiveRecording(event, task.taskId, {
+                interrupted: task.stopReason !== 'manual'
+            }).catch(error => {
+                finishLiveRecordTask(event, task, {
+                    status: 'error',
+                    msg: `录制保存失败：${error.message || error}`
+                });
+            });
+        }, 1000);
+    }, 15_000);
+}
+
+function startRecord(event, { url, taskId, savePath, fileName, recordType = '' }) {
+    const sourceUrl = String(url || '').trim();
+    const normalizedTaskId = String(taskId || '').trim();
+    if (mediaShutdownInProgress || !ffmpegConfig.isAvailable || !sourceUrl || !normalizedTaskId || recordCommands.has(normalizedTaskId)) {
+        replyMediaEvent(event, 'download-status', {
+            taskId: normalizedTaskId,
+            msg: mediaShutdownInProgress
+                ? '软件正在退出，无法启动新的录制任务'
+                : (!ffmpegConfig.isAvailable ? 'FFmpeg 不可用，无法录制直播' : '直播录制参数无效'),
+            status: 'error'
+        });
+        return;
+    }
+
+    const downloadFolder = resolveDownloadFolder(savePath);
+    const tempFolder = app.getPath('temp');
+    const isRoomRadioRecord = recordType === 'room-radio' || normalizedTaskId.startsWith('auto_room_radio_record_');
+    const defaultPrefix = isRoomRadioRecord
+        ? '房间上麦'
+        : (normalizedTaskId.startsWith('auto_live_record_') ? '直播录制' : '直播切片');
+    const resolvedFileName = String(fileName || `${defaultPrefix}_${Date.now()}`);
+    const tempTsPath = path.join(
+        tempFolder,
+        `未完成_${sanitizeFileName(resolvedFileName)}_${sanitizeFileName(normalizedTaskId)}.${isRoomRadioRecord ? 'mp3' : 'ts'}`
+    );
+    const isRtmpSource = /^rtmps?:\/\//i.test(sourceUrl);
+    const recordInputOptions = [
+        '-protocol_whitelist', 'file,http,https,tcp,tls,crypto,rtmp,rtmps',
+        '-rw_timeout', String(CLIP_READ_TIMEOUT_US)
+    ];
+    if (!isRtmpSource) {
+        recordInputOptions.unshift(
             '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-            '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
-            '-rw_timeout', '10000000'
-        ])
-        .outputOptions([
+            '-reconnect', '1',
+            '-reconnect_at_eof', '1',
+            '-reconnect_on_network_error', '1',
+            '-reconnect_on_http_error', '4xx,5xx',
+            '-reconnect_streamed', '1',
+            '-reconnect_delay_max', '10'
+        );
+    }
+    const command = ffmpeg(sourceUrl).inputOptions(recordInputOptions);
+    if (isRoomRadioRecord) {
+        command
+            .noVideo()
+            .audioCodec('libmp3lame')
+            .audioBitrate('192k')
+            .format('mp3');
+    } else {
+        command.outputOptions([
             '-c', 'copy',
             '-f', 'mpegts',
             '-avoid_negative_ts', 'make_zero',
             '-fflags', '+genpts'
-        ])
-        .output(tempTsPath);
+        ]);
+    }
+    command.output(tempTsPath);
 
-    recordCommands.set(taskId, {
+    let resolveCompletion;
+    const completionPromise = new Promise((resolve) => {
+        resolveCompletion = resolve;
+    });
+
+    const task = {
+        taskId: normalizedTaskId,
         command,
         tempPath: tempTsPath,
-        savePath,
-        isManuallyStopped: false
-    });
+        tempFolder,
+        downloadFolder,
+        fileName: resolvedFileName,
+        stopRequested: false,
+        stopReason: '',
+        finalizing: false,
+        completed: false,
+        diskCheckTimer: null,
+        forceStopTimer: null,
+        forceFinalizeTimer: null,
+        canceled: false,
+        mediaStarted: false,
+        resumeAfterUnexpectedEnd: false,
+        event,
+        completionPromise,
+        resolveCompletion,
+        recordType: isRoomRadioRecord ? 'room-radio' : 'live'
+    };
+    recordCommands.set(normalizedTaskId, task);
+
+    const markRecordingStarted = () => {
+        if (task.mediaStarted || task.finalizing || task.completed) return;
+        task.mediaStarted = true;
+        replyMediaEvent(event, 'record-status', {
+            taskId: normalizedTaskId,
+            msg: isRoomRadioRecord ? '正在录制上麦音频...' : '正在录制直播...',
+            status: 'recording'
+        });
+        task.diskCheckTimer = setInterval(() => {
+            if (task.stopRequested || task.finalizing) return;
+            if (getAvailableDiskBytes(task.tempFolder) >= LIVE_RECORD_MIN_FREE_BYTES) return;
+            replyMediaEvent(event, 'download-status', {
+                taskId: normalizedTaskId,
+                msg: '磁盘剩余空间不足，正在自动停止并保存...',
+                status: 'processing'
+            });
+            requestLiveRecordStop(event, task, 'low-disk');
+        }, LIVE_RECORD_DISK_CHECK_INTERVAL_MS);
+    };
 
     command
         .on('start', () => {
-            event.reply('record-status', { taskId, msg: '正在录制直播...', status: 'recording' });
+            replyMediaEvent(event, 'record-status', {
+                taskId: normalizedTaskId,
+                msg: '正在连接直播流...',
+                status: 'connecting'
+            });
         })
-        .on('error', (error) => {
-            const currentTask = recordCommands.get(taskId);
-            if (currentTask && currentTask.isManuallyStopped) {
-                return;
-            }
-
-            if (!error.message.includes('SIGINT') && !error.message.includes('SIGKILL')) {
-                event.reply('download-status', { taskId, msg: '录制出错', status: 'error' });
-            }
-
-            recordCommands.delete(taskId);
+        .on('codecData', markRecordingStarted)
+        .on('progress', markRecordingStarted)
+        .on('error', (error, stdout, stderr) => {
+            const currentTask = recordCommands.get(normalizedTaskId);
+            if (currentTask !== task || task.finalizing || task.completed) return;
+            task.resumeAfterUnexpectedEnd = task.mediaStarted
+                && !task.stopReason
+                && /^auto_(?:live|room_radio)_record_/.test(normalizedTaskId);
+            const emptyFileMessage = getLiveRecordConnectionErrorMessage(task, error, stderr);
+            console.error(
+                `[直播录制] ${normalizedTaskId} 中断:`,
+                sanitizeLiveRecordErrorDetails(error?.message || error),
+                sanitizeLiveRecordErrorDetails(stderr)
+            );
+            finalizeLiveRecording(event, normalizedTaskId, {
+                interrupted: task.stopReason !== 'manual',
+                emptyFileMessage
+            }).catch(error => {
+                finishLiveRecordTask(event, task, {
+                    status: 'error',
+                    msg: `录制保存失败：${error.message || error}`
+                });
+            });
         })
-        .run();
+        .on('end', () => {
+            const currentTask = recordCommands.get(normalizedTaskId);
+            if (currentTask !== task || task.finalizing || task.completed) return;
+            task.resumeAfterUnexpectedEnd = task.mediaStarted
+                && !task.stopReason
+                && /^auto_(?:live|room_radio)_record_/.test(normalizedTaskId);
+            finalizeLiveRecording(event, normalizedTaskId, {
+                interrupted: task.stopReason !== 'manual'
+            }).catch(error => {
+                finishLiveRecordTask(event, task, {
+                    status: 'error',
+                    msg: `录制保存失败：${error.message || error}`
+                });
+            });
+        });
+
+    try {
+        command.run();
+    } catch (error) {
+        finishLiveRecordTask(event, task, {
+            status: 'error',
+            msg: `无法启动直播录制：${error.message || error}`
+        });
+    }
 }
 
 function stopRecord(event, { taskId, fileName }) {
-    const task = recordCommands.get(taskId);
-    if (!task) {
-        return;
-    }
-
-    task.isManuallyStopped = true;
-    stopCommand(task.command, 'SIGINT');
-
-    const downloadFolder = resolveDownloadFolder(task.savePath);
-    const finalOutputPath = path.join(downloadFolder, `${sanitizeFileName(fileName)}.mp4`);
-
-    setTimeout(() => {
-        if (!fs.existsSync(task.tempPath)) {
-            event.reply('download-status', { taskId, msg: '临时文件丢失', status: 'error' });
-            return;
-        }
-
-        ffmpeg(task.tempPath)
-            .outputOptions(['-c copy', '-movflags faststart'])
-            .on('start', () => {
-                event.reply('download-status', { taskId, msg: '录制完成，正在封装...', status: 'processing' });
-            })
-            .on('end', () => {
-                try {
-                    fs.unlinkSync(task.tempPath);
-                } catch (error) {
-                }
-
-                recordCommands.delete(taskId);
-                event.reply('download-status', { taskId, msg: '完成', status: 'success' });
-            })
-            .on('error', () => {
-                recordCommands.delete(taskId);
-                event.reply('download-status', { taskId, msg: '封装失败', status: 'error' });
-            })
-            .save(finalOutputPath);
-    }, 1500);
+    const task = recordCommands.get(String(taskId || '').trim());
+    if (!task) return;
+    if (fileName) task.fileName = String(fileName);
+    replyMediaEvent(event, 'download-status', {
+        taskId: task.taskId,
+        msg: '正在停止录制并等待文件写入完成...',
+        status: 'processing'
+    });
+    requestLiveRecordStop(event, task, 'manual');
 }
 
 function cancelDownload(event, { taskId }) {
-    const task = activeCommands.get(taskId) || recordCommands.get(taskId);
+    const liveRecordTask = recordCommands.get(taskId);
+    const task = activeCommands.get(taskId) || liveRecordTask;
     if (!task) {
         return;
     }
 
+    task.canceled = true;
+    clearLiveRecordTimers(task);
     stopCommand(task.command);
     activeCommands.delete(taskId);
     recordCommands.delete(taskId);
+    if (liveRecordTask && typeof task.resolveCompletion === 'function') {
+        task.resolveCompletion({ status: 'canceled', msg: '任务已取消', outputPath: '' });
+        task.resolveCompletion = null;
+    }
 
     setTimeout(() => {
         if (task.path && fs.existsSync(task.path)) {
             try {
                 fs.unlinkSync(task.path);
-            } catch (error) {
-            }
+            } catch (error) { reportIgnoredError(error, 'src/main/services/media-service.js'); }
         }
 
         if (task.tempPath && fs.existsSync(task.tempPath)) {
             try {
                 fs.unlinkSync(task.tempPath);
-            } catch (error) {
-            }
+            } catch (error) { reportIgnoredError(error, 'src/main/services/media-service.js'); }
         }
     }, 1000);
 
@@ -425,9 +1009,37 @@ function cancelDownload(event, { taskId }) {
 }
 
 function clipVod(event, { url, fileName, startTime, duration, taskId, savePath }) {
+    const sourceUrl = String(url || '').trim();
+    const clipStartTime = Number(startTime);
+    const clipDuration = Number(duration);
+
+    if (!ffmpegConfig.isAvailable) {
+        event.reply('download-status', {
+            taskId,
+            msg: 'FFmpeg 不可用，请检查安装文件',
+            status: 'error'
+        });
+        return;
+    }
+
+    if (!sourceUrl || !Number.isFinite(clipStartTime) || clipStartTime < 0
+        || !Number.isFinite(clipDuration) || clipDuration <= 0) {
+        event.reply('download-status', {
+            taskId,
+            msg: '切片参数无效，请重新选择起点和终点',
+            status: 'error'
+        });
+        return;
+    }
+
     const downloadFolder = resolveDownloadFolder(savePath);
     const finalOutputPath = path.join(downloadFolder, `${sanitizeFileName(fileName)}.mp4`);
     const tempTsPath = path.join(app.getPath('temp'), `temp_${taskId}_${Date.now()}.ts`);
+    const remoteHls = isRemoteHlsUrl(sourceUrl);
+    const seekLeadIn = remoteHls
+        ? Math.min(HLS_SEEK_LEAD_IN_SECONDS, clipStartTime)
+        : 0;
+    const inputSeekTime = Math.max(0, clipStartTime - seekLeadIn);
 
     console.log(`[切片任务] 目标路径: ${finalOutputPath}`);
 
@@ -436,9 +1048,10 @@ function clipVod(event, { url, fileName, startTime, duration, taskId, savePath }
             return;
         }
 
+        event.reply('download-status', { taskId, msg: '截取完成，正在封装视频...', status: 'processing' });
+
         const command2 = ffmpeg(tempTsPath)
-            .inputOptions(['-y'])
-            .outputOptions(['-c copy', '-bsf:a aac_adtstoasc', '-movflags faststart'])
+            .outputOptions(['-y', '-c copy', '-bsf:a aac_adtstoasc', '-movflags faststart'])
             .output(finalOutputPath);
 
         activeCommands.set(taskId, { command: command2, path: finalOutputPath, tempPath: tempTsPath });
@@ -446,22 +1059,15 @@ function clipVod(event, { url, fileName, startTime, duration, taskId, savePath }
         command2
             .on('end', () => {
                 activeCommands.delete(taskId);
-
-                try {
-                    fs.unlinkSync(tempTsPath);
-                } catch (error) {
-                }
+                removeMediaFile(tempTsPath);
 
                 event.reply('download-status', { taskId, msg: '切片完成', status: 'success' });
             })
             .on('error', (error) => {
                 console.error('切片转码失败:', error);
                 activeCommands.delete(taskId);
-
-                try {
-                    fs.unlinkSync(tempTsPath);
-                } catch (unlinkError) {
-                }
+                removeMediaFile(tempTsPath);
+                removeMediaFile(finalOutputPath);
 
                 if (!error.message.includes('SIGKILL')) {
                     event.reply('download-status', { taskId, msg: '封装失败', status: 'error' });
@@ -470,39 +1076,147 @@ function clipVod(event, { url, fileName, startTime, duration, taskId, savePath }
             .run();
     };
 
-    event.reply('download-status', { taskId, msg: '正在截取片段...', status: 'processing' });
+    event.reply('download-status', {
+        taskId,
+        msg: remoteHls ? '正在连接并定位 HLS 分片...' : '正在连接并定位视频...',
+        status: 'processing'
+    });
 
-    const command = ffmpeg(url)
-        .inputOptions([`-ss ${startTime}`, '-protocol_whitelist', 'file,http,https,tcp,tls,crypto'])
-        .outputOptions([`-t ${duration}`, '-c copy', '-f mpegts', '-avoid_negative_ts make_zero'])
+    const remoteRtmp = /^rtmps?:\/\//i.test(sourceUrl);
+    const inputOptions = [
+        `-ss ${inputSeekTime}`,
+        '-rw_timeout', String(CLIP_READ_TIMEOUT_US),
+        '-protocol_whitelist', 'file,http,https,tcp,tls,crypto,rtmp,rtmps'
+    ];
+
+    if (!remoteRtmp) {
+        inputOptions.push(
+            '-reconnect', '1',
+            '-reconnect_streamed', '1',
+            '-reconnect_on_network_error', '1',
+            '-reconnect_on_http_error', '429,5xx',
+            '-reconnect_delay_max', '5'
+        );
+    }
+
+    if (remoteHls) {
+        inputOptions.push(
+            '-http_persistent', '1',
+            '-http_multiple', '1',
+            '-http_seekable', '1'
+        );
+    }
+
+    const outputOptions = [];
+    if (seekLeadIn > 0) {
+        outputOptions.push(`-ss ${seekLeadIn}`);
+    }
+    outputOptions.push(
+        `-t ${clipDuration}`,
+        '-c copy',
+        '-f mpegts',
+        '-avoid_negative_ts make_zero'
+    );
+
+    const command = ffmpeg(sourceUrl)
+        .inputOptions(inputOptions)
+        .outputOptions(outputOptions)
         .output(tempTsPath);
 
     activeCommands.set(taskId, { command, path: finalOutputPath, tempPath: tempTsPath });
 
+    let phase1Finished = false;
+    let timedOut = false;
+    let noProgressTimer = null;
+
+    const clearNoProgressTimer = () => {
+        if (noProgressTimer) {
+            clearTimeout(noProgressTimer);
+            noProgressTimer = null;
+        }
+    };
+
+    const armNoProgressTimer = () => {
+        clearNoProgressTimer();
+        noProgressTimer = setTimeout(() => {
+            if (phase1Finished || !activeCommands.has(taskId)) return;
+
+            timedOut = true;
+            phase1Finished = true;
+            activeCommands.delete(taskId);
+            event.reply('download-status', {
+                taskId,
+                msg: getClipErrorMessage(null, true),
+                status: 'error'
+            });
+            stopCommand(command);
+            removeMediaFile(tempTsPath);
+        }, CLIP_NO_PROGRESS_TIMEOUT_MS);
+    };
+
+    armNoProgressTimer();
+
     command
+        .on('start', () => {
+            event.reply('download-status', {
+                taskId,
+                msg: remoteHls
+                    ? '正在读取目标分片并精确定位起点...'
+                    : '正在读取视频源并定位切片起点...',
+                status: 'processing'
+            });
+        })
         .on('progress', (progress) => {
+            if (phase1Finished) return;
+            armNoProgressTimer();
+
             let percent = 0;
             if (progress.timemark) {
                 const timeParts = progress.timemark.split(':');
                 const seconds = (+timeParts[0]) * 3600 + (+timeParts[1]) * 60 + (+timeParts[2]);
-                percent = (seconds / duration) * 100;
+                percent = (seconds / clipDuration) * 100;
             }
 
-            event.reply('download-progress', { taskId, percent: Math.min(99, percent.toFixed(1)) });
+            event.reply('download-progress', {
+                taskId,
+                percent: Math.min(99, Number(percent.toFixed(1))),
+                msg: '正在截取片段...'
+            });
         })
-        .on('end', runPhase2Transcode)
+        .on('end', () => {
+            if (phase1Finished) return;
+            phase1Finished = true;
+            clearNoProgressTimer();
+            runPhase2Transcode();
+        })
         .on('error', (error) => {
             console.error('切片下载失败:', error);
-            activeCommands.delete(taskId);
+            clearNoProgressTimer();
+            if (phase1Finished) return;
 
-            if (!error.message.includes('SIGKILL')) {
-                event.reply('download-status', { taskId, msg: '下载失败', status: 'error' });
+            phase1Finished = true;
+            activeCommands.delete(taskId);
+            removeMediaFile(tempTsPath);
+            removeMediaFile(finalOutputPath);
+
+            if (!timedOut && !error.message.includes('SIGKILL')) {
+                event.reply('download-status', {
+                    taskId,
+                    msg: getClipErrorMessage(error),
+                    status: 'error'
+                });
             }
         })
         .run();
 }
 
-async function startProxy(remotePayload, { streamPrefix, inputOptions, outputOptions, errorPrefix }) {
+async function startProxy(remotePayload, {
+    streamPrefix,
+    inputOptions,
+    outputOptions,
+    errorPrefix,
+    waitForInputReady = false
+}) {
     if (!ffmpegConfig.isAvailable) {
         throw new Error('FFmpeg 不可用，请检查系统环境或打包资源');
     }
@@ -522,6 +1236,7 @@ async function startProxy(remotePayload, { streamPrefix, inputOptions, outputOpt
     return new Promise((resolve, reject) => {
         let settled = false;
         let command = null;
+        let readinessFallbackTimer = null;
         const timer = setTimeout(() => {
             if (settled) return;
             settled = true;
@@ -536,6 +1251,7 @@ async function startProxy(remotePayload, { streamPrefix, inputOptions, outputOpt
             if (settled) return;
             settled = true;
             clearTimeout(timer);
+            clearTimeout(readinessFallbackTimer);
             resolve(localHttpFlv);
         };
 
@@ -553,6 +1269,7 @@ async function startProxy(remotePayload, { streamPrefix, inputOptions, outputOpt
             }
             settled = true;
             clearTimeout(timer);
+            clearTimeout(readinessFallbackTimer);
             if (currentProxyCommand === command) {
                 currentProxyCommand = null;
             }
@@ -568,7 +1285,16 @@ async function startProxy(remotePayload, { streamPrefix, inputOptions, outputOpt
             .output(localRtmp);
 
         currentProxyCommand = command
-            .on('start', settleSuccess)
+            .on('start', () => {
+                if (!waitForInputReady) {
+                    settleSuccess();
+                    return;
+                }
+                readinessFallbackTimer = setTimeout(settleSuccess, 1200);
+            })
+            .on('codecData', () => {
+                if (waitForInputReady) settleSuccess();
+            })
             .on('error', settleFailure);
 
         currentProxyCommand.run();
@@ -589,7 +1315,8 @@ function startRadioProxy(remoteUrl) {
         streamPrefix: 'radio',
         inputOptions: ['-rw_timeout 5000000', '-fflags nobuffer', '-analyzeduration 500000', '-probesize 500000'],
         outputOptions: ['-vn', '-c:a copy', '-f flv'],
-        errorPrefix: '电台代理中断'
+        errorPrefix: '电台代理中断',
+        waitForInputReady: true
     });
 }
 
@@ -599,15 +1326,157 @@ function stopLiveProxy() {
     stopMediaServer();
 }
 
+function remuxRecoveredLiveRecording(inputPath, outputPath) {
+    return new Promise((resolve, reject) => {
+        ffmpeg(inputPath)
+            .outputOptions(['-y', '-c copy', '-movflags faststart'])
+            .on('end', resolve)
+            .on('error', reject)
+            .save(outputPath);
+    });
+}
+
+async function performInterruptedLiveRecordingRecovery({
+    minAgeMs = LIVE_RECORD_RECOVERY_MIN_AGE_MS
+} = {}) {
+    const tempFolder = app.getPath('temp');
+    const settings = settingsService.readSettings();
+    const clipDownloadFolder = resolveDownloadFolder(String(settings.yaya_path_clip || '').trim());
+    const liveDownloadFolder = resolveDownloadFolder(String(settings.yaya_path_live || '').trim());
+    await Promise.all([
+        fs.promises.mkdir(clipDownloadFolder, { recursive: true }),
+        fs.promises.mkdir(liveDownloadFolder, { recursive: true })
+    ]);
+
+    let entries = [];
+    try {
+        entries = await fs.promises.readdir(tempFolder, { withFileTypes: true });
+    } catch (error) {
+        return { recovered: 0, preserved: 0, failed: 0 };
+    }
+
+    const staleFiles = entries
+        .filter(entry => entry.isFile() && /^未完成_.*\.ts$/i.test(entry.name))
+        .map(entry => ({ name: entry.name, path: path.join(tempFolder, entry.name) }));
+    const result = { recovered: 0, preserved: 0, failed: 0 };
+
+    for (const staleFile of staleFiles) {
+        const normalizedStalePath = path.resolve(staleFile.path).toLowerCase();
+        const belongsToActiveTask = Array.from(recordCommands.values()).some(task => (
+            task?.tempPath && path.resolve(task.tempPath).toLowerCase() === normalizedStalePath
+        ));
+        if (belongsToActiveTask) continue;
+
+        let stats;
+        try {
+            stats = await fs.promises.stat(staleFile.path);
+        } catch (error) {
+            result.failed += 1;
+            continue;
+        }
+        if (Date.now() - stats.mtimeMs < Math.max(0, Number(minAgeMs) || 0)) continue;
+        if (!stats.isFile() || stats.size <= 0) {
+            await fs.promises.unlink(staleFile.path).catch(() => { });
+            continue;
+        }
+
+        const baseName = getRecoveredLiveRecordBaseName(staleFile.name);
+        const downloadFolder = baseName.startsWith('直播录制_')
+            ? liveDownloadFolder
+            : clipDownloadFolder;
+        const outputPath = getUniqueMediaPath(downloadFolder, baseName, '.mp4');
+        try {
+            if (!ffmpegConfig.isAvailable) throw new Error('FFmpeg unavailable');
+            await remuxRecoveredLiveRecording(staleFile.path, outputPath);
+            await fs.promises.unlink(staleFile.path).catch(() => { });
+            result.recovered += 1;
+        } catch (error) {
+            await fs.promises.unlink(outputPath).catch(() => { });
+            const fallbackPath = getUniqueMediaPath(downloadFolder, baseName, '.ts');
+            try {
+                await moveLiveRecordingFile(staleFile.path, fallbackPath);
+                result.preserved += 1;
+            } catch (moveError) {
+                result.failed += 1;
+                reportIgnoredError(moveError, 'media-service:recover-live-recording');
+            }
+        }
+    }
+
+    return result;
+}
+
+function recoverInterruptedLiveRecordings(options = {}) {
+    if (liveRecordRecoveryPromise) return liveRecordRecoveryPromise;
+    liveRecordRecoveryPromise = performInterruptedLiveRecordingRecovery(options)
+        .finally(() => {
+            liveRecordRecoveryPromise = null;
+        });
+    return liveRecordRecoveryPromise;
+}
+
+async function finalizeLiveRecordingsBeforeQuit(timeoutMs = LIVE_RECORD_SHUTDOWN_TIMEOUT_MS) {
+    mediaShutdownInProgress = true;
+    const tasks = Array.from(recordCommands.values());
+    if (tasks.length === 0) return { total: 0, completed: 0, timedOut: false };
+
+    tasks.forEach(task => {
+        if (task.completed || task.finalizing) return;
+        task.stopReason = 'app-quit';
+        replyMediaEvent(task.event, 'download-status', {
+            taskId: task.taskId,
+            msg: '软件正在退出，正在保存录制文件...',
+            status: 'processing'
+        });
+        requestLiveRecordStop(task.event, task, 'app-quit');
+    });
+
+    let timeoutHandle = null;
+    const timeoutPromise = new Promise(resolve => {
+        timeoutHandle = setTimeout(() => resolve('timeout'), Math.max(1000, Number(timeoutMs) || LIVE_RECORD_SHUTDOWN_TIMEOUT_MS));
+    });
+    const completionPromise = Promise.allSettled(tasks.map(task => task.completionPromise)).then(() => 'completed');
+    const outcome = await Promise.race([completionPromise, timeoutPromise]);
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+
+    if (outcome === 'timeout') {
+        tasks.forEach(task => {
+            if (task.completed) return;
+            clearLiveRecordTimers(task);
+            stopCommand(task.command, 'SIGKILL');
+        });
+    }
+
+    return {
+        total: tasks.length,
+        completed: tasks.filter(task => task.completed).length,
+        timedOut: outcome === 'timeout'
+    };
+}
+
 function cleanupMediaTasks() {
     stopCommand(currentProxyCommand);
     currentProxyCommand = null;
 
     activeCommands.forEach((task) => stopCommand(task.command));
-    recordCommands.forEach((task) => stopCommand(task.command, 'SIGINT'));
+    recordCommands.forEach((task) => {
+        task.canceled = true;
+        clearLiveRecordTimers(task);
+        stopCommand(task.command, 'SIGINT');
+    });
+    compatVodCommands.forEach((command) => stopCommand(command));
 
     activeCommands.clear();
     recordCommands.clear();
+    compatVodCommands.clear();
+    compatVodJobs.clear();
+    compatVodFiles.forEach(removeMediaFile);
+    compatVodFiles.clear();
+    roomRadioRecordingSessions.forEach((session) => {
+        session.finalized = true;
+        removeMediaFile(session.tempInputPath);
+    });
+    roomRadioRecordingSessions.clear();
     stopMediaServer();
 }
 
@@ -625,7 +1494,7 @@ function downloadVod(event, { url, fileName, taskId, savePath }) {
     }
 
     const command = ffmpeg(url)
-        .inputOptions(['-protocol_whitelist', 'file,http,https,tcp,tls,crypto'])
+        .inputOptions(['-protocol_whitelist', 'file,http,https,tcp,tls,crypto,rtmp,rtmps'])
         .outputOptions('-c copy');
 
     activeCommands.set(taskId, { command, path: outputPath });
@@ -677,5 +1546,12 @@ module.exports = {
     downloadDanmu,
     startRadioProxy,
     saveRoomRadioRecording,
+    startRoomRadioRecording,
+    appendRoomRadioRecordingChunk,
+    finishRoomRadioRecording,
+    abortRoomRadioRecording,
+    prepareCompatVod,
+    recoverInterruptedLiveRecordings,
+    finalizeLiveRecordingsBeforeQuit,
     cleanupMediaTasks
 };

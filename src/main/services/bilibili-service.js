@@ -1,6 +1,7 @@
 const axios = require('axios');
 const QRCode = require('qrcode');
 const settingsService = require('./settings-service');
+const { reportIgnoredError } = require('../../common/error-utils');
 
 const BILIBILI_COOKIE_SETTING_KEY = 'bilibiliCookie';
 const BILIBILI_USER_SETTING_KEY = 'bilibiliUserInfo';
@@ -114,8 +115,7 @@ function buildCookieMapFromLoginUrl(rawUrl = '') {
                 cookieMap[key] = encodeURIComponent(value);
             }
         });
-    } catch (error) {
-    }
+    } catch (error) { reportIgnoredError(error, 'src/main/services/bilibili-service.js'); }
     return cookieMap;
 }
 

@@ -96,8 +96,7 @@
                 const normalizedRoomId = String(roomId || '').trim();
                 if (!normalizedRoomId) return;
                 writeStringSetting(BILIBILI_LAST_ROOM_KEY, normalizedRoomId);
-            } catch (error) {
-            }
+            } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/bilibili-live-feature.js'); }
         }
 
         function normalizeBilibiliOpenLiveGroupKey(value) {
@@ -402,7 +401,7 @@
             const roomCount = Math.max(1, bilibiliLiveRooms.length);
             stripEl.style.setProperty('--bilibili-room-count', String(roomCount));
             stripEl.style.setProperty('--bilibili-visible-room-count', String(Math.min(roomCount, 10)));
-            stripEl.innerHTML = '';
+            stripEl.replaceChildren();
             bilibiliLiveRooms.forEach(room => {
                 const roomId = String(room?.roomId || '').trim();
                 const roomName = String(room?.title || '').trim() || roomId;
@@ -613,14 +612,18 @@
                     bilibiliFlvPlayer.detachMediaElement();
                     bilibiliFlvPlayer.destroy();
                 }
-            } catch (error) { }
+            } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/bilibili-live-feature.js'); }
             bilibiliFlvPlayer = null;
 
             try {
                 if (bilibiliDp) {
+                    if (typeof bilibiliDp.yayaTransformResizeCleanup === 'function') {
+                        bilibiliDp.yayaTransformResizeCleanup();
+                        bilibiliDp.yayaTransformResizeCleanup = null;
+                    }
                     bilibiliDp.destroy();
                 }
-            } catch (error) { }
+            } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/bilibili-live-feature.js'); }
             bilibiliDp = null;
             if (typeof setDp === 'function') setDp(null);
             if (typeof setArt === 'function') setArt(null);
@@ -628,7 +631,7 @@
 
             try {
                 await ipcRenderer.invoke('stop-live-proxy');
-            } catch (error) { }
+            } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/bilibili-live-feature.js'); }
 
             bilibiliCurrentRoomId = '';
             renderBilibiliLiveRoomButtons();
@@ -636,7 +639,7 @@
             const playerEl = document.getElementById('bilibili-live-player');
             const placeholderEl = document.getElementById('bilibili-live-player-placeholder');
             if (playerEl) {
-                playerEl.innerHTML = '';
+                playerEl.replaceChildren();
                 playerEl.style.display = 'none';
             }
             if (placeholderEl) syncBilibiliLivePlaceholderForSelection();
@@ -661,7 +664,7 @@
                         bilibiliFlvPlayer.unload();
                         bilibiliFlvPlayer.detachMediaElement();
                         bilibiliFlvPlayer.destroy();
-                    } catch (error) { }
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/bilibili-live-feature.js'); }
                     bilibiliFlvPlayer = null;
                 }
 

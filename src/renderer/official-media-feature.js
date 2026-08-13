@@ -453,7 +453,7 @@
         function renderAudioProgramsFromItems(items) {
             const container = document.getElementById('audio-programs-list');
             if (!container) return false;
-            container.innerHTML = '';
+            container.replaceChildren();
             audioProgramPlaylist = [];
             if (!Array.isArray(items) || !items.length) {
                 container.innerHTML = '<div class="empty-state" style="grid-column: 1 / -1;">暂无节目</div>';
@@ -565,7 +565,7 @@
             if (!item) {
                 try {
                     navigator.mediaSession.metadata = null;
-                } catch (_) { }
+                } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/official-media-feature.js'); }
                 updateAudioProgramMediaSessionPlaybackState();
                 return;
             }
@@ -583,7 +583,7 @@
             } catch (_) {
                 try {
                     navigator.mediaSession.metadata = metadata;
-                } catch (_) { }
+                } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/official-media-feature.js'); }
             }
             updateAudioProgramMediaSessionPlaybackState();
             updateAudioProgramMediaSessionPosition();
@@ -594,7 +594,7 @@
             const audioEl = document.getElementById('native-audio-player');
             try {
                 navigator.mediaSession.playbackState = audioEl && !audioEl.paused && !audioEl.ended ? 'playing' : 'paused';
-            } catch (_) { }
+            } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/official-media-feature.js'); }
         }
 
         function updateAudioProgramMediaSessionPosition() {
@@ -607,7 +607,7 @@
             const playbackRate = Number.isFinite(audioEl.playbackRate) && audioEl.playbackRate > 0 ? audioEl.playbackRate : 1;
             try {
                 navigator.mediaSession.setPositionState({ duration, playbackRate, position });
-            } catch (_) { }
+            } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/official-media-feature.js'); }
         }
 
         function setupAudioProgramMediaSession() {
@@ -638,7 +638,7 @@
             Object.entries(handlers).forEach(([action, handler]) => {
                 try {
                     navigator.mediaSession.setActionHandler(action, handler);
-                } catch (_) { }
+                } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/official-media-feature.js'); }
             });
         }
 
@@ -767,7 +767,7 @@
 
             try {
                 if (startCtime === 0) {
-                    container.innerHTML = '';
+                    container.replaceChildren();
                     audioProgramPlaylist = [];
                     renderAudioProgramQueue();
                 }
@@ -960,7 +960,7 @@
                                 } else {
                                     audioEl.currentTime = resumeTime;
                                 }
-                            } catch (_) { }
+                            } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/official-media-feature.js'); }
                         }
                         saveAudioProgramPlayerState({ currentTime: resumeTime });
                         if (!shouldAutoplay) {
@@ -1307,7 +1307,7 @@
                     } else {
                         audioEl.currentTime = resumeTime;
                     }
-                } catch (_) { }
+                } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/official-media-feature.js'); }
                 audioEl.pause();
                 saveAudioProgramPlayerState({ currentTime: resumeTime });
                 return;
@@ -1342,7 +1342,7 @@
 
                 audioEl.pause();
                 audioEl.src = "";
-                try { audioEl.load(); } catch (e) { }
+                try { audioEl.load(); } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/official-media-feature.js'); }
             }
 
             if (titleEl) {
@@ -1407,7 +1407,7 @@
                 musicHasMore = true;
                 musicPlaylist = [];
                 renderMusicQueue();
-                if (grid) grid.innerHTML = '';
+                if (grid) grid.replaceChildren();
             }
 
             try {
@@ -1829,7 +1829,7 @@
                         audioEl.pause();
                         audioEl.currentTime = 0;
                         audioEl.removeAttribute('src');
-                        try { audioEl.load(); } catch (e) { }
+                        try { audioEl.load(); } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/official-media-feature.js'); }
 
                         if (playBtn) {
                             playBtn.classList.remove('is-pause');
@@ -1953,7 +1953,7 @@
         function renderVideoCategories(categories) {
             const categoryBar = document.getElementById('video-category-bar');
             if (!categoryBar || !Array.isArray(categories) || !categories.length) return;
-            categoryBar.innerHTML = '';
+            categoryBar.replaceChildren();
             categories.forEach(cat => {
                 const tag = document.createElement('div');
                 tag.className = `video-tag ${cat.typeId === videoCurrentTypeId ? 'active' : ''}`;
@@ -2047,7 +2047,7 @@
 
             const grid = document.getElementById('video-list-grid');
             if (!grid) return false;
-            grid.innerHTML = '';
+            grid.replaceChildren();
             renderVideoCategories(cache.categories);
             const loadingTip = ensureVideoLoadingTip(grid);
             loadingTip.style.display = 'none';
@@ -2093,7 +2093,7 @@
 
             setTimeout(() => {
                 const grid = document.getElementById('video-list-grid');
-                if (grid) grid.innerHTML = '';
+                if (grid) grid.replaceChildren();
                 fetchAllVideoLibrary();
             }, 150);
         }
@@ -2111,7 +2111,7 @@
             if (isNew) {
                 videoNextCtime = 0;
                 videoHasMore = true;
-                grid.innerHTML = '';
+                grid.replaceChildren();
                 const container = document.getElementById('view-video-library');
                 if (container) container.scrollTop = 0;
             }

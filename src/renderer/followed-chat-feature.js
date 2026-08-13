@@ -23,11 +23,14 @@
         let activeFollowedChannel = '';
         let activeFollowedServer = '';
         let activeFollowedName = '';
+        let activeFollowedMemberId = '';
         let activeFollowedNextTime = 0;
         let isFollowedChatLoading = false;
+        let followedChatRequestRevision = 0;
 
         let followedAutoRefreshTimer = null;
         let followedAutoRefreshRunning = false;
+        let followedAutoRefreshCycle = 0;
         let activeFollowedMainChannel = '';
         let isFollowedSmallRoomMode = false;
         let followedStickToBottom = true;
@@ -45,6 +48,23 @@
         let followedProfileVideoCoverObserver = null;
         const followedUserProfileHistory = [];
         const followedServerDetailCache = new Map();
+        const FOLLOWED_CHAT_REQUEST_TIMEOUT_MS = 20000;
+
+        function fetchFollowedRoomMessagesWithTimeout(payload) {
+            let timeoutId = null;
+            const timeoutPromise = new Promise((_, reject) => {
+                timeoutId = setTimeout(() => {
+                    reject(new Error('口袋房间消息加载超时'));
+                }, FOLLOWED_CHAT_REQUEST_TIMEOUT_MS);
+            });
+
+            return Promise.race([
+                ipcRenderer.invoke('fetch-room-messages', payload),
+                timeoutPromise
+            ]).finally(() => {
+                if (timeoutId) clearTimeout(timeoutId);
+            });
+        }
 
         function escapeFollowedHtml(value) {
             return String(value == null ? '' : value)
@@ -371,7 +391,7 @@
             const modal = document.getElementById('followedProfileVideoModal');
             if (!modal) return;
             const slot = modal.querySelector('.followed-profile-video-slot');
-            if (slot) slot.innerHTML = '';
+            if (slot) slot.replaceChildren();
             modal.style.display = 'none';
         }
 
@@ -595,7 +615,7 @@
                 if ((raw.startsWith('{') && raw.endsWith('}')) || (raw.startsWith('[') && raw.endsWith(']'))) {
                     try {
                         return extractFollowedDynamicTextCandidate(JSON.parse(raw), visited, depth + 1);
-                    } catch (error) { }
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/followed-chat-feature.js'); }
                 }
                 return raw;
             }
@@ -986,7 +1006,7 @@
                 if ((raw.startsWith('{') && raw.endsWith('}')) || (raw.startsWith('[') && raw.endsWith(']'))) {
                     try {
                         return flattenFollowedDynamicItems(JSON.parse(raw), items, seen, visited, depth + 1);
-                    } catch (error) { }
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/followed-chat-feature.js'); }
                 }
                 return items;
             }
@@ -1002,7 +1022,7 @@
             if (body && typeof body === 'string') {
                 try {
                     flattenFollowedDynamicItems(JSON.parse(body), items, seen, visited, depth + 1);
-                } catch (error) { }
+                } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/followed-chat-feature.js'); }
             } else if (body && typeof body === 'object') {
                 flattenFollowedDynamicItems(body, items, seen, visited, depth + 1);
             }
@@ -2409,12 +2429,18 @@
         }
 
         function openFollowedChat(ownerName, channelId, serverId, options = {}) {
+            const requestRevision = ++followedChatRequestRevision;
+            const refreshCycle = ++followedAutoRefreshCycle;
+            // A room switch must not be blocked by an in-flight refresh for the
+            // previous room. That request will be discarded by its revision.
+            isFollowedChatLoading = false;
             const initialRoomType = options?.roomType === 'small' ? 'small' : 'big';
             const mainChannelId = String(options?.mainChannelId || channelId || '');
             activeFollowedChannel = channelId;
             activeFollowedMainChannel = mainChannelId;
             activeFollowedServer = serverId;
             activeFollowedName = ownerName;
+            activeFollowedMemberId = String(options?.memberId || '').trim();
             activeFollowedNextTime = 0;
             isFollowedSmallRoomMode = initialRoomType === 'small';
             followedStickToBottom = true;
@@ -2422,6 +2448,20 @@
             followedLastScrollTop = 0;
             invalidateFollowedAutoScrollJobs();
             resetFollowedPendingMessages();
+            if (typeof window.autoConnectFollowedRoomRadio === 'function') {
+                window.autoConnectFollowedRoomRadio(
+                    channelId,
+                    serverId,
+                    activeFollowedMemberId,
+                    ownerName
+                );
+            }
+            if (typeof window.ensureRoomRadioScanFresh === 'function') {
+                window.ensureRoomRadioScanFresh({
+                    preferredChannelId: channelId,
+                    prioritizeCurrent: true
+                });
+            }
             const followedView = document.getElementById('view-followed-rooms');
             if (followedView) followedView.classList.add('is-chat-open');
 
@@ -2464,16 +2504,17 @@
             msgBox.style.opacity = '0.4';
             msgBox.style.pointerEvents = 'none';
 
-            loadFollowedChatPage(false).finally(() => {
+            loadFollowedChatPage(false, false, requestRevision).finally(() => {
+                if (refreshCycle !== followedAutoRefreshCycle) return;
                 followedAutoRefreshEnabled = true;
 
                 const scheduleNext = () => {
-                    if (!followedAutoRefreshEnabled) return;
+                    if (!followedAutoRefreshEnabled || refreshCycle !== followedAutoRefreshCycle) return;
                     followedAutoRefreshTimer = setTimeout(runPoll, getAdaptivePollDelay());
                 };
 
                 const runPoll = async () => {
-                    if (!followedAutoRefreshEnabled) return;
+                    if (!followedAutoRefreshEnabled || refreshCycle !== followedAutoRefreshCycle) return;
                     const view = document.getElementById('view-followed-rooms');
                     if ((view && view.style.display === 'none') || followedAutoRefreshRunning) {
                         scheduleNext();
@@ -2483,6 +2524,7 @@
                     try {
                         await loadFollowedChatPage(false, true);
                     } finally {
+                        if (refreshCycle !== followedAutoRefreshCycle) return;
                         followedAutoRefreshRunning = false;
                         scheduleNext();
                     }
@@ -2500,6 +2542,9 @@
 
         function toggleFollowedRoomType() {
             if (isFollowedChatLoading || !activeFollowedName) return;
+
+            followedChatRequestRevision += 1;
+            isFollowedChatLoading = false;
 
             const memberInfo = getMemberData().find(m => m.ownerName === activeFollowedName);
 
@@ -2524,6 +2569,20 @@
             }
 
             document.getElementById('followed-chat-subtitle').innerText = `Channel ID: ${activeFollowedChannel} ${isFollowedSmallRoomMode ? '' : ''}`;
+            if (typeof window.autoConnectFollowedRoomRadio === 'function') {
+                window.autoConnectFollowedRoomRadio(
+                    activeFollowedChannel,
+                    activeFollowedServer,
+                    activeFollowedMemberId,
+                    activeFollowedName
+                );
+            }
+            if (typeof window.ensureRoomRadioScanFresh === 'function') {
+                window.ensureRoomRadioScanFresh({
+                    preferredChannelId: activeFollowedChannel,
+                    prioritizeCurrent: true
+                });
+            }
             showFollowedChatTitle(getFollowedFallbackTitle());
             refreshFollowedChatTitle();
 
@@ -2537,7 +2596,7 @@
             msgBox.style.transition = 'opacity 0.2s';
             msgBox.style.opacity = '0.4';
             msgBox.style.pointerEvents = 'none';
-            msgBox.innerHTML = '';
+            msgBox.replaceChildren();
 
             loadFollowedChatPage(false);
         }
@@ -2557,6 +2616,7 @@
             if (isFollowedChatLoading) return;
 
             isFollowedChatAllMode = !isFollowedChatAllMode;
+            followedChatRequestRevision += 1;
             const btn = document.getElementById('btn-toggle-followed-mode');
             const msgBox = document.getElementById('followed-chat-messages');
 
@@ -2583,13 +2643,16 @@
             });
         };
 
-        async function loadFollowedChatPage(isLoadMore, isAutoRefresh = false) {
-            if (isFollowedChatLoading) return;
+        async function loadFollowedChatPage(isLoadMore, isAutoRefresh = false, requestRevision = followedChatRequestRevision) {
+            if (requestRevision !== followedChatRequestRevision || isFollowedChatLoading) return;
             isFollowedChatLoading = true;
 
             const msgBox = document.getElementById('followed-chat-messages');
             const token = getAppToken();
             const pa = window.getPA ? window.getPA() : null;
+            const requestServerId = activeFollowedServer;
+            const requestChannelId = activeFollowedChannel;
+            const requestFetchAll = isFollowedChatAllMode;
 
             const oldScrollHeight = msgBox.scrollHeight;
             const shouldAutoScroll = canFollowedAutoScroll(msgBox);
@@ -2597,14 +2660,18 @@
             try {
                 const fetchNextTime = isAutoRefresh ? 0 : activeFollowedNextTime;
 
-                const res = await ipcRenderer.invoke('fetch-room-messages', {
+                const res = await fetchFollowedRoomMessagesWithTimeout({
                     token: token,
-                    serverId: activeFollowedServer,
-                    channelId: activeFollowedChannel,
+                    serverId: requestServerId,
+                    channelId: requestChannelId,
                     pa: pa,
                     nextTime: fetchNextTime,
-                    fetchAll: isFollowedChatAllMode
+                    fetchAll: requestFetchAll
                 });
+
+                // The user may have switched rooms while IPC was pending. Never
+                // let the old response mutate the newly selected room.
+                if (requestRevision !== followedChatRequestRevision) return;
 
                 if (res.success && res.data.content) {
                     if (res.usedServerId) {
@@ -2621,7 +2688,7 @@
                         activeFollowedNextTime = content.nextTime;
                     }
 
-                    if (!isLoadMore && !isAutoRefresh) msgBox.innerHTML = '';
+                    if (!isLoadMore && !isAutoRefresh) msgBox.replaceChildren();
                     const oldBtn = document.getElementById('btn-load-more-followed');
                     if (oldBtn) oldBtn.remove();
 
@@ -2680,7 +2747,7 @@
                                 try {
                                     json = JSON.parse(body);
                                     if (typeof json === 'string') json = JSON.parse(json);
-                                } catch (parseErr) { }
+                                } catch (parseErr) { window.YayaRendererUtils.reportIgnoredError(parseErr, 'src/renderer/followed-chat-feature.js'); }
                             } else if (typeof body === 'object' && body !== null) {
                                 json = body;
                             }
@@ -2735,7 +2802,7 @@
                                                 const mType = (msgType.includes('AUDIO') || jsonType.includes('AUDIO')) ? 'audio' : 'video';
                                                 ansHtml = `<div class="preview-media-placeholder" data-type="${mType}" data-src="${mediaUrl}" style="margin-top:8px;"></div>`;
                                             }
-                                        } catch (e) { }
+                                        } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/followed-chat-feature.js'); }
                                     }
                                     txt = `<div style="margin-bottom: 8px;">
                                                 <span class="flip-label question-tag" style="margin-right:8px; transform:none; display:inline-flex;">翻牌提问</span>
@@ -2909,14 +2976,21 @@
                     hydrateFollowedPreviewMedia(msgBox);
                 }
             } catch (e) {
-                console.error(e);
+                if (requestRevision === followedChatRequestRevision) {
+                    console.error(e);
+                    if (!isAutoRefresh && !isLoadMore) {
+                        msgBox.innerHTML = '<div class="empty-state" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--text-sub); font-size: 14px;">消息加载失败，请重新选择房间重试</div>';
+                    }
+                }
             } finally {
-                isFollowedChatLoading = false;
+                if (requestRevision === followedChatRequestRevision) {
+                    isFollowedChatLoading = false;
 
-                const msgBox = document.getElementById('followed-chat-messages');
-                if (!isAutoRefresh) {
-                    msgBox.style.opacity = '1';
-                    msgBox.style.pointerEvents = 'auto';
+                    const msgBox = document.getElementById('followed-chat-messages');
+                    if (!isAutoRefresh) {
+                        msgBox.style.opacity = '1';
+                        msgBox.style.pointerEvents = 'auto';
+                    }
                 }
             }
         }

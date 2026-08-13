@@ -89,6 +89,8 @@
         let startFollowedRoomNotificationPolling;
         let stopFollowedRoomNotificationPolling;
         let toggleActiveFollowedRoomNotification;
+        let toggleAllFollowedRoomNotifications;
+        let updateAllFollowedRoomNotificationsButton;
         let updateFollowedRoomNotificationButton;
         let resetFollowedRoomsState;
         let closeFollowedProfileVideo;
@@ -128,6 +130,16 @@
         let handleRoomRadioSearch;
         let selectRoomRadioMember;
         let connectRoomRadio;
+        let openAutoRoomRadioRecordModal;
+        let closeAutoRoomRadioRecordModal;
+        let searchAutoRoomRadioRecordMembers;
+        let toggleAutoRoomRadioRecording;
+        let autoConnectFollowedRoomRadio;
+        let ensureRoomRadioScanFresh;
+        let startAllMemberRoomRadioAutoScan;
+        let stopAllMemberRoomRadioAutoScan;
+        let toggleAllMemberRoomRadioScan;
+        let toggleScannedRoomRadioMute;
         let toggleRadioMute;
         let stopRoomRadio;
         let toggleRoomRadioRecord;
@@ -395,6 +407,12 @@
 
         function toggleRoomRadioRoomType() {
             isRoomRadioSmallRoomMode = !isRoomRadioSmallRoomMode;
+            updateRoomRadioRoomTypeUi();
+            applyRoomRadioChannelValue();
+        }
+
+        function setRoomRadioRoomType(useSmallRoom) {
+            isRoomRadioSmallRoomMode = useSmallRoom === true;
             updateRoomRadioRoomTypeUi();
             applyRoomRadioChannelValue();
         }
@@ -718,11 +736,11 @@
 
                 try {
                     mediaEl.pause();
-                } catch (error) { }
+                } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/app-legacy.js'); }
 
                 try {
                     mediaEl.currentTime = 0;
-                } catch (error) { }
+                } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/app-legacy.js'); }
             });
 
             if (currentPlayingAudio && currentPlayingAudio !== officialSiteMusicAudio && currentPlayingAudio !== audioProgramAudio) {
@@ -735,7 +753,7 @@
                 currentPlayingVideo.pause();
                 try {
                     currentPlayingVideo.currentTime = 0;
-                } catch (error) { }
+                } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/app-legacy.js'); }
                 currentPlayingVideo = null;
             }
 
@@ -1020,6 +1038,7 @@
                     'msg_sort_order',
                     'yaya_path_danmu',
                     'yaya_path_video',
+                    'yaya_path_live',
                     'yaya_path_clip',
                     'yaya_path_media',
                     'yaya_path_flip',
@@ -1188,12 +1207,25 @@
                     return;
                 }
 
+                if (viewName !== 'room-radio' && typeof stopAllMemberRoomRadioAutoScan === 'function') {
+                    stopAllMemberRoomRadioAutoScan();
+                }
+                if (
+                    currentViewName === 'room-radio'
+                    && viewName !== 'room-radio'
+                    && typeof stopRoomRadio === 'function'
+                ) {
+                    stopRoomRadio(true);
+                }
+
                 closeAllModalOverlays();
                 mediaPlaybackViewToken += 1;
                 currentViewName = viewName;
                 currentViewMode = mode;
                 updateTopbarPageTitle(viewName, mode);
-                document.getElementById('backToTopBtn').classList.remove('show');
+                if (window.YayaPlatformAdapter?.onViewChanged) {
+                    window.YayaPlatformAdapter.onViewChanged(viewName, mode);
+                }
                 const backBtn = document.getElementById('backToTopBtn');
                 if (backBtn) backBtn.classList.remove('show');
 
@@ -1374,6 +1406,9 @@
                         if (typeof loadYayaApiProxySetting === 'function') {
                             loadYayaApiProxySetting();
                         }
+                        if (typeof loadWindowCloseBehaviorSetting === 'function') {
+                            loadWindowCloseBehaviorSetting();
+                        }
                     }
 
                 } else if (viewName === 'login') {
@@ -1491,6 +1526,9 @@
                     setSidebarHomeMode(false);
                     toggleSidebarMode('login');
                     if (roomRadioView) roomRadioView.style.display = 'block';
+                    if (typeof startAllMemberRoomRadioAutoScan === 'function') {
+                        startAllMemberRoomRadioAutoScan();
+                    }
 
                 } else if (viewName === 'audio-programs') {
                     setGlobalSidebarVisible(false);
@@ -1544,6 +1582,25 @@
                     if (followedRoomsView) {
                         followedRoomsView.style.display = 'block';
                         loadFollowedRooms();
+                        const activeRoomRadioChannelId = typeof getActiveFollowedChannel === 'function'
+                            ? getActiveFollowedChannel()
+                            : '';
+                        if (activeRoomRadioChannelId && typeof window.autoConnectFollowedRoomRadio === 'function') {
+                            const activeRoomCard = document.querySelector(
+                                `.session-card[data-channelid="${activeRoomRadioChannelId}"], .session-card[data-small-channel-id="${activeRoomRadioChannelId}"]`
+                            );
+                            window.autoConnectFollowedRoomRadio(
+                                activeRoomRadioChannelId,
+                                activeRoomCard?.dataset?.serverId || '',
+                                activeRoomCard?.dataset?.memberId || '',
+                                activeRoomCard?.dataset?.ownerName || ''
+                            );
+                        }
+                        if (typeof window.ensureRoomRadioScanFresh === 'function') {
+                            window.ensureRoomRadioScanFresh({
+                                preferredChannelId: activeRoomRadioChannelId
+                            });
+                        }
                         if (typeof startFollowedRoomsPolling === 'function') startFollowedRoomsPolling();
                     }
 
@@ -1641,7 +1698,17 @@
             });
         }
 
+        const pendingPlatformSwitchView = Array.isArray(window.__yayaPendingSwitchView)
+            ? window.__yayaPendingSwitchView
+            : null;
+        window.__yayaPendingSwitchView = null;
+        window.switchView = switchView;
+        window.toggleSidebar = toggleSidebar;
+        window.getAppTopbarTitle = getAppTopbarTitle;
         updateTopbarPageTitle(currentViewName, currentViewMode);
+        if (pendingPlatformSwitchView) {
+            setTimeout(() => switchView(...pendingPlatformSwitchView), 0);
+        }
 
         function cancelDownloadTask(taskId) {
             ipcRenderer.send('cancel-download', {
@@ -1696,6 +1763,20 @@
             openExternal
         } = window.desktop;
         const isWebRuntime = window.desktop && window.desktop.platform === 'web';
+        ipcRenderer.on('live-recording-recovery', (event, result) => {
+            const recovered = Number(result?.recovered || 0);
+            const preserved = Number(result?.preserved || 0);
+            const failed = Number(result?.failed || 0);
+            if (!recovered && !preserved && !failed) return;
+            setTimeout(() => {
+                if (typeof showToast !== 'function') return;
+                if (failed) {
+                    showToast(`录制缓存恢复：成功 ${recovered + preserved} 个，失败 ${failed} 个`);
+                } else {
+                    showToast(`已恢复 ${recovered + preserved} 个未完成的录制文件`);
+                }
+            }, 1200);
+        });
         const memberNameMap = new Map();
         const memberIdSet = new Set();
         const memberTeamMap = new Map();
@@ -2323,12 +2404,20 @@
 
         function fetchPocketAPI(path, postData) {
             if (isWebRuntime) {
-                return fetch('/api/pocket', {
+                const apiUrl = window.yayaWebApiUrl ? window.yayaWebApiUrl('/api/pocket') : '/api/pocket';
+                return fetch(apiUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ path, postData })
                 }).then(async (response) => {
-                    const data = await response.json().catch(() => ({ status: 500, content: {} }));
+                    const text = await response.text();
+                    const data = window.YayaRendererUtils.parseJson(text, {
+                        status: 500,
+                        message: /^\s*</.test(text || '')
+                            ? '口袋 API 返回了 HTML 页面，Cloudflare Worker 请求可能被拦截'
+                            : '口袋 API 返回内容不是 JSON',
+                        content: {}
+                    }, 'fetchPocketAPI');
                     if (!response.ok) {
                         return {
                             status: response.status,
@@ -2337,9 +2426,10 @@
                         };
                     }
                     return data;
-                }).catch(() => ({
+                }).catch((error) => ({
                     status: 500,
-                    content: {}
+                    content: {},
+                    message: window.YayaRendererUtils.reportError('fetchPocketAPI', error)
                 }));
             }
 
@@ -2510,7 +2600,9 @@
             stopFollowedRoomsPolling,
             sortFollowedRooms,
             toggleActiveFollowedRoomNotification,
+            toggleAllFollowedRoomNotifications,
             toggleFollowedSortDropdown,
+            updateAllFollowedRoomNotificationsButton,
             updateFollowedRoomNotificationButton
         } = window.YayaRendererFeatures.createFollowedRoomsFeature({
             getActiveFollowedChannel: () => getActiveFollowedChannel(),
@@ -2537,6 +2629,8 @@
         window.selectFollowedSort = selectFollowedSort;
         window.selectQuickFollowMember = selectQuickFollowMember;
         window.toggleActiveFollowedRoomNotification = toggleActiveFollowedRoomNotification;
+        window.toggleAllFollowedRoomNotifications = toggleAllFollowedRoomNotifications;
+        window.updateAllFollowedRoomNotificationsButton = updateAllFollowedRoomNotificationsButton;
         window.updateFollowedRoomNotificationButton = updateFollowedRoomNotificationButton;
         window.sortFollowedRooms = sortFollowedRooms;
         window.toggleFollowedSortDropdown = toggleFollowedSortDropdown;
@@ -2754,17 +2848,21 @@
         window.startPlayer = startPlayer;
 
         ({
+            closeAutoLiveRecordModal,
             closeLiveAnnouncement,
             closeLiveRankModal,
             executeClip,
             fetchLiveRank,
+            openAutoLiveRecordModal,
             openLiveRankPanel,
             refreshLiveAnnouncement,
             resetClipTool,
+            searchAutoLiveRecordMembers,
             setClipEnd,
             setClipEndFromTimeline,
             setClipStart,
             setClipStartFromTimeline,
+            toggleAutoLiveRecording,
             toggleRankPanel,
             updateClipUI
         } = window.YayaRendererFeatures.createLiveToolsFeature({
@@ -2777,19 +2875,32 @@
             getLiveAnnouncementDismissed: () => liveAnnouncementDismissed,
             setLiveAnnouncementDismissed: value => { liveAnnouncementDismissed = !!value; },
             getDp: () => dp,
+            getMemberData: () => window.memberData || [],
+            loadMemberData,
+            getPinyinInitials,
+            getTeamStyle: (...args) => {
+                if (typeof getTeamStyle === 'function') return getTeamStyle(...args);
+                if (typeof window.getTeamStyle === 'function') return window.getTeamStyle(...args);
+                return '';
+            },
+            showToast: (...args) => showToast(...args),
             ipcRenderer
         }));
+        window.closeAutoLiveRecordModal = closeAutoLiveRecordModal;
         window.closeLiveAnnouncement = closeLiveAnnouncement;
         window.closeLiveRankModal = closeLiveRankModal;
         window.executeClip = executeClip;
         window.fetchLiveRank = fetchLiveRank;
+        window.openAutoLiveRecordModal = openAutoLiveRecordModal;
         window.openLiveRankPanel = openLiveRankPanel;
         window.refreshLiveAnnouncement = refreshLiveAnnouncement;
         window.resetClipTool = resetClipTool;
+        window.searchAutoLiveRecordMembers = searchAutoLiveRecordMembers;
         window.setClipEnd = setClipEnd;
         window.setClipEndFromTimeline = setClipEndFromTimeline;
         window.setClipStart = setClipStart;
         window.setClipStartFromTimeline = setClipStartFromTimeline;
+        window.toggleAutoLiveRecording = toggleAutoLiveRecording;
         window.toggleRankPanel = toggleRankPanel;
 
         ({
@@ -3003,6 +3114,16 @@
             handleRoomRadioSearch,
             selectRoomRadioMember,
             connectRoomRadio,
+            openAutoRoomRadioRecordModal,
+            closeAutoRoomRadioRecordModal,
+            searchAutoRoomRadioRecordMembers,
+            toggleAutoRoomRadioRecording,
+            autoConnectFollowedRoomRadio,
+            ensureRoomRadioScanFresh,
+            startAllMemberRoomRadioAutoScan,
+            stopAllMemberRoomRadioAutoScan,
+            toggleAllMemberRoomRadioScan,
+            toggleScannedRoomRadioMute,
             toggleRadioMute,
             stopRoomRadio,
             toggleRoomRadioRecord
@@ -3019,12 +3140,23 @@
                 return '';
             },
             applyRoomRadioChannelValue,
+            setRoomRadioRoomType,
             ipcRenderer,
             showToast: (...args) => showToast(...args)
         }));
         window.handleRoomRadioSearch = handleRoomRadioSearch;
         window.selectRoomRadioMember = selectRoomRadioMember;
         window.connectRoomRadio = connectRoomRadio;
+        window.openAutoRoomRadioRecordModal = openAutoRoomRadioRecordModal;
+        window.closeAutoRoomRadioRecordModal = closeAutoRoomRadioRecordModal;
+        window.searchAutoRoomRadioRecordMembers = searchAutoRoomRadioRecordMembers;
+        window.toggleAutoRoomRadioRecording = toggleAutoRoomRadioRecording;
+        window.autoConnectFollowedRoomRadio = autoConnectFollowedRoomRadio;
+        window.ensureRoomRadioScanFresh = ensureRoomRadioScanFresh;
+        window.startAllMemberRoomRadioAutoScan = startAllMemberRoomRadioAutoScan;
+        window.stopAllMemberRoomRadioAutoScan = stopAllMemberRoomRadioAutoScan;
+        window.toggleAllMemberRoomRadioScan = toggleAllMemberRoomRadioScan;
+        window.toggleScannedRoomRadioMute = toggleScannedRoomRadioMute;
         window.toggleRadioMute = toggleRadioMute;
         window.stopRoomRadio = stopRoomRadio;
         window.toggleRoomRadioRecord = toggleRoomRadioRecord;
@@ -3336,7 +3468,7 @@
                 const rejectOnce = (error) => {
                     if (settled) return;
                     settled = true;
-                    try { if (fs.existsSync(tempCacheFile)) fs.unlinkSync(tempCacheFile); } catch (cleanupError) { }
+                    try { if (fs.existsSync(tempCacheFile)) fs.unlinkSync(tempCacheFile); } catch (cleanupError) { window.YayaRendererUtils.reportIgnoredError(cleanupError, 'src/renderer/app-legacy.js'); }
                     reject(error);
                 };
 
@@ -3538,7 +3670,7 @@
                     pagedMessageCursors.set(requestedPage + 1, result.nextCursor);
                 }
                 if (!append) {
-                    outputList.innerHTML = '';
+                    outputList.replaceChildren();
                     resetMessageRenderState();
                     if (scrollContainer) scrollContainer.scrollTop = 0;
                 }
@@ -3903,7 +4035,7 @@
         function saveManifest() {
             try {
                 fs.writeFileSync(MANIFEST_FILE, JSON.stringify(fileManifest), 'utf-8');
-            } catch (e) { }
+            } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/app-legacy.js'); }
         }
 
         async function scanFiles(isIncremental = false) {
@@ -4073,7 +4205,7 @@
                     currentFilteredPosts = [];
                     resetMessageRenderState();
                     outputList.innerHTML = '<div class="placeholder-tip"><h3>📂 没有找到数据</h3><p>请点击 抓取消息 按钮抓取成员房间消息。</p></div>';
-                    if (fs.existsSync(CACHE_FILE)) try { fs.unlinkSync(CACHE_FILE); } catch (e) { }
+                    if (fs.existsSync(CACHE_FILE)) try { fs.unlinkSync(CACHE_FILE); } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/app-legacy.js'); }
                     saveManifest();
                     return;
                 }
@@ -4663,9 +4795,15 @@
                     vodState.hasMore = res.content.next !== 0 && res.content.next !== null;
                     return newList.length;
                 }
-                if (!isStaleVodRequest()) vodState.hasMore = false;
+                if (!isStaleVodRequest()) {
+                    vodState.hasMore = false;
+                    if (res?.message) document.getElementById('vod-loading').textContent = res.message;
+                }
             } catch (e) {
-                if (!isStaleVodRequest()) vodState.hasMore = false;
+                if (!isStaleVodRequest()) {
+                    vodState.hasMore = false;
+                    document.getElementById('vod-loading').textContent = e?.message || '录播接口请求失败';
+                }
             }
             return 0;
         }
@@ -4690,7 +4828,7 @@
                     }
                     loopSafety++;
                 }
-            } catch (e) { } finally {
+            } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/app-legacy.js'); } finally {
                 if (requestVersion === vodState.requestVersion) {
                     vodState.isLoading = false;
                     document.getElementById('vod-loading').style.display = 'none';
@@ -4794,7 +4932,7 @@
 
                 console.log("当前筛选结果不足，自动拉取下一页...");
 
-                if (container.innerHTML.trim() === '') container.innerHTML = '';
+                if (container.innerHTML.trim() === '') container.replaceChildren();
 
                 fetchVODPageInternal().then(() => {
                     renderVODListUI();
@@ -4807,7 +4945,7 @@
             }
 
             container.className = 'vod-list-mode';
-            container.innerHTML = '';
+            container.replaceChildren();
             if (filteredList.length === 0) {
                 if (vodState.hasMore) {
                     if (!vodState.isLoading) container.innerHTML = '<div style="width:100%; text-align:center; color:#888;"><div>暂无匹配数据</div></div>';
@@ -4908,7 +5046,7 @@
             if (!controlsContainer) return;
             if (totalItems === 0) {
                 if (lastVodPaginationMarkup !== '') {
-                    controlsContainer.innerHTML = '';
+                    controlsContainer.replaceChildren();
                     lastVodPaginationMarkup = '';
                 }
                 return;
@@ -4951,7 +5089,7 @@
             const vodListContainer = document.getElementById('vod-list-container');
 
             vodLoading.style.display = 'block';
-            vodListContainer.innerHTML = '';
+            vodListContainer.replaceChildren();
 
             try {
                 const res = currentMode === 'meet-live'
@@ -5088,7 +5226,7 @@
 
         function renderLiveList(list) {
             vodListContainer.className = 'live-card-grid';
-            vodListContainer.innerHTML = '';
+            vodListContainer.replaceChildren();
             list.forEach(item => {
                 const card = document.createElement('div');
                 card.className = 'live-card';
@@ -5158,7 +5296,7 @@
                     if (!(settingsApi && typeof settingsApi.saveBackgroundFromDataUrlSync === 'function')) {
                         try {
                             localStorage.setItem('custom_bg_data', ev.target.result);
-                        } catch (e) { }
+                        } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/app-legacy.js'); }
                     }
                     bgInput.value = '';
                 };
@@ -5651,8 +5789,7 @@
                     if (typeof answerObject === 'string') {
                         try {
                             answerObject = JSON.parse(answerObject);
-                        } catch (error) {
-                        }
+                        } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/app-legacy.js'); }
                     }
                     if (answerObject && typeof answerObject === 'object' && answerObject.url) {
                         const rawUrl = String(answerObject.url);
@@ -5741,8 +5878,7 @@
                     if (!trimmed) continue;
                     try {
                         records.push(JSON.parse(trimmed));
-                    } catch (error) {
-                    }
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/app-legacy.js'); }
                 }
             }
 
@@ -5849,7 +5985,7 @@
                 if (!liveId && textLiveMatch) {
                     isLiveText = true;
                     liveTitle = textLiveMatch[1].trim() || '直播回放';
-                    cleanRow.innerHTML = '';
+                    cleanRow.replaceChildren();
                 }
 
                 const giftContainer = cleanRow.querySelector('div[style*="background:#fff0f6"]');
@@ -6132,7 +6268,7 @@
                         }
                     }
                 });
-            } catch (e) { }
+            } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/app-legacy.js'); }
             content.classList.add('message-content-clickable');
             content.onclick = (e) => {
                 if (e.target.tagName === 'IMG' && !e.target.classList.contains('avatar')) {
@@ -6413,7 +6549,7 @@
             const now = new Date();
             const todayValue = toMessageDateValue(now.getFullYear(), now.getMonth(), now.getDate());
 
-            grid.innerHTML = '';
+            grid.replaceChildren();
             for (let index = 0; index < 42; index += 1) {
                 let day;
                 let cellMonth = month;
@@ -6811,7 +6947,7 @@
                 return sortType === 'desc' ? tB - tA : tA - tB;
             });
 
-            outputList.innerHTML = '';
+            outputList.replaceChildren();
             resetMessageRenderState();
             if (isMessageViewVisible()) {
                 scheduleNextBatch();
@@ -6842,7 +6978,7 @@
         });
 
         function openContextModal(targetGlobalIndex) {
-            contextListContainer.innerHTML = '';
+            contextListContainer.replaceChildren();
             const targetPost = allPosts[targetGlobalIndex];
             if (!targetPost) return;
             const groupPosts = allPosts.filter(p => p.groupName === targetPost.groupName),
@@ -6878,7 +7014,7 @@
                             }
                         }
                     });
-                } catch (e) { }
+                } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/app-legacy.js'); }
                 let hasVTag = false;
                 content.querySelectorAll('video').forEach(rawV => {
                     const src = rawV.src || rawV.querySelector('source')?.src;
@@ -6983,15 +7119,8 @@
             if (e.target === contextModal) closeContextModal();
         }
 
-        function escapeHtml(text) {
-            const map = {
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#039;'
-            };
-            return text.replace(/[&<>"']/g, (m) => map[m]);
+        function escapeHtml(value) {
+            return window.YayaRendererUtils.escapeHtml(value);
         }
 
         document.addEventListener('click', function (e) {
@@ -7514,13 +7643,28 @@
             }
         }
 
-        function loadCustomPaths() {
+        async function loadCustomPaths() {
             document.getElementById('path-danmu').value = readStoredStringSetting('yaya_path_danmu', '');
             document.getElementById('path-video').value = readStoredStringSetting('yaya_path_video', '');
+            document.getElementById('path-live').value = readStoredStringSetting('yaya_path_live', '');
             document.getElementById('path-clip').value = readStoredStringSetting('yaya_path_clip', '');
             document.getElementById('path-media').value = readStoredStringSetting('yaya_path_media', '');
             document.getElementById('path-flip').value = readStoredStringSetting('yaya_path_flip', '');
             document.getElementById('path-room-radio').value = readStoredStringSetting('yaya_path_room_radio', '');
+
+            try {
+                const defaultDownloadPath = String(
+                    await ipcRenderer.invoke('get-default-download-path') || ''
+                ).trim();
+                if (!defaultDownloadPath) return;
+                ['path-video', 'path-live', 'path-clip', 'path-room-radio', 'path-danmu', 'path-media', 'path-flip']
+                    .forEach((id) => {
+                        const input = document.getElementById(id);
+                        if (input) input.placeholder = `${defaultDownloadPath}（默认路径）`;
+                    });
+            } catch (error) {
+                console.warn('读取默认下载路径失败:', error);
+            }
         }
 
         function readStoredBooleanSetting(key, fallbackValue = false) {
@@ -7562,9 +7706,32 @@
             }
         }
 
+        function normalizeWindowCloseBehavior(value) {
+            return value === 'quit' ? 'quit' : 'minimize-to-tray';
+        }
+
+        function loadWindowCloseBehaviorSetting() {
+            const behavior = normalizeWindowCloseBehavior(
+                readStoredStringSetting('windowCloseBehavior', 'minimize-to-tray')
+            );
+            const radio = document.querySelector(`input[name="window-close-behavior"][value="${behavior}"]`);
+            if (radio) radio.checked = true;
+        }
+
+        function saveWindowCloseBehaviorSetting() {
+            const checked = document.querySelector('input[name="window-close-behavior"]:checked');
+            if (!checked) return;
+            const behavior = normalizeWindowCloseBehavior(checked.value);
+            writeStoredStringSetting('windowCloseBehavior', behavior);
+            if (typeof showToast === 'function') {
+                showToast(behavior === 'quit' ? '关闭软件时将直接退出' : '关闭软件时将最小化到托盘');
+            }
+        }
+
         function saveCustomPaths() {
             writeStoredStringSetting('yaya_path_danmu', document.getElementById('path-danmu').value.trim());
             writeStoredStringSetting('yaya_path_video', document.getElementById('path-video').value.trim());
+            writeStoredStringSetting('yaya_path_live', document.getElementById('path-live').value.trim());
             writeStoredStringSetting('yaya_path_clip', document.getElementById('path-clip').value.trim());
             writeStoredStringSetting('yaya_path_media', document.getElementById('path-media').value.trim());
             writeStoredStringSetting('yaya_path_flip', document.getElementById('path-flip').value.trim());
@@ -7671,6 +7838,8 @@
                 if (modalId === 'speechAnalysisModal' && typeof closeSpeechAnalysis === 'function') closeSpeechAnalysis();
                 if (modalId === 'giftAnalysisModal' && typeof closeGiftAnalysis === 'function') closeGiftAnalysis();
                 if (modalId === 'liveRankModal' && typeof closeLiveRankModal === 'function') closeLiveRankModal();
+                if (modalId === 'autoLiveRecordModal' && typeof closeAutoLiveRecordModal === 'function') closeAutoLiveRecordModal();
+                if (modalId === 'autoRoomRadioRecordModal' && typeof closeAutoRoomRadioRecordModal === 'function') closeAutoRoomRadioRecordModal();
                 if (modalId === 'flipAnalysisModal' && typeof closeFlipAnalysis === 'function') closeFlipAnalysis();
                 if (modalId === 'contextModal' && typeof closeContextModal === 'function') closeContextModal();
             }
@@ -7686,6 +7855,8 @@
                 { id: 'speechAnalysisModal', close: () => typeof closeSpeechAnalysis === 'function' && closeSpeechAnalysis() },
                 { id: 'giftAnalysisModal', close: () => typeof closeGiftAnalysis === 'function' && closeGiftAnalysis() },
                 { id: 'liveRankModal', close: () => typeof closeLiveRankModal === 'function' && closeLiveRankModal() },
+                { id: 'autoLiveRecordModal', close: () => typeof closeAutoLiveRecordModal === 'function' && closeAutoLiveRecordModal() },
+                { id: 'autoRoomRadioRecordModal', close: () => typeof closeAutoRoomRadioRecordModal === 'function' && closeAutoRoomRadioRecordModal() },
                 { id: 'flipAnalysisModal', close: () => typeof closeFlipAnalysis === 'function' && closeFlipAnalysis() },
                 { id: 'global-announcement-modal', close: () => typeof closeAnnouncement === 'function' && closeAnnouncement() }
             ];

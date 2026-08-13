@@ -2,11 +2,12 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { execFileSync } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 const { pathToFileURL } = require('url');
 const axios = require('axios');
 const { BrowserWindow, dialog, nativeImage, screen, session, shell } = require('electron');
 const { ensureStoragePaths } = require('../../common/storage-paths');
+const { reportIgnoredError } = require('../../common/error-utils');
 
 const IMAGE_THUMB_CACHE_LIMIT_BYTES = 500 * 1024 * 1024;
 const imageThumbInflight = new Map();
@@ -17,7 +18,111 @@ const DESKTOP_TOAST_HEIGHT = 126;
 const DESKTOP_TOAST_GAP = 10;
 const DESKTOP_TOAST_MARGIN = 16;
 const DESKTOP_TOAST_DURATION_MS = 8000;
-const DESKTOP_TOAST_MAX_VISIBLE = 4;
+const DESKTOP_TOAST_MAX_VISIBLE = 2;
+let cachedForegroundFullscreenState = { checkedAt: 0, isOtherAppFullscreen: false };
+
+const WINDOWS_FULLSCREEN_CHECK_SCRIPT = String.raw`
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class YayaFullscreenCheck {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO {
+        public uint cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern IntPtr GetShellWindow();
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
+    [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+'@
+$window = [YayaFullscreenCheck]::GetForegroundWindow()
+if ($window -eq [IntPtr]::Zero -or $window -eq [YayaFullscreenCheck]::GetShellWindow()) { Write-Output '0|0'; exit }
+$rect = New-Object YayaFullscreenCheck+RECT
+if (-not [YayaFullscreenCheck]::GetWindowRect($window, [ref]$rect)) { Write-Output '0|0'; exit }
+$monitor = [YayaFullscreenCheck]::MonitorFromWindow($window, 2)
+$info = New-Object YayaFullscreenCheck+MONITORINFO
+$info.cbSize = [Runtime.InteropServices.Marshal]::SizeOf($info)
+if (-not [YayaFullscreenCheck]::GetMonitorInfo($monitor, [ref]$info)) { Write-Output '0|0'; exit }
+[uint32]$ownerProcessId = 0
+[void][YayaFullscreenCheck]::GetWindowThreadProcessId($window, [ref]$ownerProcessId)
+$tolerance = 2
+$isFullscreen = $rect.Left -le ($info.rcMonitor.Left + $tolerance) -and
+    $rect.Top -le ($info.rcMonitor.Top + $tolerance) -and
+    $rect.Right -ge ($info.rcMonitor.Right - $tolerance) -and
+    $rect.Bottom -ge ($info.rcMonitor.Bottom - $tolerance)
+Write-Output (([int]$isFullscreen).ToString() + '|' + $ownerProcessId.ToString())
+`;
+
+function runHiddenPowerShell(script, timeout = 1800) {
+    return new Promise((resolve) => {
+        execFile('powershell.exe', [
+            '-NoLogo',
+            '-NoProfile',
+            '-NonInteractive',
+            '-ExecutionPolicy', 'Bypass',
+            '-Command', script
+        ], {
+            windowsHide: true,
+            timeout,
+            encoding: 'utf8'
+        }, (error, stdout) => resolve(error ? '' : String(stdout || '').trim()));
+    });
+}
+
+async function getForegroundFullscreenState() {
+    if (process.platform !== 'win32') return { isOtherAppFullscreen: false };
+    const now = Date.now();
+    if (now - cachedForegroundFullscreenState.checkedAt < 750) {
+        return cachedForegroundFullscreenState;
+    }
+
+    const output = await runHiddenPowerShell(WINDOWS_FULLSCREEN_CHECK_SCRIPT);
+    const [fullscreenFlag, ownerProcessId] = output.split('|');
+    cachedForegroundFullscreenState = {
+        checkedAt: Date.now(),
+        isOtherAppFullscreen: fullscreenFlag === '1'
+            && Number(ownerProcessId) !== process.pid
+    };
+    return cachedForegroundFullscreenState;
+}
+
+function getNativeWindowHandleNumber(window) {
+    const handle = window.getNativeWindowHandle();
+    if (!Buffer.isBuffer(handle) || handle.length < 4) return '';
+    return handle.length >= 8
+        ? handle.readBigUInt64LE(0).toString()
+        : handle.readUInt32LE(0).toString();
+}
+
+async function placeToastBehindForegroundWindow(toastWindow) {
+    if (process.platform !== 'win32' || !toastWindow || toastWindow.isDestroyed()) return;
+    const toastHandle = getNativeWindowHandleNumber(toastWindow);
+    if (!/^\d+$/.test(toastHandle)) return;
+    const script = String.raw`
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class YayaToastLayer {
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+}
+'@
+$toast = [IntPtr]::new([Int64]::Parse('${toastHandle}'))
+$foreground = [YayaToastLayer]::GetForegroundWindow()
+if ($foreground -ne [IntPtr]::Zero) {
+    [void][YayaToastLayer]::SetWindowPos($toast, $foreground, 0, 0, 0, 0, 0x0053)
+}
+`;
+    await runHiddenPowerShell(script);
+}
 
 function truncateNotificationText(value, maxLength) {
     const normalized = String(value || '').replace(/\s+/g, ' ').trim();
@@ -25,13 +130,28 @@ function truncateNotificationText(value, maxLength) {
     return `${normalized.slice(0, Math.max(1, maxLength - 1))}…`;
 }
 
+function getDesktopToastMemberKey(payload = {}, title = '') {
+    return String(
+        payload.mainChannelId
+        || payload.memberId
+        || payload.memberName
+        || payload.channelId
+        || title
+    ).trim();
+}
+
+function getDesktopToastRenderPayload(title, body, avatarUrl, appIconDataUrl, theme) {
+    return JSON.stringify({ title, body, avatarUrl, appIconDataUrl, theme })
+        .replace(/</g, '\\u003c')
+        .replace(/>/g, '\\u003e');
+}
+
 function getDesktopToastDisplay(mainWindow) {
     try {
         if (mainWindow && !mainWindow.isDestroyed()) {
             return screen.getDisplayMatching(mainWindow.getBounds());
         }
-    } catch (error) {
-    }
+    } catch (error) { reportIgnoredError(error, 'src/main/services/system-service.js'); }
     return screen.getPrimaryDisplay();
 }
 
@@ -41,6 +161,7 @@ function repositionDesktopToasts(mainWindow) {
     const aliveEntries = activeDesktopToasts.filter(entry => !entry.window.isDestroyed());
 
     aliveEntries.forEach((entry, index) => {
+        // 最新通知靠近底部，较早通知依次向上堆叠。
         const distanceFromBottom = aliveEntries.length - index - 1;
         const x = workArea.x + workArea.width - DESKTOP_TOAST_WIDTH - DESKTOP_TOAST_MARGIN;
         const y = workArea.y + workArea.height - DESKTOP_TOAST_HEIGHT - DESKTOP_TOAST_MARGIN
@@ -106,9 +227,43 @@ async function showSystemNotification(payload = {}, mainWindow) {
     const appIcon = nativeImage.createFromPath(path.join(__dirname, '../../../icon.png'));
     const appIconDataUrl = appIcon.isEmpty() ? '' : appIcon.toDataURL();
     const rawAvatarUrl = String(payload.iconUrl || '').trim();
+    const theme = payload.theme === 'dark' ? 'dark' : 'light';
     const avatarUrl = /^(?:https?:\/\/|data:image\/)/i.test(rawAvatarUrl)
         ? rawAvatarUrl
         : appIconDataUrl;
+    const { isOtherAppFullscreen } = await getForegroundFullscreenState();
+    const memberKey = getDesktopToastMemberKey(payload, title);
+    const existingEntry = activeDesktopToasts.find(entry => (
+        !entry.closing
+        && !entry.window.isDestroyed()
+        && entry.memberKey === memberKey
+    ));
+
+    // 同一成员的大、小房间可能在相邻轮询中分别更新。已有弹窗时直接更新内容，避免叠出两个窗口。
+    if (existingEntry) {
+        const existingWindow = existingEntry.window;
+        existingEntry.payload = payload;
+        existingEntry.title = title;
+        if (existingEntry.timer) clearTimeout(existingEntry.timer);
+        const renderPayload = getDesktopToastRenderPayload(title, body, avatarUrl, appIconDataUrl, theme);
+        try {
+            await existingWindow.webContents.executeJavaScript(`window.renderYayaNotification(${renderPayload})`);
+            existingWindow.setAlwaysOnTop(!isOtherAppFullscreen, isOtherAppFullscreen ? 'normal' : 'pop-up-menu');
+            if (isOtherAppFullscreen) {
+                await placeToastBehindForegroundWindow(existingWindow);
+            } else {
+                existingWindow.showInactive();
+            }
+            existingEntry.timer = setTimeout(() => {
+                fadeOutDesktopToast(existingEntry);
+            }, DESKTOP_TOAST_DURATION_MS);
+            return { success: true, merged: true };
+        } catch (error) {
+            console.warn('[软件通知] 更新已有弹窗失败:', error.message);
+            if (!existingWindow.isDestroyed()) existingWindow.close();
+        }
+    }
+
     const display = getDesktopToastDisplay(mainWindow);
     const workArea = display.workArea;
     const toastWindow = new BrowserWindow({
@@ -125,7 +280,7 @@ async function showSystemNotification(payload = {}, mainWindow) {
         maximizable: false,
         fullscreenable: false,
         skipTaskbar: true,
-        alwaysOnTop: true,
+        alwaysOnTop: !isOtherAppFullscreen,
         focusable: true,
         hasShadow: false,
         backgroundColor: '#00000000',
@@ -136,9 +291,19 @@ async function showSystemNotification(payload = {}, mainWindow) {
         }
     });
 
-    toastWindow.setAlwaysOnTop(true, 'pop-up-menu');
+    if (!isOtherAppFullscreen) {
+        toastWindow.setAlwaysOnTop(true, 'pop-up-menu');
+    }
     toastWindow.setMenuBarVisibility(false);
-    const entry = { window: toastWindow, timer: null, closeTimer: null, closing: false };
+    const entry = {
+        window: toastWindow,
+        timer: null,
+        closeTimer: null,
+        closing: false,
+        memberKey,
+        payload,
+        title
+    };
     activeDesktopToasts.push(entry);
     while (activeDesktopToasts.length > DESKTOP_TOAST_MAX_VISIBLE) {
         const oldest = activeDesktopToasts.shift();
@@ -150,7 +315,7 @@ async function showSystemNotification(payload = {}, mainWindow) {
         if (!url.startsWith('yaya-notification://')) return;
         event.preventDefault();
         if (url.startsWith('yaya-notification://open')) {
-            openDesktopToastTarget(payload, title, mainWindow);
+            openDesktopToastTarget(entry.payload, entry.title, mainWindow);
         }
         if (!toastWindow.isDestroyed()) toastWindow.close();
     });
@@ -161,11 +326,13 @@ async function showSystemNotification(payload = {}, mainWindow) {
             return { success: false, msg: '软件通知弹窗已关闭' };
         }
 
-        const renderPayload = JSON.stringify({ title, body, avatarUrl, appIconDataUrl })
-            .replace(/</g, '\\u003c')
-            .replace(/>/g, '\\u003e');
+        const renderPayload = getDesktopToastRenderPayload(title, body, avatarUrl, appIconDataUrl, theme);
         await toastWindow.webContents.executeJavaScript(`window.renderYayaNotification(${renderPayload})`);
-        toastWindow.showInactive();
+        if (isOtherAppFullscreen) {
+            await placeToastBehindForegroundWindow(toastWindow);
+        } else {
+            toastWindow.showInactive();
+        }
         entry.timer = setTimeout(() => {
             fadeOutDesktopToast(entry);
         }, DESKTOP_TOAST_DURATION_MS);
@@ -306,8 +473,7 @@ function readCachedThumbnail(filePath) {
                 url: pathToFileURL(filePath).href
             };
         }
-    } catch (error) {
-    }
+    } catch (error) { reportIgnoredError(error, 'src/main/services/system-service.js'); }
 
     return null;
 }
@@ -333,11 +499,9 @@ function cleanupImageThumbnailCache(cacheDir) {
             try {
                 fs.unlinkSync(entry.filePath);
                 totalSize -= entry.size;
-            } catch (error) {
-            }
+            } catch (error) { reportIgnoredError(error, 'src/main/services/system-service.js'); }
         }
-    } catch (error) {
-    }
+    } catch (error) { reportIgnoredError(error, 'src/main/services/system-service.js'); }
 }
 
 async function createCachedImageThumbnail({ url, width } = {}) {
@@ -595,8 +759,7 @@ async function checkIpGoogle() {
                 return fetchGoogleInfo(port, '系统代理');
             }
         }
-    } catch (error) {
-    }
+    } catch (error) { reportIgnoredError(error, 'src/main/services/system-service.js'); }
 
     try {
         const workingPort = await Promise.any(

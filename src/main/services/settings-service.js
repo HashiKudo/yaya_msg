@@ -71,6 +71,12 @@ function normalizeSettings(rawSettings) {
         safeSettings.useYayaApiProxy = safeSettings.useYayaApiProxy === true;
     }
 
+    if (Object.prototype.hasOwnProperty.call(safeSettings, 'windowCloseBehavior')) {
+        safeSettings.windowCloseBehavior = safeSettings.windowCloseBehavior === 'quit'
+            ? 'quit'
+            : 'minimize-to-tray';
+    }
+
     if (Object.prototype.hasOwnProperty.call(safeSettings, 'yayaApiProxyBaseUrl')) {
         if (typeof safeSettings.yayaApiProxyBaseUrl !== 'string') {
             delete safeSettings.yayaApiProxyBaseUrl;

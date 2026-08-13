@@ -14,6 +14,7 @@
         } = deps;
 
         let liveGiftCacheSaveTimer = null;
+        let liveGiftBalanceRequestId = 0;
 
         function getSafeToken() {
             if (typeof getAppToken === 'function') return getAppToken();
@@ -234,6 +235,8 @@
             const balanceEl = document.getElementById('live-gift-balance');
             if (!balanceEl) return;
 
+            const requestId = liveGiftBalanceRequestId + 1;
+            liveGiftBalanceRequestId = requestId;
             const token = getSafeToken();
             if (!token) {
                 balanceEl.innerText = '未登录';
@@ -242,12 +245,14 @@
 
             try {
                 const res = await ipcRenderer.invoke('fetch-user-money', { token, pa: getSafePa() });
+                if (requestId !== liveGiftBalanceRequestId) return;
                 if (res.success && res.content) {
                     balanceEl.innerText = res.content.moneyTotal;
                 } else {
                     balanceEl.innerText = '获取失败';
                 }
             } catch (e) {
+                if (requestId !== liveGiftBalanceRequestId) return;
                 console.error(e);
                 balanceEl.innerText = '错误';
             }

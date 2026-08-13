@@ -1,7 +1,12 @@
 (function () {
+    const isWebRuntime = window.desktop?.platform === 'web';
+    const { escapeHtml } = window.YayaRendererUtils;
     const OFFICIAL_SITE_ORIGIN = 'https://www.snh48.com';
     const OFFICIAL_SITE_SCRIPT_BASE = `${OFFICIAL_SITE_ORIGIN}/js`;
     const DATA_BASE_URL = 'https://data.gnz.hk';
+    const MUSIC_COVER_CACHE_WIDTH = 160;
+    const MUSIC_COVER_CACHE_CONCURRENCY = 4;
+    const WEB_MUSIC_COVER_CACHE_NAME = 'yaya-music-covers-v1';
     const MUSIC_LYRICS_BASE_URL = `${DATA_BASE_URL}/lyrics`;
     const MUSIC_LYRICS_INDEX_URL = `${DATA_BASE_URL}/lyrics-index.json`;
     const R2_MUSIC_PUBLIC_ORIGIN = 'https://gnz.hk';
@@ -63,6 +68,11 @@
         suppressNextPauseStateSave: false,
         mediaSessionBound: false,
         durationCache: new Map(),
+        coverRequestId: 0,
+        playbackRequestId: 0,
+        coverCachePromises: new Map(),
+        coverCacheQueue: [],
+        coverCacheActive: 0,
         errorMessage: '',
         isLoaded: false,
         isLoading: false
@@ -169,15 +179,6 @@
         return document.getElementById(id);
     }
 
-    function escapeHtml(value) {
-        return String(value == null ? '' : value)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
-    }
-
     function normalizeMusicUrl(url) {
         const text = String(url || '').trim();
         if (!text) return '';
@@ -198,6 +199,112 @@
 
     function normalizeLookupUrl(url) {
         return normalizeMusicUrl(url).toLowerCase();
+    }
+
+    function getCachedOfficialSiteMusicCoverUrl(remoteUrl) {
+        if (isOfficialSiteMusicWebRuntime() || !/^https?:\/\//i.test(String(remoteUrl || ''))) return '';
+        try {
+            return window.desktop?.imageCache?.getCachedThumbnailUrlSync?.(
+                remoteUrl,
+                MUSIC_COVER_CACHE_WIDTH
+            ) || '';
+        } catch (error) {
+            window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/official-site-music-feature.js');
+            return '';
+        }
+    }
+
+    function getOfficialSiteMusicCoverDisplayUrl(remoteUrl) {
+        const normalizedUrl = String(remoteUrl || '').trim();
+        if (!normalizedUrl) return '';
+        return getCachedOfficialSiteMusicCoverUrl(normalizedUrl) || normalizedUrl;
+    }
+
+    async function cacheWebOfficialSiteMusicCover(remoteUrl) {
+        if (!('caches' in window) || typeof window.fetch !== 'function') return '';
+        const cache = await window.caches.open(WEB_MUSIC_COVER_CACHE_NAME);
+        const cachedResponse = await cache.match(remoteUrl, { ignoreVary: true });
+        if (cachedResponse) {
+            document.documentElement.dataset.musicCoverCache = 'ready';
+            return remoteUrl;
+        }
+
+        let response;
+        try {
+            response = await window.fetch(remoteUrl, {
+                mode: 'cors',
+                credentials: 'omit',
+                cache: 'force-cache'
+            });
+        } catch (corsError) {
+            window.YayaRendererUtils.reportIgnoredError(corsError, 'src/renderer/official-site-music-feature.js');
+            response = await window.fetch(remoteUrl, {
+                mode: 'no-cors',
+                credentials: 'omit',
+                cache: 'force-cache'
+            });
+        }
+        if (!response || (!response.ok && response.type !== 'opaque')) return '';
+        await cache.put(remoteUrl, response.clone());
+        document.documentElement.dataset.musicCoverCache = 'ready';
+        return remoteUrl;
+    }
+
+    function pumpOfficialSiteMusicCoverCacheQueue() {
+        const isWeb = isOfficialSiteMusicWebRuntime();
+        if (isWeb && (!('caches' in window) || typeof window.fetch !== 'function')) return;
+        if (!isWeb && !window.desktop?.ipcRenderer?.invoke) return;
+        while (state.coverCacheActive < MUSIC_COVER_CACHE_CONCURRENCY && state.coverCacheQueue.length) {
+            const task = state.coverCacheQueue.shift();
+            state.coverCacheActive += 1;
+            const cacheTask = isWeb
+                ? cacheWebOfficialSiteMusicCover(task.remoteUrl)
+                : window.desktop.ipcRenderer.invoke('cache-image-thumbnail', {
+                    url: task.remoteUrl,
+                    width: MUSIC_COVER_CACHE_WIDTH
+                }).then((result) => result?.success && result.url ? result.url : '');
+            cacheTask.then((cachedUrl) => {
+                task.resolve(cachedUrl || '');
+            }).catch((error) => {
+                window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/official-site-music-feature.js');
+                task.resolve('');
+            }).finally(() => {
+                state.coverCacheActive -= 1;
+                pumpOfficialSiteMusicCoverCacheQueue();
+            });
+        }
+    }
+
+    function cacheOfficialSiteMusicCover(remoteUrl) {
+        const normalizedUrl = String(remoteUrl || '').trim();
+        if (!/^https?:\/\//i.test(normalizedUrl)) {
+            return Promise.resolve('');
+        }
+        if (!isOfficialSiteMusicWebRuntime()) {
+            const cachedUrl = getCachedOfficialSiteMusicCoverUrl(normalizedUrl);
+            if (cachedUrl) return Promise.resolve(cachedUrl);
+        }
+        if (state.coverCachePromises.has(normalizedUrl)) {
+            return state.coverCachePromises.get(normalizedUrl);
+        }
+
+        let resolveTask;
+        const promise = new Promise((resolve) => {
+            resolveTask = resolve;
+        });
+        state.coverCachePromises.set(normalizedUrl, promise);
+        state.coverCacheQueue.push({ remoteUrl: normalizedUrl, resolve: resolveTask });
+        pumpOfficialSiteMusicCoverCacheQueue();
+        return promise;
+    }
+
+    function warmOfficialSiteMusicCoverCache(tracks = state.allTracks) {
+        const coverUrls = new Set((Array.isArray(tracks) ? tracks : [])
+            .map((track) => String(track?.coverUrl || '').trim())
+            .filter((url) => /^https?:\/\//i.test(url)));
+        coverUrls.forEach((url) => {
+            cacheOfficialSiteMusicCover(url);
+        });
     }
 
     function setStatus(text) {
@@ -510,6 +617,27 @@
         return parts[0] * 60 + parts[1];
     }
 
+    function updateRenderedTrackDuration(track, durationText) {
+        const cards = Array.from(document.querySelectorAll('.official-site-music-card[data-track-id]'));
+        const currentCard = cards.find((card) => card.dataset.trackId === track.id);
+        const durationCell = currentCard?.querySelector('.official-site-music-table-time');
+        if (durationCell) durationCell.textContent = durationText;
+
+        if (state.sortKey !== 'duration' || cards.length < 2) return;
+        const table = $('official-site-music-list')?.querySelector('.official-site-music-table');
+        if (!table) return;
+
+        const cardByTrackId = new Map(cards.map((card) => [card.dataset.trackId, card]));
+        state.filteredTracks = getFilteredTracks();
+        state.filteredTracks.forEach((item, index) => {
+            const card = cardByTrackId.get(item.id);
+            if (!card) return;
+            const indexCell = card.querySelector('.official-site-music-row-index');
+            if (indexCell) indexCell.textContent = String(index + 1).padStart(2, '0');
+            table.appendChild(card);
+        });
+    }
+
     function updateCurrentTrackDurationFromAudio() {
         if (isOfficialSiteMusicWebRuntime()) return false;
         const audio = $('official-site-music-audio');
@@ -523,7 +651,7 @@
             state.durationCache.set(key, durationText);
             saveOfficialSiteMusicDurationCache();
         }
-        renderOfficialSiteMusic();
+        updateRenderedTrackDuration(track, durationText);
         return true;
     }
 
@@ -1388,7 +1516,7 @@
         if (!track) {
             try {
                 navigator.mediaSession.metadata = null;
-            } catch (_) { }
+            } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/official-site-music-feature.js'); }
             updateOfficialSiteMediaSessionPlaybackState();
             return;
         }
@@ -1406,7 +1534,7 @@
         } catch (_) {
             try {
                 navigator.mediaSession.metadata = metadata;
-            } catch (_) { }
+            } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/official-site-music-feature.js'); }
         }
         updateOfficialSiteMediaSessionPlaybackState();
         updateOfficialSiteMediaSessionPosition();
@@ -1417,7 +1545,7 @@
         const audio = $('official-site-music-audio');
         try {
             navigator.mediaSession.playbackState = audio && !audio.paused && !audio.ended ? 'playing' : 'paused';
-        } catch (_) { }
+        } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/official-site-music-feature.js'); }
     }
 
     function updateOfficialSiteMediaSessionPosition() {
@@ -1430,7 +1558,7 @@
         const playbackRate = Number.isFinite(audio.playbackRate) && audio.playbackRate > 0 ? audio.playbackRate : 1;
         try {
             navigator.mediaSession.setPositionState({ duration, playbackRate, position });
-        } catch (_) { }
+        } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/official-site-music-feature.js'); }
     }
 
     function setupOfficialSiteMediaSession() {
@@ -1455,7 +1583,7 @@
         Object.entries(handlers).forEach(([action, handler]) => {
             try {
                 navigator.mediaSession.setActionHandler(action, handler);
-            } catch (_) { }
+            } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/official-site-music-feature.js'); }
         });
     }
 
@@ -1616,7 +1744,7 @@
             subtitleEl.innerText = state.currentLyricMeta?.歌曲名 || '歌词';
             return;
         }
-        linesEl.innerHTML = '';
+        linesEl.replaceChildren();
         scrollEl.style.display = 'none';
         emptyEl.style.display = 'block';
         emptyEl.innerText = message || '当前歌曲暂无歌词';
@@ -1796,6 +1924,30 @@
         updateFavoriteButton();
     }
 
+    function updateOfficialSiteMusicCover(cover, nextCoverUrl) {
+        const requestId = ++state.coverRequestId;
+        if (cover.getAttribute('src') === nextCoverUrl) return;
+
+        const nextCover = new Image();
+        const applyCover = () => {
+            if (requestId !== state.coverRequestId) return;
+            cover.src = nextCoverUrl;
+        };
+        nextCover.addEventListener('load', () => {
+            if (typeof nextCover.decode !== 'function') {
+                applyCover();
+                return;
+            }
+            Promise.resolve(nextCover.decode()).catch(() => { }).then(applyCover);
+        }, { once: true });
+        nextCover.addEventListener('error', () => {
+            if (requestId === state.coverRequestId && nextCoverUrl !== './icon.png') {
+                updateOfficialSiteMusicCover(cover, './icon.png');
+            }
+        }, { once: true });
+        nextCover.src = nextCoverUrl;
+    }
+
     function updateCurrentTrackDisplay(track) {
         const title = $('official-site-music-current-title');
         const subtitle = $('official-site-music-current-subtitle');
@@ -1807,10 +1959,10 @@
             subtitle.textContent = getTrackSubtitle(track);
         }
         if (cover) {
-            const nextCoverUrl = track && track.coverUrl ? track.coverUrl : './icon.png';
-            if (cover.getAttribute('src') !== nextCoverUrl) {
-                cover.src = nextCoverUrl;
-            }
+            const nextCoverUrl = track && track.coverUrl
+                ? getOfficialSiteMusicCoverDisplayUrl(track.coverUrl)
+                : './icon.png';
+            updateOfficialSiteMusicCover(cover, nextCoverUrl);
         }
         updateFavoriteButton();
         updateOfficialSiteMediaSessionMetadata(track);
@@ -1853,7 +2005,7 @@
                 } else {
                     audio.currentTime = targetTime;
                 }
-            } catch (_) { }
+            } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/official-site-music-feature.js'); }
             syncOfficialSiteProgressAnchor();
             updatePlayerProgress();
             state.suspendedPlaybackIntent = false;
@@ -1889,7 +2041,7 @@
                 } else {
                     audio.currentTime = targetTime;
                 }
-            } catch (_) { }
+            } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/official-site-music-feature.js'); }
             syncOfficialSiteProgressAnchor();
             updatePlayerProgress();
             state.suspendedPlaybackIntent = false;
@@ -1962,7 +2114,7 @@
                         <span class="official-site-music-song-cell">
                             <span class="official-site-music-index${track.coverUrl ? ' has-cover' : ''}">
                                 ${track.coverUrl
-                    ? `<img src="${escapeHtml(track.coverUrl)}" alt="" loading="${index < 24 ? 'eager' : 'lazy'}" decoding="async">`
+                    ? `<img src="${escapeHtml(getOfficialSiteMusicCoverDisplayUrl(track.coverUrl))}" alt="" loading="${index < 24 ? 'eager' : 'lazy'}" decoding="async">`
                     : `${escapeHtml(track.groupKey)}`}
                             </span>
                             <span class="official-site-music-card-body">
@@ -1970,8 +2122,8 @@
                             </span>
                         </span>
                         <span class="official-site-music-table-text${track.album ? '' : ' is-empty'}">${escapeHtml(getOfficialSiteAlbumDisplayName(track.album) || '-')}</span>
-                        <span class="official-site-music-table-text">${escapeHtml(track.groupLabel)}</span>
-                        <span class="official-site-music-table-time">${escapeHtml(track.duration || '--:--')}</span>
+                        <span class="official-site-music-table-text${isWebRuntime ? ' official-site-music-group-cell' : ''}">${escapeHtml(track.groupLabel)}</span>
+                        ${isWebRuntime ? '' : `<span class="official-site-music-table-time">${escapeHtml(track.duration || '--:--')}</span>`}
                     </button>
                 `).join('')}
             </div>
@@ -1982,11 +2134,11 @@
     function renderOfficialSiteMusicTableHead() {
         return `
             <div class="official-site-music-table-head">
-                ${renderSortHeader('source', '#')}
+                ${renderSortHeader('source', isWebRuntime ? '序号' : '#')}
                 ${renderSortHeader('title', '标题')}
                 ${renderSortHeader('album', '专辑')}
                 ${renderSortHeader('group', '分团')}
-                ${renderSortHeader('duration', '时长')}
+                ${isWebRuntime ? '' : renderSortHeader('duration', '时长')}
             </div>
         `;
     }
@@ -2081,6 +2233,7 @@
         } finally {
             state.isLoading = false;
             renderOfficialSiteMusic();
+            if (state.isLoaded) warmOfficialSiteMusicCoverCache();
         }
     }
 
@@ -2089,6 +2242,7 @@
         const audio = $('official-site-music-audio');
         if (!track || !audio) return;
 
+        const playbackRequestId = ++state.playbackRequestId;
         const sameTrack = state.currentTrackId === track.id && Boolean(audio.src || audio.currentSrc);
         state.currentTrackId = track.id;
         if (!sameTrack) {
@@ -2099,9 +2253,10 @@
         updateOfficialSiteMediaSessionMetadata(track);
 
         const resetProgressToStart = () => {
+            if (playbackRequestId !== state.playbackRequestId) return;
             try {
                 audio.currentTime = 0;
-            } catch (_) { }
+            } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/official-site-music-feature.js'); }
             syncOfficialSiteProgressAnchor();
             updatePlayerProgress();
             saveOfficialSiteMusicPlayerState({ currentTime: 0, wasPlaying: true });
@@ -2115,9 +2270,12 @@
 
         saveOfficialSiteMusicPlayerState({ currentTime: 0, wasPlaying: true });
         audio.play().catch((error) => {
+            if (playbackRequestId !== state.playbackRequestId || error?.name === 'AbortError') return;
             console.warn('[official-site-music] play blocked', error);
             showOfficialMusicToast('播放失败，请稍后重试');
-        }).finally(updatePlayerButton);
+        }).finally(() => {
+            if (playbackRequestId === state.playbackRequestId) updatePlayerButton();
+        });
 
         updateCurrentTrackDisplay(track);
         updateActiveTrack();

@@ -3,6 +3,26 @@
         return;
     }
 
+    document.documentElement.dataset.platform = 'web';
+    if ('serviceWorker' in navigator && window.location.protocol !== 'file:') {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
+                .then(() => navigator.serviceWorker.ready)
+                .then(() => {
+                    document.documentElement.dataset.musicCoverWorker = 'ready';
+                })
+                .catch((error) => {
+                    document.documentElement.dataset.musicCoverWorker = 'failed';
+                    window.YayaRendererUtils?.reportIgnoredError?.(error, 'src/web/browser-shim.js');
+                });
+        }, { once: true });
+    }
+    if (!document.querySelector('base')) {
+        const base = document.createElement('base');
+        base.href = '/';
+        document.head.prepend(base);
+    }
+
     const IS_MOBILE_WEB_DEVICE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
     const IS_WINDOWS_WEB_DEVICE = /Windows/i.test(navigator.userAgent || '') && !IS_MOBILE_WEB_DEVICE;
     const IS_MAC_WEB_DEVICE = /Macintosh|Mac OS X/i.test(navigator.userAgent || '') && !IS_MOBILE_WEB_DEVICE;
@@ -22,6 +42,7 @@
         window.switchView = function (...args) {
             window.__yayaPendingSwitchView = args;
         };
+        window.switchView.__yayaPendingStub = true;
     }
 
     if (typeof window.toggleSidebar !== 'function') {
@@ -283,60 +304,31 @@
         return true;
     }
 
-    const webLibraryUrls = {
-        mpegts: 'https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js',
-        hls: 'https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.min.js',
-        artplayer: 'https://cdn.jsdelivr.net/npm/artplayer/dist/artplayer.js',
-        artplayerDanmuku: 'https://cdn.jsdelivr.net/npm/artplayer-plugin-danmuku/dist/artplayer-plugin-danmuku.js',
-        dplayer: 'https://cdn.jsdelivr.net/npm/dplayer/dist/DPlayer.min.js',
-        pinyin: 'https://cdn.jsdelivr.net/npm/pinyin-pro@3.24.2/dist/index.js'
-    };
-    const webLibraryPromises = new Map();
-
-    function loadWebScriptOnce(key, url, globalName) {
-        if (globalName && window[globalName]) return Promise.resolve(window[globalName]);
-        if (webLibraryPromises.has(key)) return webLibraryPromises.get(key);
-
-        const promise = new Promise((resolve, reject) => {
-            const existing = document.querySelector(`script[data-yaya-lib="${key}"]`);
-            if (existing) {
-                existing.addEventListener('load', () => resolve(globalName ? window[globalName] : true), { once: true });
-                existing.addEventListener('error', () => reject(new Error(`加载 ${key} 失败`)), { once: true });
-                return;
-            }
-
-            const script = document.createElement('script');
-            script.src = url;
-            script.async = true;
-            script.dataset.yayaLib = key;
-            script.onload = () => resolve(globalName ? window[globalName] : true);
-            script.onerror = () => reject(new Error(`加载 ${key} 失败`));
-            document.head.appendChild(script);
-        });
-
-        webLibraryPromises.set(key, promise);
-        return promise;
+    function requireBundledLibrary(globalName) {
+        const library = window[globalName];
+        if (!library) throw new Error(`本地运行库 ${globalName} 未加载，请重新构建应用`);
+        return library;
     }
 
     window.ensureYayaWebPlayerLibs = async function ensureYayaWebPlayerLibs(type = 'player') {
         if (type === 'mpegts') {
-            await loadWebScriptOnce('mpegts', webLibraryUrls.mpegts, 'mpegts');
+            requireBundledLibrary('mpegts');
             return;
         }
         if (type === 'dplayer') {
-            await loadWebScriptOnce('mpegts', webLibraryUrls.mpegts, 'mpegts');
-            await loadWebScriptOnce('dplayer', webLibraryUrls.dplayer, 'DPlayer');
+            requireBundledLibrary('mpegts');
+            requireBundledLibrary('DPlayer');
             return;
         }
-        await loadWebScriptOnce('mpegts', webLibraryUrls.mpegts, 'mpegts');
-        await loadWebScriptOnce('hls', webLibraryUrls.hls, 'Hls');
-        await loadWebScriptOnce('artplayer', webLibraryUrls.artplayer, 'Artplayer');
-        await loadWebScriptOnce('artplayerDanmuku', webLibraryUrls.artplayerDanmuku, 'artplayerPluginDanmuku');
-        await loadWebScriptOnce('dplayer', webLibraryUrls.dplayer, 'DPlayer');
+        requireBundledLibrary('mpegts');
+        requireBundledLibrary('Hls');
+        requireBundledLibrary('Artplayer');
+        requireBundledLibrary('artplayerPluginDanmuku');
+        requireBundledLibrary('DPlayer');
     };
 
     window.ensureYayaWebPinyin = function ensureYayaWebPinyin() {
-        return loadWebScriptOnce('pinyin', webLibraryUrls.pinyin, 'pinyinPro');
+        return Promise.resolve(requireBundledLibrary('pinyinPro'));
     };
 
     function downloadTextFile(filename, content, type) {
@@ -829,11 +821,8 @@
         return parsed.data;
     }
 
-    const FFMPEG_SCRIPT_URLS = [
-        'https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js',
-        'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js'
-    ];
-    const FFMPEG_CORE_PATH = 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js';
+    const FFMPEG_SCRIPT_URL = './src/renderer/vendor/ffmpeg/ffmpeg.min.js';
+    const FFMPEG_CORE_PATH = './src/renderer/vendor/ffmpeg/ffmpeg-core.js';
     const WEB_CLIP_MAX_DURATION = 10 * 60;
     const WEB_CLIP_MAX_DIRECT_BYTES = 512 * 1024 * 1024;
     const WEB_CLIP_MAX_SEGMENTS = 120;
@@ -940,18 +929,9 @@
 
     async function ensureFfmpegScript() {
         if (!ffmpegScriptPromise) {
-            ffmpegScriptPromise = (async () => {
-                let lastError = null;
-                for (const url of FFMPEG_SCRIPT_URLS) {
-                    try {
-                        await loadScript(url);
-                        if (window.FFmpeg?.createFFmpeg) return;
-                    } catch (error) {
-                        lastError = error;
-                    }
-                }
-                throw lastError || new Error('FFmpeg 脚本加载失败');
-            })();
+            ffmpegScriptPromise = loadScript(FFMPEG_SCRIPT_URL).then(() => {
+                if (!window.FFmpeg?.createFFmpeg) throw new Error('本地 FFmpeg 运行库无效');
+            });
         }
         return ffmpegScriptPromise;
     }
@@ -1203,7 +1183,7 @@
         const ffmpeg = await ensureFfmpeg(taskId);
         const outputName = 'output.mp4';
         try {
-            try { ffmpeg.FS('unlink', outputName); } catch (error) {}
+            try { ffmpeg.FS('unlink', outputName); } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/web/browser-shim.js'); }
             const input = isM3u8Url(sourceUrl)
                 ? await writeHlsClipInputs(ffmpeg, sourceUrl, startTime, duration, taskId)
                 : await writeDirectClipInput(ffmpeg, sourceUrl, taskId);
@@ -1222,7 +1202,7 @@
             setDownloadTaskStatus(taskId, '浏览器切片完成，已开始下载', 100);
             finishClipToolbarStatus('切片完成，已开始下载');
         } finally {
-            try { ffmpeg.FS('unlink', outputName); } catch (error) {}
+            try { ffmpeg.FS('unlink', outputName); } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/web/browser-shim.js'); }
         }
     }
 
@@ -1259,10 +1239,13 @@
             if (channel === 'dialog-open-directory') {
                 return '';
             }
+            if (channel === 'get-default-download-path') {
+                return '';
+            }
             if (channel === 'open-message-data-folder') {
                 return { success: false, msg: '网页版没有本地数据文件夹' };
             }
-            if (channel === 'save-export-jsonl' || channel === 'save-export-html') {
+            if (channel === 'save-export-jsonl') {
                 return saveWebMessageExport(payload || {});
             }
             if (channel === 'show-system-notification') {

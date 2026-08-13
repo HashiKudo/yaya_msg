@@ -2,6 +2,7 @@
     window.YayaRendererFeatures = window.YayaRendererFeatures || {};
 
     window.YayaRendererFeatures.createCommunityFeature = function createCommunityFeature(deps) {
+        const { escapeHtml, escapeJsString, normalize48Url } = window.YayaRendererUtils;
         const {
             getAppToken,
             getCurrentUserId,
@@ -21,31 +22,6 @@
         let currentTopic = null;
         const commentStateMap = new Map();
         const postDetailStateMap = new Map();
-
-        function escapeHtml(value) {
-            return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#39;'
-            }[char]));
-        }
-
-        function escapeJsString(value) {
-            return String(value == null ? '' : value)
-                .replace(/\\/g, '\\\\')
-                .replace(/'/g, "\\'")
-                .replace(/\r?\n/g, ' ');
-        }
-
-        function normalize48Url(value) {
-            const raw = String(value || '').trim();
-            if (!raw) return '';
-            if (/^https?:\/\//i.test(raw)) return raw;
-            if (raw.includes('48.cn')) return `https://${raw.replace(/^\/+/, '')}`;
-            return raw.startsWith('/') ? `https://source3.48.cn${raw}` : `https://source3.48.cn/${raw}`;
-        }
 
         function formatTime(value) {
             const raw = Number(value);
@@ -402,8 +378,7 @@
                 const candidates = [raw];
                 try {
                     candidates.push(decodeURIComponent(raw));
-                } catch (_) {
-                }
+                } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/community-feature.js'); }
                 for (const candidate of candidates) {
                     for (const pattern of patterns) {
                         const match = candidate.match(pattern);
@@ -674,7 +649,7 @@
             if (!panel) return;
             if (panel.classList.contains('is-open')) {
                 panel.classList.remove('is-open');
-                panel.innerHTML = '';
+                panel.replaceChildren();
                 return;
             }
             loadCommunityComments(postId, { reset: true });
@@ -852,7 +827,7 @@
                 return '';
             }).filter(Boolean).join('');
 
-            if (!append) listEl.innerHTML = '';
+            if (!append) listEl.replaceChildren();
             if (html) {
                 listEl.insertAdjacentHTML('beforeend', html);
             } else if (!append) {
@@ -938,7 +913,7 @@
             isLoading = true;
             if (reset) {
                 nextId = 0;
-                listEl.innerHTML = '';
+                listEl.replaceChildren();
             }
             updateLoadState();
 
