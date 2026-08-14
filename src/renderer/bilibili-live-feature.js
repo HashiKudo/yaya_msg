@@ -537,6 +537,23 @@
             }
         }
 
+        async function selectBilibiliLiveGroup(groupKey, autoConnect = true) {
+            const normalizedGroup = String(groupKey || '').trim().toUpperCase().replace(/48$/, '');
+            if (!normalizedGroup) return false;
+
+            const expectedTitle = `${normalizedGroup}48`;
+            const room = bilibiliLiveRooms.find(item => {
+                const title = String(item?.title || '').trim().toUpperCase();
+                return title === expectedTitle || title.includes(expectedTitle);
+            });
+            const roomId = String(room?.roomId || '').trim();
+            if (!roomId) return false;
+
+            bilibiliLiveAutoConnectPending = false;
+            await selectBilibiliLiveRoom(roomId, autoConnect);
+            return true;
+        }
+
         function resetBilibiliLiveMeta() {
             const metaEl = document.getElementById('bilibili-live-meta');
             const titleEl = document.getElementById('bilibili-live-title');
@@ -899,6 +916,7 @@
             startBilibiliLiveStatusPolling,
             stopBilibiliLiveStatusPolling,
             destroyBilibiliLivePlayer,
+            selectBilibiliLiveGroup,
             connectBilibiliLive,
             stopBilibiliLive
         };

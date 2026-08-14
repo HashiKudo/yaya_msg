@@ -162,6 +162,7 @@ const WEB_APP_ROUTE_SLUGS = new Set([
         'img',
         'dynamic',
         'weibo',
+        'performances',
         'openlive',
         'send-flip',
         'flip',

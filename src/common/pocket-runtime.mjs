@@ -209,6 +209,22 @@ function createSeineHeaders(token, pa) {
     return headers;
 }
 
+function createSeineIosHeaders(token, pa) {
+    const headers = createHeaders(token, pa);
+    headers.appInfo = JSON.stringify({
+        deviceId: getDeviceId(),
+        appVersion: '1.2.0',
+        deviceName: 'iPhone 16 Pro',
+        osType: 'ios',
+        appBuild: '26072902',
+        osVersion: '27.0',
+        appName: 'seine48',
+        vendor: 'apple'
+    });
+    headers['User-Agent'] = 'Seina/1.2.0 (com.seine48.app; build:26072902; iOS 27.0.0) Alamofire/5.8.0';
+    return headers;
+}
+
 function createArea48Headers(token, pa) {
     const sourceDeviceId = `area48:${getDeviceId()}`;
     const deviceId = Array.from(sourceDeviceId).reduce((acc, char) => {
@@ -887,6 +903,26 @@ async function fetchOpenLivePublicList({ token, pa, groupId = 0, next = 0, recor
     return apiError(response);
 }
 
+async function fetchSeinePerformanceList({ token, pa, groupId = 0, next = 0 } = {}) {
+    if (!token) return missingToken();
+
+    return postPocketContent(
+        'https://snhapi-v1.ckg48.cn/home/api/seine/home/interaction/list',
+        {
+            type: 2,
+            groupId: String(groupId || 0),
+            next: String(next || 0)
+        },
+        {
+            token,
+            pa,
+            headersFactory: createSeineIosHeaders,
+            errorMessage: '获取公演列表失败',
+            largeNumbers: true
+        }
+    );
+}
+
 async function fetchMeet48LiveList({ next = 0, record = false, meet48Auth = null } = {}, env = {}) {
     const response = await postJson(
         'https://meetapi-v2.meet48.xyz/meet48-api/live/api/v1/live/getLiveList',
@@ -934,24 +970,40 @@ async function fetchOpenLivePageHtml(url, headers) {
 function normalizeOpenLiveTitleForMatch(value) {
     return String(value || '')
         .toLowerCase()
+        .replace(/&nbsp;|&#160;/gi, '')
+        .replace(/&amp;/gi, '&')
+        .replace(/&quot;|&#34;/gi, '"')
+        .replace(/&#39;|&apos;/gi, "'")
         .replace(/[《》“”"'‘’·•…\s\-_:：,.，。!！?？()（）[\]【】]/g, '')
         .trim();
 }
 
 function formatReplayDateHint(value) {
     if (!value && value !== 0) return '';
-    if (typeof value === 'number' || /^\d+$/.test(String(value || ''))) {
-        const numeric = Number(value);
+    const raw = String(value || '').trim();
+    const explicitDate = raw.match(/(\d{4})[-/.年]?(\d{1,2})[-/.月]?(\d{1,2})(?:日)?/);
+    if (explicitDate && (/[\-/.年月日]/.test(raw) || /^\d{8}$/.test(raw))) {
+        return `${explicitDate[1]}.${String(explicitDate[2]).padStart(2, '0')}.${String(explicitDate[3]).padStart(2, '0')}`;
+    }
+
+    if (typeof value === 'number' || /^\d+$/.test(raw)) {
+        let numeric = Number(value);
         if (Number.isFinite(numeric) && numeric > 0) {
+            if (numeric < 1e12) numeric *= 1000;
             const date = new Date(numeric);
-            const pad = number => String(number).padStart(2, '0');
-            return `${date.getFullYear()}.${pad(date.getMonth() + 1)}.${pad(date.getDate())}`;
+            if (!Number.isNaN(date.getTime())) {
+                const parts = new Intl.DateTimeFormat('en-CA', {
+                    timeZone: 'Asia/Shanghai',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit'
+                }).formatToParts(date);
+                const part = type => parts.find(item => item.type === type)?.value || '';
+                return `${part('year')}.${part('month')}.${part('day')}`;
+            }
         }
     }
-    const match = String(value).match(/(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})/);
-    return match
-        ? `${match[1]}.${String(match[2]).padStart(2, '0')}.${String(match[3]).padStart(2, '0')}`
-        : '';
+    return '';
 }
 
 function extractReplayCardsFromHtml(html) {
@@ -969,30 +1021,182 @@ function extractReplayCardsFromHtml(html) {
     }).filter(item => item.replayId && item.title);
 }
 
-async function findReplayPageMatchByTitleDate({ title, dateHint, headers }) {
+const REPLAY_CLUB_IDS = Object.freeze(['1', '2', '3', '5', '6']);
+const REPLAY_GROUP_CLUB_IDS = Object.freeze({
+    snh: '1',
+    snh48: '1',
+    bej: '2',
+    bej48: '2',
+    gnz: '3',
+    gnz48: '3',
+    ckg: '5',
+    ckg48: '5',
+    cgt: '6',
+    cgt48: '6'
+});
+const MAX_REPLAY_SEARCH_PAGE = 512;
+
+function getReplayClubSearchOrder(groupHint, title) {
+    const source = `${groupHint || ''} ${title || ''}`.toLowerCase();
+    let preferred = '';
+    for (const [group, clubId] of Object.entries(REPLAY_GROUP_CLUB_IDS)) {
+        if (source.includes(group)) {
+            preferred = clubId;
+            break;
+        }
+    }
+    const numericHint = String(groupHint || '').trim();
+    if (!preferred && REPLAY_CLUB_IDS.includes(numericHint)) preferred = numericHint;
+    return preferred
+        ? [preferred, ...REPLAY_CLUB_IDS.filter(clubId => clubId !== preferred)]
+        : REPLAY_CLUB_IDS.slice();
+}
+
+function replayDateKey(value) {
+    const match = String(value || '').match(/(\d{4})\.(\d{2})\.(\d{2})/);
+    return match ? Number(`${match[1]}${match[2]}${match[3]}`) : 0;
+}
+
+function getReplayPageDateBounds(cards) {
+    const dates = cards.map(card => replayDateKey(card.date)).filter(Boolean);
+    if (!dates.length) return null;
+    return { newest: Math.max(...dates), oldest: Math.min(...dates) };
+}
+
+function getTitleBigrams(value) {
+    const result = new Set();
+    for (let index = 0; index < value.length - 1; index += 1) {
+        result.add(value.slice(index, index + 2));
+    }
+    return result;
+}
+
+function scoreReplayTitleMatch(target, candidate) {
+    if (!target || !candidate) return 0;
+    if (target === candidate) return 1;
+    const shorter = target.length <= candidate.length ? target : candidate;
+    const longer = shorter === target ? candidate : target;
+    if (shorter.length >= 4 && longer.includes(shorter)) {
+        return 0.6 + (0.4 * shorter.length / longer.length);
+    }
+
+    let prefixLength = 0;
+    while (prefixLength < shorter.length && target[prefixLength] === candidate[prefixLength]) {
+        prefixLength += 1;
+    }
+    const targetBigrams = getTitleBigrams(target);
+    const candidateBigrams = getTitleBigrams(candidate);
+    let sharedBigrams = 0;
+    targetBigrams.forEach(value => {
+        if (candidateBigrams.has(value)) sharedBigrams += 1;
+    });
+    const dice = targetBigrams.size + candidateBigrams.size
+        ? (2 * sharedBigrams) / (targetBigrams.size + candidateBigrams.size)
+        : 0;
+    return Math.max(dice, prefixLength / Math.max(shorter.length, 1));
+}
+
+function findBestReplayCard(cards, normalizedTargetTitle, normalizedTargetDate) {
+    const candidates = cards
+        .filter(card => card.date === normalizedTargetDate)
+        .map(card => ({
+            card,
+            score: scoreReplayTitleMatch(
+                normalizedTargetTitle,
+                normalizeOpenLiveTitleForMatch(card.title)
+            )
+        }))
+        .sort((left, right) => right.score - left.score);
+    return candidates[0]?.score >= 0.38 ? candidates[0].card : null;
+}
+
+async function findReplayMatchInClub({ clubId, normalizedTargetTitle, normalizedTargetDate, headers }) {
+    const targetDateKey = replayDateKey(normalizedTargetDate);
+    const pageCache = new Map();
+    const loadPage = async page => {
+        if (!pageCache.has(page)) {
+            const pageUrl = page === 1
+                ? `https://live.48.cn/Index/main/club/${clubId}`
+                : `https://live.48.cn/Index/main/club/${clubId}/p/${page}.html`;
+            pageCache.set(page, fetchOpenLivePageHtml(pageUrl, headers)
+                .then(extractReplayCardsFromHtml)
+                .catch(() => []));
+        }
+        return pageCache.get(page);
+    };
+    const inspectPage = async page => {
+        const cards = await loadPage(page);
+        return {
+            cards,
+            match: findBestReplayCard(cards, normalizedTargetTitle, normalizedTargetDate),
+            bounds: getReplayPageDateBounds(cards)
+        };
+    };
+
+    const first = await inspectPage(1);
+    if (first.match) return first.match;
+    if (!first.cards.length || !first.bounds || targetDateKey > first.bounds.newest) return null;
+    if (targetDateKey >= first.bounds.oldest) {
+        const second = await inspectPage(2);
+        return second.match;
+    }
+
+    let newerPage = 1;
+    let olderPage = 2;
+    while (olderPage <= MAX_REPLAY_SEARCH_PAGE) {
+        const inspected = await inspectPage(olderPage);
+        if (inspected.match) return inspected.match;
+        if (!inspected.cards.length || !inspected.bounds || targetDateKey >= inspected.bounds.oldest) break;
+        newerPage = olderPage;
+        olderPage *= 2;
+    }
+    olderPage = Math.min(olderPage, MAX_REPLAY_SEARCH_PAGE);
+
+    let low = newerPage + 1;
+    let high = olderPage - 1;
+    while (low <= high) {
+        const page = Math.floor((low + high) / 2);
+        const inspected = await inspectPage(page);
+        if (inspected.match) return inspected.match;
+        if (!inspected.cards.length || !inspected.bounds) {
+            high = page - 1;
+            continue;
+        }
+        if (targetDateKey < inspected.bounds.oldest) {
+            low = page + 1;
+        } else if (targetDateKey > inspected.bounds.newest) {
+            high = page - 1;
+        } else {
+            for (const adjacentPage of [page - 1, page + 1]) {
+                if (adjacentPage < 1) continue;
+                const adjacent = await inspectPage(adjacentPage);
+                if (adjacent.match) return adjacent.match;
+            }
+            return null;
+        }
+    }
+
+    for (const boundaryPage of [low - 1, low, low + 1]) {
+        if (boundaryPage < 1 || boundaryPage > MAX_REPLAY_SEARCH_PAGE) continue;
+        const inspected = await inspectPage(boundaryPage);
+        if (inspected.match) return inspected.match;
+    }
+    return null;
+}
+
+async function findReplayPageMatchByTitleDate({ title, dateHint, groupHint = '', headers }) {
     const normalizedTargetTitle = normalizeOpenLiveTitleForMatch(title);
     const normalizedTargetDate = formatReplayDateHint(dateHint);
     if (!normalizedTargetTitle || !normalizedTargetDate) return null;
 
-    for (const clubId of [1, 2, 3, 5, 6]) {
-        for (let page = 1; page <= 6; page += 1) {
-            try {
-                const pageUrl = page === 1
-                    ? `https://live.48.cn/Index/main/club/${clubId}`
-                    : `https://live.48.cn/Index/main/club/${clubId}/p/${page}.html`;
-                const cards = extractReplayCardsFromHtml(await fetchOpenLivePageHtml(pageUrl, headers));
-                if (!cards.length) break;
-                const matchedCard = cards.find(card => {
-                    if (card.date !== normalizedTargetDate) return false;
-                    const normalizedCardTitle = normalizeOpenLiveTitleForMatch(card.title);
-                    return normalizedTargetTitle.includes(normalizedCardTitle)
-                        || normalizedCardTitle.includes(normalizedTargetTitle);
-                });
-                if (matchedCard) return matchedCard;
-            } catch (error) {
-                // Try the next replay page.
-            }
-        }
+    for (const clubId of getReplayClubSearchOrder(groupHint, title)) {
+        const matched = await findReplayMatchInClub({
+            clubId,
+            normalizedTargetTitle,
+            normalizedTargetDate,
+            headers
+        });
+        if (matched) return matched;
     }
     return null;
 }
@@ -1001,7 +1205,24 @@ function toParticipantList(names) {
     return names.map(name => ({ name, memberId: '', avatar: '', hot: '' }));
 }
 
-async function fetchOpenLiveParticipants({ liveId, title = '', dateHint = '' }) {
+const openLiveParticipantsCache = new Map();
+const openLiveParticipantsPending = new Map();
+const OPEN_LIVE_PARTICIPANTS_CACHE_TTL = 30 * 60 * 1000;
+const OPEN_LIVE_PARTICIPANTS_CACHE_LIMIT = 200;
+
+function cacheOpenLiveParticipants(liveId, result) {
+    openLiveParticipantsCache.delete(liveId);
+    openLiveParticipantsCache.set(liveId, {
+        expiresAt: Date.now() + OPEN_LIVE_PARTICIPANTS_CACHE_TTL,
+        result
+    });
+    while (openLiveParticipantsCache.size > OPEN_LIVE_PARTICIPANTS_CACHE_LIMIT) {
+        const oldestKey = openLiveParticipantsCache.keys().next().value;
+        openLiveParticipantsCache.delete(oldestKey);
+    }
+}
+
+async function fetchOpenLiveParticipantsUncached({ liveId, title = '', dateHint = '', groupHint = '' }) {
     const normalizedLiveId = String(liveId || '').trim();
     if (!normalizedLiveId) return { success: false, msg: '缺少 liveId' };
     const pageHeaders = {
@@ -1058,7 +1279,7 @@ async function fetchOpenLiveParticipants({ liveId, title = '', dateHint = '' }) 
             // Fall back to replay pages.
         }
 
-        for (const clubId of [1, 2, 3, 5, 6]) {
+        for (const clubId of getReplayClubSearchOrder(groupHint, title)) {
             try {
                 const replayUrl = `https://live.48.cn/Index/invideo/club/${clubId}/id/${encodeURIComponent(normalizedLiveId)}`;
                 const participants = toParticipantList(extractParticipantNames(
@@ -1072,7 +1293,12 @@ async function fetchOpenLiveParticipants({ liveId, title = '', dateHint = '' }) 
             }
         }
 
-        const matchedReplay = await findReplayPageMatchByTitleDate({ title, dateHint, headers: pageHeaders });
+        const matchedReplay = await findReplayPageMatchByTitleDate({
+            title,
+            dateHint,
+            groupHint,
+            headers: pageHeaders
+        });
         if (matchedReplay?.replayId && matchedReplay?.clubId) {
             const replayUrl = `https://live.48.cn/Index/invideo/club/${matchedReplay.clubId}/id/${matchedReplay.replayId}`;
             const participants = toParticipantList(extractParticipantNames(
@@ -1094,6 +1320,38 @@ async function fetchOpenLiveParticipants({ liveId, title = '', dateHint = '' }) 
     } catch (error) {
         return { success: false, msg: error?.message || '获取参与成员失败' };
     }
+}
+
+async function fetchOpenLiveParticipants({ liveId, title = '', dateHint = '', groupHint = '' }) {
+    const normalizedLiveId = String(liveId || '').trim();
+    if (!normalizedLiveId) return { success: false, msg: '缺少 liveId' };
+
+    const cached = openLiveParticipantsCache.get(normalizedLiveId);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.result;
+    }
+    if (cached) openLiveParticipantsCache.delete(normalizedLiveId);
+
+    const pending = openLiveParticipantsPending.get(normalizedLiveId);
+    if (pending) return pending;
+
+    const request = fetchOpenLiveParticipantsUncached({
+        liveId: normalizedLiveId,
+        title,
+        dateHint,
+        groupHint
+    }).then(result => {
+        const participants = result?.content?.participants;
+        if (result?.success && Array.isArray(participants) && participants.length > 0) {
+            cacheOpenLiveParticipants(normalizedLiveId, result);
+        }
+        return result;
+    }).finally(() => {
+        openLiveParticipantsPending.delete(normalizedLiveId);
+    });
+
+    openLiveParticipantsPending.set(normalizedLiveId, request);
+    return request;
 }
 
 async function fetchFlipPrices({ token, pa, memberId }) {
@@ -2114,6 +2372,7 @@ const pocketMethods = Object.freeze({
     fetchOpenLive,
     fetchOpenLiveOne,
     fetchOpenLivePublicList,
+    fetchSeinePerformanceList,
     fetchMeet48LiveList,
     fetchMeet48LiveOne,
     fetchOpenLiveParticipants,

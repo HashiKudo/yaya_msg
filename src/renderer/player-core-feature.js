@@ -696,14 +696,13 @@
                 authorEl.textContent = item.userInfo ? item.userInfo.nickname : (item.nickname || '未知成员');
             }
 
-            const openLiveMembersWrap = document.getElementById('current-openlive-members-wrap');
-            const openLiveMembersEl = document.getElementById('current-openlive-members');
-            if (openLiveMembersWrap) {
-                openLiveMembersWrap.style.display = 'none';
+            const participantsButton = document.getElementById('btn-player-participants');
+            const participantsModal = document.getElementById('openLiveParticipantsModal');
+            if (participantsButton) {
+                participantsButton.style.display = 'none';
+                participantsButton.textContent = '参与成员';
             }
-            if (openLiveMembersEl) {
-                openLiveMembersEl.textContent = '';
-            }
+            if (participantsModal) participantsModal.style.display = 'none';
 
             const titleContainer = document.getElementById('current-live-title');
             const dateContainer = document.getElementById('current-live-date');

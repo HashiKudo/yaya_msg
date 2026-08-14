@@ -214,8 +214,8 @@
             if (separatorIndex > 0) {
                 const sender = document.createElement('span');
                 sender.className = 'body-sender';
-                sender.textContent = bodyText.slice(0, separatorIndex + 1);
-                body.append(sender, document.createTextNode(bodyText.slice(separatorIndex + 1)));
+                sender.textContent = bodyText.slice(0, separatorIndex);
+                body.append(sender, document.createTextNode(bodyText.slice(separatorIndex)));
             } else {
                 body.textContent = bodyText;
             }

@@ -40,6 +40,148 @@
 
         let currentFlipPrices = [];
         let flipCountdownTimer = null;
+        const DEFAULT_FLIP_ANSWER_TYPE_KEY = 'yaya_default_flip_answer_type';
+        const DEFAULT_FLIP_PRIVACY_TYPE_KEY = 'yaya_default_flip_privacy_type';
+        const FLIP_ANSWER_TYPE_NAMES = { 1: '文字翻牌', 2: '语音翻牌', 3: '视频翻牌' };
+        const FLIP_PRIVACY_TYPE_NAMES = {
+            1: '公开 (所有人可见)',
+            2: '私密 (仅自己和成员可见)',
+            3: '匿名 (所有人可见，隐藏ID)'
+        };
+        const FLIP_DEFAULT_ANSWER_DISPLAY_NAMES = {
+            1: '文字翻牌',
+            2: '语音翻牌',
+            3: '视频翻牌'
+        };
+        const FLIP_DEFAULT_PRIVACY_DISPLAY_NAMES = {
+            1: '公开（所有人可见）',
+            2: '私密（仅自己和成员可见）',
+            3: '匿名（所有人可见，隐藏 ID）'
+        };
+
+        function getDefaultFlipAnswerType() {
+            try {
+                const value = Number(localStorage.getItem(DEFAULT_FLIP_ANSWER_TYPE_KEY));
+                return [1, 2, 3].includes(value) ? value : 1;
+            } catch (_error) {
+                return 1;
+            }
+        }
+
+        function syncDefaultFlipAnswerTypeControl() {
+            const select = document.getElementById('flip-default-answer-type');
+            const display = document.getElementById('flip-default-answer-display');
+            const answerType = getDefaultFlipAnswerType();
+            if (select) select.value = String(answerType);
+            if (display) display.value = FLIP_DEFAULT_ANSWER_DISPLAY_NAMES[answerType];
+        }
+
+        function getDefaultFlipPrivacyType() {
+            try {
+                const value = Number(localStorage.getItem(DEFAULT_FLIP_PRIVACY_TYPE_KEY));
+                return [1, 2, 3].includes(value) ? value : 1;
+            } catch (_error) {
+                return 1;
+            }
+        }
+
+        function syncDefaultFlipSettingsControls() {
+            syncDefaultFlipAnswerTypeControl();
+            const privacySelect = document.getElementById('flip-default-privacy-type');
+            const privacyDisplay = document.getElementById('flip-default-privacy-display');
+            const privacyType = getDefaultFlipPrivacyType();
+            if (privacySelect) privacySelect.value = String(privacyType);
+            if (privacyDisplay) privacyDisplay.value = FLIP_DEFAULT_PRIVACY_DISPLAY_NAMES[privacyType];
+        }
+
+        function closeFlipDefaultSettingsDropdowns() {
+            const answerDropdown = document.getElementById('flip-default-answer-dropdown');
+            const privacyDropdown = document.getElementById('flip-default-privacy-dropdown');
+            const modalContent = document.querySelector('#flipDefaultSettingsModal .flip-default-settings-modal');
+            if (answerDropdown) answerDropdown.style.display = 'none';
+            if (privacyDropdown) privacyDropdown.style.display = 'none';
+            if (modalContent) modalContent.classList.remove('is-dropdown-open');
+        }
+
+        function toggleFlipDefaultSettingsDropdown(type) {
+            const answerDropdown = document.getElementById('flip-default-answer-dropdown');
+            const privacyDropdown = document.getElementById('flip-default-privacy-dropdown');
+            const target = type === 'privacy' ? privacyDropdown : answerDropdown;
+            const other = type === 'privacy' ? answerDropdown : privacyDropdown;
+            const modalContent = document.querySelector('#flipDefaultSettingsModal .flip-default-settings-modal');
+            const willOpen = !!target && target.style.display !== 'block';
+            if (other) other.style.display = 'none';
+            if (target) target.style.display = willOpen ? 'block' : 'none';
+            if (modalContent) modalContent.classList.toggle('is-dropdown-open', willOpen);
+        }
+
+        function selectFlipDefaultSetting(type, value, text) {
+            const isPrivacy = type === 'privacy';
+            const valueInput = document.getElementById(
+                isPrivacy ? 'flip-default-privacy-type' : 'flip-default-answer-type'
+            );
+            const displayInput = document.getElementById(
+                isPrivacy ? 'flip-default-privacy-display' : 'flip-default-answer-display'
+            );
+            if (valueInput) valueInput.value = String(value);
+            if (displayInput) displayInput.value = text;
+            closeFlipDefaultSettingsDropdowns();
+        }
+
+        function setDefaultFlipAnswerType(value) {
+            const answerType = Number(value);
+            const normalizedType = [1, 2, 3].includes(answerType) ? answerType : 1;
+            try {
+                localStorage.setItem(DEFAULT_FLIP_ANSWER_TYPE_KEY, String(normalizedType));
+            } catch (_error) {
+                // Keep the current session usable even when storage is unavailable.
+            }
+            syncDefaultFlipSettingsControls();
+
+            if (currentFlipPrices.length === 0) return;
+            const preferredOption = currentFlipPrices.find(option => Number(option.answerType) === normalizedType)
+                || currentFlipPrices[0];
+            if (preferredOption) {
+                const preferredType = Number(preferredOption.answerType);
+                selectFlipAnswer(
+                    preferredOption.answerType,
+                    FLIP_ANSWER_TYPE_NAMES[preferredType] || `类型 ${preferredOption.answerType}`
+                );
+            }
+        }
+
+        function setDefaultFlipPrivacyType(value) {
+            const privacyType = Number(value);
+            const normalizedType = [1, 2, 3].includes(privacyType) ? privacyType : 1;
+            try {
+                localStorage.setItem(DEFAULT_FLIP_PRIVACY_TYPE_KEY, String(normalizedType));
+            } catch (_error) {
+                // Keep the current session usable even when storage is unavailable.
+            }
+            syncDefaultFlipSettingsControls();
+            selectFlipPrivacy(normalizedType, FLIP_PRIVACY_TYPE_NAMES[normalizedType]);
+        }
+
+        function openFlipDefaultSettings() {
+            syncDefaultFlipSettingsControls();
+            closeFlipDefaultSettingsDropdowns();
+            const modal = document.getElementById('flipDefaultSettingsModal');
+            if (modal) modal.style.display = 'flex';
+        }
+
+        function closeFlipDefaultSettings() {
+            closeFlipDefaultSettingsDropdowns();
+            const modal = document.getElementById('flipDefaultSettingsModal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        function saveFlipDefaultSettings() {
+            const answerType = document.getElementById('flip-default-answer-type')?.value || '1';
+            const privacyType = document.getElementById('flip-default-privacy-type')?.value || '1';
+            setDefaultFlipAnswerType(answerType);
+            setDefaultFlipPrivacyType(privacyType);
+            closeFlipDefaultSettings();
+        }
 
         function getSafeToken() {
             if (typeof getAppToken === 'function') {
@@ -1380,8 +1522,9 @@
             if (!container) return;
 
             container.replaceChildren();
-
-            const typeNames = { 1: '文字翻牌', 2: '语音翻牌', 3: '视频翻牌' };
+            syncDefaultFlipSettingsControls();
+            const defaultPrivacyType = getDefaultFlipPrivacyType();
+            selectFlipPrivacy(defaultPrivacyType, FLIP_PRIVACY_TYPE_NAMES[defaultPrivacyType]);
 
             if (currentFlipPrices.length === 0) {
                 container.innerHTML = '<div class="suggestion-item" style="color:#999; cursor:default;">该成员暂未开通翻牌</div>';
@@ -1389,18 +1532,22 @@
                 return;
             }
 
-            currentFlipPrices.forEach((p, index) => {
-                const name = typeNames[p.answerType] || `类型 ${p.answerType}`;
+            currentFlipPrices.forEach(p => {
+                const name = FLIP_ANSWER_TYPE_NAMES[p.answerType] || `类型 ${p.answerType}`;
                 const div = document.createElement('div');
                 div.className = 'suggestion-item';
                 div.innerText = name;
                 div.onclick = () => selectFlipAnswer(p.answerType, name);
                 container.appendChild(div);
-
-                if (index === 0) {
-                    selectFlipAnswer(p.answerType, name);
-                }
             });
+
+            const defaultAnswerType = getDefaultFlipAnswerType();
+            const selectedOption = currentFlipPrices.find(
+                option => Number(option.answerType) === defaultAnswerType
+            ) || currentFlipPrices[0];
+            const selectedName = FLIP_ANSWER_TYPE_NAMES[selectedOption.answerType]
+                || `类型 ${selectedOption.answerType}`;
+            selectFlipAnswer(selectedOption.answerType, selectedName);
         }
 
         function checkFlipCostMin() {
@@ -1632,20 +1779,36 @@
             }
         }
 
+        syncDefaultFlipSettingsControls();
+        const flipDefaultSettingsModal = document.getElementById('flipDefaultSettingsModal');
+        if (flipDefaultSettingsModal && flipDefaultSettingsModal.dataset.dropdownDismissBound !== 'true') {
+            flipDefaultSettingsModal.dataset.dropdownDismissBound = 'true';
+            flipDefaultSettingsModal.addEventListener('click', event => {
+                if (!event.target.closest('.flip-default-dropdown-wrapper')) {
+                    closeFlipDefaultSettingsDropdowns();
+                }
+            });
+        }
+
         return {
             applyFlipSearch,
             changeFlipPage,
             checkFlipCostMin,
+            closeFlipDefaultSettings,
             executeDeleteFlip,
             executeSendFlip,
             forceReloadFlips,
             handleFlipSendSearch,
             loadFlipList,
+            openFlipDefaultSettings,
             refreshFlipUserBalance,
+            saveFlipDefaultSettings,
+            selectFlipDefaultSetting,
             selectFlipAnswer,
             selectFlipMemberFilter,
             selectFlipPrivacy,
             selectFlipSendMember,
+            setDefaultFlipAnswerType,
             selectFlipType,
             selectFlipVisibilityFilter,
             selectFlipSort,
@@ -1658,6 +1821,7 @@
             shiftFlipDateCalendarYear,
             shiftFlipDateCalendarMonth,
             toggleFlipAnswerDropdown,
+            toggleFlipDefaultSettingsDropdown,
             toggleFlipDateDropdown,
             toggleFlipMemberFilterDropdown,
             toggleFlipPrivacyDropdown,

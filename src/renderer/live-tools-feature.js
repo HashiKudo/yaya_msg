@@ -560,8 +560,6 @@
                     status.textContent = '尚未启用';
                 } else if (autoLiveRecordMembers.length === 0) {
                     status.textContent = '请先添加需要自动录制的成员';
-                } else if (activeCount > 0) {
-                    status.textContent = `正在录制 ${activeCount} 场，后台持续检测直播状态`;
                 } else {
                     status.textContent = `正在监控 ${autoLiveRecordMembers.length} 位成员`;
                 }
@@ -592,7 +590,8 @@
                 const name = document.createElement('b');
                 name.textContent = member.name;
                 const detail = document.createElement('small');
-                detail.textContent = `ID ${member.id}`;
+                const task = autoLiveRecordTasks.get(member.id);
+                detail.textContent = task ? '正在自动录制' : `ID ${member.id}`;
                 copy.append(name, detail);
 
                 const actions = document.createElement('span');
@@ -781,8 +780,8 @@
             if (!task?.liveId) return;
             const previous = autoLiveRecordRetryState.get(task.liveId);
             const attempts = Math.min((previous?.attempts || 0) + 1, 5);
-            const baseDelay = resume ? 3_000 : 15_000;
-            const maxDelay = resume ? 30_000 : 120_000;
+            const baseDelay = 3_000;
+            const maxDelay = 30_000;
             const delay = Math.min(baseDelay * (2 ** (attempts - 1)), maxDelay);
             autoLiveRecordRetryState.set(task.liveId, {
                 attempts,
@@ -829,6 +828,7 @@
                 autoLiveRecordTaskOwners.set(taskId, member.id);
                 ensureLiveRecordDownloadTask(taskId, fileName, '自动录制中，正在连接直播流...');
                 updateAutoLiveRecordUi();
+                renderAutoLiveRecordMembers();
                 ipcRenderer.send('start-record', {
                     url: streamUrl,
                     taskId,
@@ -931,6 +931,7 @@
                     if (task?.taskId === data.taskId) autoLiveRecordTasks.delete(autoMemberId);
                     autoLiveRecordTaskOwners.delete(data.taskId);
                     updateAutoLiveRecordUi();
+                    renderAutoLiveRecordMembers();
                 }
             }
             if (!data || data.taskId !== currentRecordTaskId) return;

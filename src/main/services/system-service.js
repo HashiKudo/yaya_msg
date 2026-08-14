@@ -18,8 +18,8 @@ const DESKTOP_TOAST_HEIGHT = 126;
 const DESKTOP_TOAST_GAP = 10;
 const DESKTOP_TOAST_MARGIN = 16;
 const DESKTOP_TOAST_DURATION_MS = 8000;
-const DESKTOP_TOAST_MAX_VISIBLE = 2;
-let cachedForegroundFullscreenState = { checkedAt: 0, isOtherAppFullscreen: false };
+const DESKTOP_TOAST_MAX_VISIBLE = 1;
+let cachedForegroundFullscreenState = { checkedAt: 0, isForegroundFullscreen: false };
 
 const WINDOWS_FULLSCREEN_CHECK_SCRIPT = String.raw`
 Add-Type -TypeDefinition @'
@@ -78,18 +78,17 @@ function runHiddenPowerShell(script, timeout = 1800) {
 }
 
 async function getForegroundFullscreenState() {
-    if (process.platform !== 'win32') return { isOtherAppFullscreen: false };
+    if (process.platform !== 'win32') return { isForegroundFullscreen: false };
     const now = Date.now();
     if (now - cachedForegroundFullscreenState.checkedAt < 750) {
         return cachedForegroundFullscreenState;
     }
 
     const output = await runHiddenPowerShell(WINDOWS_FULLSCREEN_CHECK_SCRIPT);
-    const [fullscreenFlag, ownerProcessId] = output.split('|');
+    const [fullscreenFlag] = output.split('|');
     cachedForegroundFullscreenState = {
         checkedAt: Date.now(),
-        isOtherAppFullscreen: fullscreenFlag === '1'
-            && Number(ownerProcessId) !== process.pid
+        isForegroundFullscreen: fullscreenFlag === '1'
     };
     return cachedForegroundFullscreenState;
 }
@@ -231,25 +230,25 @@ async function showSystemNotification(payload = {}, mainWindow) {
     const avatarUrl = /^(?:https?:\/\/|data:image\/)/i.test(rawAvatarUrl)
         ? rawAvatarUrl
         : appIconDataUrl;
-    const { isOtherAppFullscreen } = await getForegroundFullscreenState();
+    const { isForegroundFullscreen } = await getForegroundFullscreenState();
     const memberKey = getDesktopToastMemberKey(payload, title);
     const existingEntry = activeDesktopToasts.find(entry => (
         !entry.closing
         && !entry.window.isDestroyed()
-        && entry.memberKey === memberKey
     ));
 
-    // 同一成员的大、小房间可能在相邻轮询中分别更新。已有弹窗时直接更新内容，避免叠出两个窗口。
+    // 单弹窗模式下直接更新现有窗口，避免不同成员的新消息导致窗口关闭后重建而闪烁。
     if (existingEntry) {
         const existingWindow = existingEntry.window;
+        existingEntry.memberKey = memberKey;
         existingEntry.payload = payload;
         existingEntry.title = title;
         if (existingEntry.timer) clearTimeout(existingEntry.timer);
         const renderPayload = getDesktopToastRenderPayload(title, body, avatarUrl, appIconDataUrl, theme);
         try {
             await existingWindow.webContents.executeJavaScript(`window.renderYayaNotification(${renderPayload})`);
-            existingWindow.setAlwaysOnTop(!isOtherAppFullscreen, isOtherAppFullscreen ? 'normal' : 'pop-up-menu');
-            if (isOtherAppFullscreen) {
+            existingWindow.setAlwaysOnTop(!isForegroundFullscreen, isForegroundFullscreen ? 'normal' : 'pop-up-menu');
+            if (isForegroundFullscreen) {
                 await placeToastBehindForegroundWindow(existingWindow);
             } else {
                 existingWindow.showInactive();
@@ -280,7 +279,7 @@ async function showSystemNotification(payload = {}, mainWindow) {
         maximizable: false,
         fullscreenable: false,
         skipTaskbar: true,
-        alwaysOnTop: !isOtherAppFullscreen,
+        alwaysOnTop: !isForegroundFullscreen,
         focusable: true,
         hasShadow: false,
         backgroundColor: '#00000000',
@@ -291,7 +290,7 @@ async function showSystemNotification(payload = {}, mainWindow) {
         }
     });
 
-    if (!isOtherAppFullscreen) {
+    if (!isForegroundFullscreen) {
         toastWindow.setAlwaysOnTop(true, 'pop-up-menu');
     }
     toastWindow.setMenuBarVisibility(false);
@@ -328,7 +327,7 @@ async function showSystemNotification(payload = {}, mainWindow) {
 
         const renderPayload = getDesktopToastRenderPayload(title, body, avatarUrl, appIconDataUrl, theme);
         await toastWindow.webContents.executeJavaScript(`window.renderYayaNotification(${renderPayload})`);
-        if (isOtherAppFullscreen) {
+        if (isForegroundFullscreen) {
             await placeToastBehindForegroundWindow(toastWindow);
         } else {
             toastWindow.showInactive();

@@ -1215,7 +1215,9 @@ async function startProxy(remotePayload, {
     inputOptions,
     outputOptions,
     errorPrefix,
-    waitForInputReady = false
+    waitForInputReady = false,
+    readinessFallbackMs = 1200,
+    startTimeoutMs = PROXY_START_TIMEOUT_MS
 }) {
     if (!ffmpegConfig.isAvailable) {
         throw new Error('FFmpeg 不可用，请检查系统环境或打包资源');
@@ -1245,7 +1247,7 @@ async function startProxy(remotePayload, {
                 currentProxyCommand = null;
             }
             reject(new Error('媒体代理启动超时'));
-        }, PROXY_START_TIMEOUT_MS);
+        }, Math.max(1000, Number(startTimeoutMs) || PROXY_START_TIMEOUT_MS));
 
         const settleSuccess = () => {
             if (settled) return;
@@ -1290,7 +1292,10 @@ async function startProxy(remotePayload, {
                     settleSuccess();
                     return;
                 }
-                readinessFallbackTimer = setTimeout(settleSuccess, 1200);
+                const fallbackDelay = Number(readinessFallbackMs) || 0;
+                if (fallbackDelay > 0) {
+                    readinessFallbackTimer = setTimeout(settleSuccess, fallbackDelay);
+                }
             })
             .on('codecData', () => {
                 if (waitForInputReady) settleSuccess();
@@ -1306,7 +1311,10 @@ function startLiveProxy(remoteUrl) {
         streamPrefix: 'live',
         inputOptions: ['-re', '-rw_timeout 5000000'],
         outputOptions: ['-c copy', '-f flv'],
-        errorPrefix: '直播代理中断'
+        errorPrefix: '直播代理中断',
+        waitForInputReady: true,
+        readinessFallbackMs: 0,
+        startTimeoutMs: 15000
     });
 }
 

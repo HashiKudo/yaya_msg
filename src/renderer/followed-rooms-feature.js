@@ -163,6 +163,7 @@
             const partiallyEnabled = enabledCount > 0 && !allEnabled;
             const label = allEnabled ? '一键关闭所有通知' : '一键开启所有通知';
             button.disabled = candidates.length === 0;
+            button.classList.remove('is-initializing');
             const buttonLabel = button.querySelector('.followed-notification-all-label');
             if (buttonLabel) buttonLabel.textContent = allEnabled ? '全开' : partiallyEnabled ? '部分' : '全关';
             button.classList.toggle('is-enabled', allEnabled);

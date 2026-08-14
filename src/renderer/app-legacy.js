@@ -58,6 +58,7 @@
         let initBilibiliLiveConfig;
         let enterBilibiliLiveView;
         let renderBilibiliLiveRoomButtons;
+        let selectBilibiliLiveGroup;
         let startBilibiliLiveStatusPolling;
         let stopBilibiliLiveStatusPolling;
         let destroyBilibiliLivePlayer;
@@ -100,7 +101,16 @@
         let selectOpenLiveMember;
         let fetchOpenLiveList;
         let fetchAllOpenLive;
+        let playOpenLiveVideo;
         let openOpenLiveInPotPlayer;
+        let openOpenLiveParticipantsModal;
+        let closeOpenLiveParticipantsModal;
+        let enterPerformanceView;
+        let loadMorePerformanceList;
+        let refreshPerformanceList;
+        let selectPerformanceGroup;
+        let searchPerformanceList;
+        let handlePerformanceMemberSearch;
         let destroyPlayers;
         let currentPlayingAudio = null;
         let currentPlayingVideo = null;
@@ -119,6 +129,10 @@
         let handleMemberDynamicSearch;
         let selectMemberDynamicMember;
         let fetchMemberDynamic;
+        let toggleMemberDynamicComments;
+        let loadMoreMemberDynamicComments;
+        let sendMemberDynamicComment;
+        let deleteMemberDynamicComment;
         let handleMemberWeiboSearch;
         let selectMemberWeiboMember;
         let fetchAllMemberWeibo;
@@ -137,6 +151,7 @@
         let autoConnectFollowedRoomRadio;
         let ensureRoomRadioScanFresh;
         let startAllMemberRoomRadioAutoScan;
+        let startFollowedMemberRoomRadioAutoScan;
         let stopAllMemberRoomRadioAutoScan;
         let toggleAllMemberRoomRadioScan;
         let toggleScannedRoomRadioMute;
@@ -203,6 +218,12 @@
         let selectFlipMemberFilter;
         let selectFlipPrivacy;
         let selectFlipSendMember;
+        let setDefaultFlipAnswerType;
+        let openFlipDefaultSettings;
+        let closeFlipDefaultSettings;
+        let saveFlipDefaultSettings;
+        let selectFlipDefaultSetting;
+        let toggleFlipDefaultSettingsDropdown;
         let selectFlipType;
         let selectFlipCalendarDate;
         let selectLiveGift;
@@ -273,12 +294,18 @@
         let executeQuickAction;
         let backToFollowedRoomList;
         let backFollowedUserProfile;
+        let deleteFollowedProfileDynamicComment;
         let openFollowedChat;
+        let openActiveFollowedFlipQuestion;
+        let openActiveFollowedRoomAlbum;
         let openFollowedProfilePrivateMessage;
         let openFollowedProfileRoom;
         let openFollowedUserProfile;
         let closeFollowedUserProfile;
         let switchFollowedUserProfileTab;
+        let toggleFollowedProfileDynamicComments;
+        let loadMoreFollowedProfileDynamicComments;
+        let sendFollowedProfileDynamicComment;
         let toggleFollowedProfileFollow;
         let toggleFollowedRoomType;
         let jumpToFullRoom;
@@ -384,6 +411,24 @@
             applyRoomAlbumChannelValue();
         }
 
+        function openRoomAlbumForRoom(name, bigChannelId, smallChannelId = '', roomType = 'big') {
+            const normalizedBigChannelId = String(bigChannelId || '').trim();
+            const normalizedSmallChannelId = String(smallChannelId || '').trim();
+            const openSmallRoom = roomType === 'small' && !!normalizedSmallChannelId;
+            const targetChannelId = openSmallRoom ? normalizedSmallChannelId : normalizedBigChannelId;
+            if (!targetChannelId) {
+                showToast('当前房间缺少相册 Channel ID');
+                return;
+            }
+
+            isRoomAlbumSmallRoomMode = openSmallRoom;
+            switchView('room-album');
+            selectRoomAlbumMember(name, normalizedBigChannelId, normalizedSmallChannelId);
+            updateRoomAlbumRoomTypeUi();
+            applyRoomAlbumChannelValue();
+            setTimeout(() => fetchRoomAlbum(false), 0);
+        }
+
         function updateRoomRadioRoomTypeUi() {
             const channelInput = document.getElementById('room-radio-channel-id');
             const channelLabel = document.getElementById('room-radio-channel-label');
@@ -430,6 +475,8 @@
         let liveAnnouncementDismissed = false;
         let currentViewName = 'home';
         let currentViewMode = null;
+        let pendingMediaReturnView = null;
+        let activeMediaReturnView = null;
         let mediaPlaybackViewToken = 0;
         let messageIndexAutoRefreshTimer = null;
 
@@ -806,6 +853,7 @@
                 document.getElementById('view-bilibili-live'),
                 document.getElementById('view-flip'),
                 document.getElementById('view-profile'),
+                document.getElementById('view-performance'),
                 document.getElementById('view-open-live'),
                 document.getElementById('view-send-flip'),
                 document.getElementById('view-settings'),
@@ -880,6 +928,7 @@
             'flip',
             'send-flip',
             'profile',
+            'performance',
             'openlive',
             'photos',
             'room-album',
@@ -1160,6 +1209,7 @@
             fetch: '抓取消息',
             'private-messages': '私信列表',
             'bilibili-live': 'B站直播',
+            performance: '公演列表',
             flip: '翻牌记录',
             profile: '成员档案',
             openlive: '公演记录',
@@ -1203,6 +1253,7 @@
 
         function switchView(viewName, mode = null) {
             try {
+                if (viewName === 'openlive') viewName = 'performance';
                 if (viewName !== 'login' && !ensureLoginBeforeSwitchView(viewName)) {
                     return;
                 }
@@ -1220,6 +1271,10 @@
 
                 closeAllModalOverlays();
                 mediaPlaybackViewToken += 1;
+                if (viewName === 'media') {
+                    activeMediaReturnView = pendingMediaReturnView;
+                    pendingMediaReturnView = null;
+                }
                 currentViewName = viewName;
                 currentViewMode = mode;
                 updateTopbarPageTitle(viewName, mode);
@@ -1243,6 +1298,7 @@
                 const bilibiliLiveView = document.getElementById('view-bilibili-live');
                 const flipView = document.getElementById('view-flip');
                 const profileView = document.getElementById('view-profile');
+                const performanceView = document.getElementById('view-performance');
                 const openLiveView = document.getElementById('view-open-live');
                 const sendFlipView = document.getElementById('view-send-flip');
                 const settingsView = document.getElementById('view-settings');
@@ -1291,16 +1347,22 @@
                     const vodControls = document.getElementById('media-list-controls');
                     const vodPagination = document.getElementById('vod-pagination-controls');
                     const liveControls = document.getElementById('live-list-controls');
+                    const liveListContainer = document.getElementById('live-list-container');
+                    const vodListContainer = document.getElementById('vod-list-container');
 
                     configureMeet48ListControls();
 
                     if (isLiveMediaMode(mode)) {
+                        if (liveListContainer) liveListContainer.hidden = false;
+                        if (vodListContainer) vodListContainer.hidden = true;
                         titleEl.textContent = mode === 'meet-live' ? '海外直播' : '正在直播';
                         if (vodControls) vodControls.style.display = 'none';
                         if (vodPagination) vodPagination.style.display = 'none';
                         if (liveControls) liveControls.style.display = 'flex';
                         fetchLiveList();
                     } else if (isVodMediaMode(mode)) {
+                        if (liveListContainer) liveListContainer.hidden = true;
+                        if (vodListContainer) vodListContainer.hidden = false;
                         titleEl.textContent = mode === 'meet-vod' ? '海外回放' : '录播回放';
                         if (vodControls) vodControls.style.display = 'flex';
                         if (vodPagination) vodPagination.style.display = 'flex';
@@ -1312,11 +1374,7 @@
                                 vodState.resetPagination(vodState.currentGroup);
                                 vodState.filterSignature = getVodFilterSignature();
                             }
-                            if (vodState.list.length === 0) {
-                                ensurePageData(VOD_INITIAL_PAGE_TARGET).then(() => window.renderVODListUI());
-                            } else {
-                                window.renderVODListUI();
-                            }
+                            handleRefreshList();
                         }
                     }
                     document.getElementById('live-player-view').style.display = 'none';
@@ -1386,6 +1444,15 @@
                     toggleSidebarMode('login');
                     if (bilibiliLiveView) bilibiliLiveView.style.display = 'block';
                     enterBilibiliLiveView();
+
+                } else if (viewName === 'performance') {
+                    setGlobalSidebarVisible(false);
+                    setSidebarHomeMode(false);
+                    toggleSidebarMode('media');
+                    if (performanceView) performanceView.style.display = 'block';
+                    if (typeof enterPerformanceView === 'function') {
+                        enterPerformanceView();
+                    }
 
                 } else if (viewName === 'settings') {
                     setGlobalSidebarVisible(false);
@@ -1472,6 +1539,10 @@
                     }
 
                     setTimeout(() => {
+                        if (window.suppressNextFlipMemberAutofocus) {
+                            window.suppressNextFlipMemberAutofocus = false;
+                            return;
+                        }
                         const input = document.getElementById('flip-send-member-input');
                         if (input) input.focus();
                     }, 100);
@@ -1582,6 +1653,9 @@
                     if (followedRoomsView) {
                         followedRoomsView.style.display = 'block';
                         loadFollowedRooms();
+                        if (typeof startFollowedMemberRoomRadioAutoScan === 'function') {
+                            startFollowedMemberRoomRadioAutoScan();
+                        }
                         const activeRoomRadioChannelId = typeof getActiveFollowedChannel === 'function'
                             ? getActiveFollowedChannel()
                             : '';
@@ -1595,11 +1669,6 @@
                                 activeRoomCard?.dataset?.memberId || '',
                                 activeRoomCard?.dataset?.ownerName || ''
                             );
-                        }
-                        if (typeof window.ensureRoomRadioScanFresh === 'function') {
-                            window.ensureRoomRadioScanFresh({
-                                preferredChannelId: activeRoomRadioChannelId
-                            });
                         }
                         if (typeof startFollowedRoomsPolling === 'function') startFollowedRoomsPolling();
                     }
@@ -2316,6 +2385,7 @@
         const liveVideo = document.getElementById('live-video');
         const livePlayerArea = document.getElementById('live-player-area');
         const mediaListControls = document.getElementById('media-list-controls');
+        const liveListContainer = document.getElementById('live-list-container');
         const vodListContainer = document.getElementById('vod-list-container');
         const vodLoading = document.getElementById('vod-loading');
         const mediaListArea = document.getElementById('media-list-area');
@@ -2454,6 +2524,7 @@
             enterBilibiliLiveView,
             initBilibiliLiveConfig,
             renderBilibiliLiveRoomButtons,
+            selectBilibiliLiveGroup,
             startBilibiliLiveStatusPolling,
             stopBilibiliLiveStatusPolling,
             destroyBilibiliLivePlayer,
@@ -2523,18 +2594,24 @@
             backToFollowedRoomList,
             backFollowedUserProfile,
             closeFollowedUserProfile,
+            deleteFollowedProfileDynamicComment,
             flushFollowedPendingMessages,
             getActiveFollowedChannel,
             jumpToFullRoom,
             loadFollowedChatPage,
+            openActiveFollowedFlipQuestion,
+            openActiveFollowedRoomAlbum,
             openFollowedChat,
             openFollowedProfilePrivateMessage,
             openFollowedProfileRoom,
             openFollowedProfileVideo,
             openFollowedUserProfile,
+            loadMoreFollowedProfileDynamicComments,
             playSharedLiveFromMessage,
+            sendFollowedProfileDynamicComment,
             closeFollowedProfileVideo,
             switchFollowedUserProfileTab,
+            toggleFollowedProfileDynamicComments,
             toggleFollowedProfileFollow,
             toggleFollowedChatMode,
             toggleFollowedRoomType
@@ -2544,6 +2621,7 @@
             fetchPocketAPI,
             getAdaptivePollDelay: () => getAdaptivePollDelay(),
             getAppToken: () => getCurrentAppToken(),
+            getCurrentUserId: () => (typeof currentPocketUserId !== 'undefined' ? currentPocketUserId : ''),
             getMemberData: () => memberData || [],
             getOptimizedThumbUrl,
             ipcRenderer,
@@ -2554,23 +2632,37 @@
             playLiveStream: (...args) => typeof playLiveStream === 'function'
                 ? playLiveStream(...args)
                 : undefined,
+            setMediaReturnView: viewName => { pendingMediaReturnView = viewName || null; },
             replaceTencentEmoji: value => typeof replaceTencentEmoji === 'function' ? replaceTencentEmoji(value) : value,
+            showConfirm: (message, onConfirm) => {
+                if (typeof showCustomConfirm === 'function') {
+                    showCustomConfirm(message, onConfirm);
+                } else if (window.confirm(message)) {
+                    onConfirm();
+                }
+            },
             showToast: (...args) => showToast(...args),
             switchView
         }));
         window.backToFollowedRoomList = backToFollowedRoomList;
         window.backFollowedUserProfile = backFollowedUserProfile;
+        window.deleteFollowedProfileDynamicComment = deleteFollowedProfileDynamicComment;
         window.flushFollowedPendingMessages = flushFollowedPendingMessages;
         window.jumpToFullRoom = jumpToFullRoom;
         window.loadFollowedChatPage = loadFollowedChatPage;
+        window.openActiveFollowedFlipQuestion = openActiveFollowedFlipQuestion;
+        window.openActiveFollowedRoomAlbum = openActiveFollowedRoomAlbum;
         window.openFollowedChat = openFollowedChat;
         window.openFollowedProfilePrivateMessage = openFollowedProfilePrivateMessage;
         window.openFollowedProfileRoom = openFollowedProfileRoom;
         window.openFollowedProfileVideo = openFollowedProfileVideo;
         window.openFollowedUserProfile = openFollowedUserProfile;
+        window.loadMoreFollowedProfileDynamicComments = loadMoreFollowedProfileDynamicComments;
+        window.sendFollowedProfileDynamicComment = sendFollowedProfileDynamicComment;
         window.closeFollowedUserProfile = closeFollowedUserProfile;
         window.closeFollowedProfileVideo = closeFollowedProfileVideo;
         window.switchFollowedUserProfileTab = switchFollowedUserProfileTab;
+        window.toggleFollowedProfileDynamicComments = toggleFollowedProfileDynamicComments;
         window.toggleFollowedProfileFollow = toggleFollowedProfileFollow;
         window.playSharedLiveFromMessage = playSharedLiveFromMessage;
         window.toggleFollowedChatMode = toggleFollowedChatMode;
@@ -2908,7 +3000,10 @@
             selectOpenLiveMember,
             fetchOpenLiveList,
             fetchAllOpenLive,
-            openOpenLiveInPotPlayer
+            playOpenLiveVideo,
+            openOpenLiveInPotPlayer,
+            openOpenLiveParticipantsModal,
+            closeOpenLiveParticipantsModal
         } = window.YayaRendererFeatures.createOpenLiveFeature({
             getAppToken: () => getCurrentAppToken(),
             getMemberData: () => window.memberData || [],
@@ -2928,6 +3023,7 @@
             resetClipTool,
             setCurrentPlayingItem: value => { currentPlayingItem = value; },
             setReturnToOpenLive: value => { returnToOpenLive = !!value; },
+            setReturnToPerformance: value => { returnToPerformance = !!value; },
             startPlayer: (...args) => typeof startPlayer === 'function'
                 ? startPlayer(...args)
                 : undefined,
@@ -2939,7 +3035,48 @@
         window.selectOpenLiveMember = selectOpenLiveMember;
         window.fetchOpenLiveList = fetchOpenLiveList;
         window.fetchAllOpenLive = fetchAllOpenLive;
+        window.playOpenLiveVideo = playOpenLiveVideo;
         window.openOpenLiveInPotPlayer = openOpenLiveInPotPlayer;
+        window.openOpenLiveParticipantsModal = openOpenLiveParticipantsModal;
+        window.closeOpenLiveParticipantsModal = closeOpenLiveParticipantsModal;
+
+        ({
+            enterPerformanceView,
+            loadMorePerformanceList,
+            refreshPerformanceList,
+            selectPerformanceGroup,
+            searchPerformanceList,
+            handlePerformanceMemberSearch
+        } = window.YayaRendererFeatures.createPerformanceFeature({
+            getAppToken: () => getCurrentAppToken(),
+            getMemberData: () => window.memberData || [],
+            getMemberDataLoaded: () => !!window.isMemberDataLoaded,
+            loadMemberData,
+            getPinyinInitials,
+            memberSortLogic,
+            getTeamStyle: (...args) => {
+                if (typeof getTeamStyle === 'function') return getTeamStyle(...args);
+                if (typeof window.getTeamStyle === 'function') return window.getTeamStyle(...args);
+                return '';
+            },
+            ipcRenderer,
+            openBilibiliLiveGroup: async groupKey => {
+                switchView('bilibili-live');
+                const opened = await selectBilibiliLiveGroup(groupKey, true);
+                if (!opened) {
+                    showToast('未找到对应团体的B站直播间');
+                }
+                return opened;
+            },
+            playOpenLiveVideo: (...args) => playOpenLiveVideo(...args),
+            showToast: (...args) => showToast(...args)
+        }));
+        window.enterPerformanceView = enterPerformanceView;
+        window.loadMorePerformanceList = loadMorePerformanceList;
+        window.refreshPerformanceList = refreshPerformanceList;
+        window.selectPerformanceGroup = selectPerformanceGroup;
+        window.searchPerformanceList = searchPerformanceList;
+        window.handlePerformanceMemberSearch = handlePerformanceMemberSearch;
 
         ({
             handleProfileSearch,
@@ -3030,13 +3167,19 @@
         window.handleRoomAlbumSearch = handleRoomAlbumSearch;
         window.selectRoomAlbumMember = selectRoomAlbumMember;
         window.fetchRoomAlbum = fetchRoomAlbum;
+        window.openRoomAlbumForRoom = openRoomAlbumForRoom;
 
         ({
             handleMemberDynamicSearch,
             selectMemberDynamicMember,
-            fetchMemberDynamic
+            fetchMemberDynamic,
+            toggleMemberDynamicComments,
+            loadMoreMemberDynamicComments,
+            sendMemberDynamicComment,
+            deleteMemberDynamicComment
         } = window.YayaRendererFeatures.createMemberDynamicFeature({
             getAppToken: () => getCurrentAppToken(),
+            getCurrentUserId: () => (typeof currentPocketUserId !== 'undefined' ? currentPocketUserId : ''),
             getMemberData: () => window.memberData || [],
             getMemberDataLoaded: () => !!window.isMemberDataLoaded,
             loadMemberData,
@@ -3049,12 +3192,17 @@
             },
             getOptimizedThumbUrl,
             ipcRenderer,
+            replaceTencentEmoji: value => typeof replaceTencentEmoji === 'function' ? replaceTencentEmoji(value) : value,
             showToast: (...args) => showToast(...args),
             openImageModal
         }));
         window.handleMemberDynamicSearch = handleMemberDynamicSearch;
         window.selectMemberDynamicMember = selectMemberDynamicMember;
         window.fetchMemberDynamic = fetchMemberDynamic;
+        window.toggleMemberDynamicComments = toggleMemberDynamicComments;
+        window.loadMoreMemberDynamicComments = loadMoreMemberDynamicComments;
+        window.sendMemberDynamicComment = sendMemberDynamicComment;
+        window.deleteMemberDynamicComment = deleteMemberDynamicComment;
 
         ({
             handleMemberWeiboSearch,
@@ -3121,6 +3269,7 @@
             autoConnectFollowedRoomRadio,
             ensureRoomRadioScanFresh,
             startAllMemberRoomRadioAutoScan,
+            startFollowedMemberRoomRadioAutoScan,
             stopAllMemberRoomRadioAutoScan,
             toggleAllMemberRoomRadioScan,
             toggleScannedRoomRadioMute,
@@ -3154,6 +3303,7 @@
         window.autoConnectFollowedRoomRadio = autoConnectFollowedRoomRadio;
         window.ensureRoomRadioScanFresh = ensureRoomRadioScanFresh;
         window.startAllMemberRoomRadioAutoScan = startAllMemberRoomRadioAutoScan;
+        window.startFollowedMemberRoomRadioAutoScan = startFollowedMemberRoomRadioAutoScan;
         window.stopAllMemberRoomRadioAutoScan = stopAllMemberRoomRadioAutoScan;
         window.toggleAllMemberRoomRadioScan = toggleAllMemberRoomRadioScan;
         window.toggleScannedRoomRadioMute = toggleScannedRoomRadioMute;
@@ -3290,16 +3440,21 @@
             applyFlipSearch,
             changeFlipPage,
             checkFlipCostMin,
+            closeFlipDefaultSettings,
             executeDeleteFlip,
             executeSendFlip,
             forceReloadFlips,
             handleFlipSendSearch,
             loadFlipList,
+            openFlipDefaultSettings,
             refreshFlipUserBalance,
+            saveFlipDefaultSettings,
+            selectFlipDefaultSetting,
             selectFlipAnswer,
             selectFlipMemberFilter,
             selectFlipPrivacy,
             selectFlipSendMember,
+            setDefaultFlipAnswerType,
             selectFlipType,
             selectFlipVisibilityFilter,
             selectFlipSort,
@@ -3312,6 +3467,7 @@
             shiftFlipDateCalendarYear,
             shiftFlipDateCalendarMonth,
             toggleFlipAnswerDropdown,
+            toggleFlipDefaultSettingsDropdown,
             toggleFlipDateDropdown,
             toggleFlipMemberFilterDropdown,
             toggleFlipPrivacyDropdown,
@@ -3365,16 +3521,21 @@
         window.applyFlipSearch = applyFlipSearch;
         window.changeFlipPage = changeFlipPage;
         window.checkFlipCostMin = checkFlipCostMin;
+        window.closeFlipDefaultSettings = closeFlipDefaultSettings;
         window.executeDeleteFlip = executeDeleteFlip;
         window.executeSendFlip = executeSendFlip;
         window.forceReloadFlips = forceReloadFlips;
         window.handleFlipSendSearch = handleFlipSendSearch;
         window.loadFlipList = loadFlipList;
+        window.openFlipDefaultSettings = openFlipDefaultSettings;
         window.refreshFlipUserBalance = refreshFlipUserBalance;
+        window.saveFlipDefaultSettings = saveFlipDefaultSettings;
+        window.selectFlipDefaultSetting = selectFlipDefaultSetting;
         window.selectFlipAnswer = selectFlipAnswer;
         window.selectFlipMemberFilter = selectFlipMemberFilter;
         window.selectFlipPrivacy = selectFlipPrivacy;
         window.selectFlipSendMember = selectFlipSendMember;
+        window.setDefaultFlipAnswerType = setDefaultFlipAnswerType;
         window.selectFlipType = selectFlipType;
         window.selectFlipVisibilityFilter = selectFlipVisibilityFilter;
         window.selectFlipSort = selectFlipSort;
@@ -3387,6 +3548,7 @@
         window.shiftFlipDateCalendarYear = shiftFlipDateCalendarYear;
         window.shiftFlipDateCalendarMonth = shiftFlipDateCalendarMonth;
         window.toggleFlipAnswerDropdown = toggleFlipAnswerDropdown;
+        window.toggleFlipDefaultSettingsDropdown = toggleFlipDefaultSettingsDropdown;
         window.toggleFlipDateDropdown = toggleFlipDateDropdown;
         window.toggleFlipMemberFilterDropdown = toggleFlipMemberFilterDropdown;
         window.toggleFlipPrivacyDropdown = toggleFlipPrivacyDropdown;
@@ -4302,6 +4464,7 @@
         }
 
         let returnToOpenLive = false;
+        let returnToPerformance = false;
 
         function backToLiveList() {
             closeAllModalOverlays();
@@ -4313,6 +4476,27 @@
                 if (typeof destroyPlayers === 'function') destroyPlayers();
                 returnToOpenLive = false;
                 switchView('openlive');
+                return;
+            }
+
+            if (returnToPerformance) {
+                const dmWrapper = document.getElementById('danmu-timeline-wrapper');
+                if (dmWrapper) dmWrapper.style.display = 'none';
+                livePlayerView.style.display = 'none';
+                if (typeof destroyPlayers === 'function') destroyPlayers();
+                returnToPerformance = false;
+                switchView('performance');
+                return;
+            }
+
+            if (activeMediaReturnView === 'followed-rooms') {
+                activeMediaReturnView = null;
+                const dmWrapper = document.getElementById('danmu-timeline-wrapper');
+                if (dmWrapper) dmWrapper.style.display = 'none';
+                livePlayerView.style.display = 'none';
+                document.getElementById('media-list-area').style.display = 'block';
+                if (typeof destroyPlayers === 'function') destroyPlayers();
+                switchView('followed-rooms');
                 return;
             }
 
@@ -5086,10 +5270,10 @@
         }
         async function fetchLiveList() {
             const vodLoading = document.getElementById('vod-loading');
-            const vodListContainer = document.getElementById('vod-list-container');
+            const liveListContainer = document.getElementById('live-list-container');
 
             vodLoading.style.display = 'block';
-            vodListContainer.replaceChildren();
+            liveListContainer.replaceChildren();
 
             try {
                 const res = currentMode === 'meet-live'
@@ -5108,7 +5292,7 @@
                     handleLiveFilter();
                 } else {
                     currentLiveListRaw = [];
-                    vodListContainer.innerHTML = '<div style="width:100%; text-align:center; color:#888;">当前没有成员在直播</div>';
+                    liveListContainer.innerHTML = '<div style="width:100%; text-align:center; color:#888;">当前没有成员在直播</div>';
                 }
             } catch (err) {
                 console.error(err);
@@ -5150,7 +5334,7 @@
             const typeVal = document.getElementById('live-type-value').value;
 
             const searchInput = document.getElementById('live-search-input');
-            const container = document.getElementById('vod-list-container');
+            const container = document.getElementById('live-list-container');
             const keyword = searchInput ? searchInput.value.trim().toLowerCase() : '';
 
             if (!currentLiveListRaw || currentLiveListRaw.length === 0) {
@@ -5225,8 +5409,8 @@
 
 
         function renderLiveList(list) {
-            vodListContainer.className = 'live-card-grid';
-            vodListContainer.replaceChildren();
+            liveListContainer.className = 'live-card-grid';
+            liveListContainer.replaceChildren();
             list.forEach(item => {
                 const card = document.createElement('div');
                 card.className = 'live-card';
@@ -5248,7 +5432,7 @@
                     <div class="title">${item.title}</div>
                 `;
                 card.onclick = () => playLiveStream(item, isMeetItem ? 'meet-live' : 'live');
-                vodListContainer.appendChild(card);
+                liveListContainer.appendChild(card);
             });
         }
 
@@ -5305,35 +5489,7 @@
         });
 
         function replaceTencentEmoji(text) {
-            if (!text) return text;
-
-            const emojiMap = {
-                "[色]": "😍", "[爱心]": "❤️", "[亲亲]": "😚", "[生病]": "😷",
-                "[大哭]": "😭", "[微笑]": "🙂", "[酷]": "😎", "[坏笑]": "😏",
-                "[惊恐]": "😱", "[愉快]": "😊", "[憨笑]": "😄", "[悠闲]": "😌",
-                "[奋斗]": "💪", "[大笑]": "😆", "[疑问]": "❓", "[嘘]": "🤫",
-                "[晕]": "😵", "[衰]": "😞", "[骷髅]": "💀", "[敲打]": "🔨",
-                "[再见]": "👋", "[擦汗]": "😓", "[抠鼻]": "👃", "[鼓掌]": "👏",
-                "[糗大了]": "😳", "[左哼哼]": "😤", "[右哼哼]": "😤", "[哈欠]": "🥱",
-                "[鄙视]": "👎", "[委屈]": "🥺", "[快哭了]": "😿", "[阴险]": "😈",
-                "[亲亲]": "😘", "[吓]": "😨", "[可怜]": "🥺", "[菜刀]": "🔪",
-                "[西瓜]": "🍉", "[啤酒]": "🍺", "[篮球]": "🏀", "[乒乓]": "🏓",
-                "[咖啡]": "☕", "[饭]": "🍚", "[猪头]": "🐷", "[玫瑰]": "🌹",
-                "[凋谢]": "🥀", "[嘴唇]": "💋", "[爱心]": "❤️", "[心碎]": "💔",
-                "[蛋糕]": "🎂", "[闪电]": "⚡", "[炸弹]": "💣", "[刀]": "🔪",
-                "[足球]": "⚽", "[瓢虫]": "🐞", "[便便]": "💩", "[月亮]": "🌙",
-                "[太阳]": "☀️", "[礼物]": "🎁", "[拥抱]": "🤗", "[强]": "👍",
-                "[弱]": "👎", "[握手]": "🤝", "[胜利]": "✌️", "[抱拳]": "🙏",
-                "[勾引]": "☝️", "[拳头]": "✊", "[差劲]": "👎", "[爱你]": "🤟",
-                "[NO]": "🙅", "[OK]": "👌", "[跳跳]": "💃", "[发抖]": "🥶",
-                "[怄火]": "😡", "[转圈]": "💫", "[磕头]": "🙇", "[回头]": "🔙",
-                "[跳绳]": "🏃", "[挥手]": "🙋", "[激动]": "🤩", "[街舞]": "🕺",
-                "[献吻]": "😽", "[左太极]": "☯️", "[右太极]": "☯️"
-            };
-
-            return text.replace(/\[([^\]]+)\]/g, (match, key) => {
-                return emojiMap[`[${key}]`] || match;
-            });
+            return window.YayaRendererUtils.replaceTencentEmoji(text);
         }
 
         function stripAudioReplyPrefixes(text) {
@@ -7858,6 +8014,7 @@
                 { id: 'autoLiveRecordModal', close: () => typeof closeAutoLiveRecordModal === 'function' && closeAutoLiveRecordModal() },
                 { id: 'autoRoomRadioRecordModal', close: () => typeof closeAutoRoomRadioRecordModal === 'function' && closeAutoRoomRadioRecordModal() },
                 { id: 'flipAnalysisModal', close: () => typeof closeFlipAnalysis === 'function' && closeFlipAnalysis() },
+                { id: 'flipDefaultSettingsModal', close: () => typeof closeFlipDefaultSettings === 'function' && closeFlipDefaultSettings() },
                 { id: 'global-announcement-modal', close: () => typeof closeAnnouncement === 'function' && closeAnnouncement() }
             ];
 

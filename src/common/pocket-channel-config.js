@@ -21,6 +21,7 @@ const POCKET_CHANNEL_METHODS = Object.freeze({
     'fetch-open-live': 'fetchOpenLive',
     'fetch-open-live-one': 'fetchOpenLiveOne',
     'fetch-open-live-public-list': 'fetchOpenLivePublicList',
+    'fetch-seine-performance-list': 'fetchSeinePerformanceList',
     'fetch-meet48-live-list': 'fetchMeet48LiveList',
     'fetch-meet48-live-one': 'fetchMeet48LiveOne',
     'fetch-open-live-participants': 'fetchOpenLiveParticipants',

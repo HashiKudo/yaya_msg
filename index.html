@@ -140,8 +140,8 @@
 
                 <div style="display: flex; gap: 10px;">
                     <button id="btn-sb-open-live" class="btn btn-secondary btn-full" style="flex: 1; padding: 0;"
-                        onclick="switchView('openlive')">
-                        公演记录
+                        onclick="switchView('performance')">
+                        公演列表
                     </button>
                     <button id="btn-sb-profile" class="btn btn-secondary btn-full" style="flex: 1; padding: 0;"
                         onclick="switchView('profile')">
@@ -389,7 +389,7 @@
 
                         <div class="home-panel home-panel-pocket">
                             <div class="home-panel-title">口袋</div>
-                            <div class="home-panel-subtitle">口袋房间、私信列表、房间相册、成员动态、成员微博</div>
+                            <div class="home-panel-subtitle">口袋房间、私信列表、房间相册、公演记录、成员微博</div>
                             <div class="home-panel-actions home-card-grid">
                                 <button class="home-card home-card-primary" onclick="switchView('followed-rooms')">
                                     <span class="home-card-title">房间</span>
@@ -403,9 +403,9 @@
                                     <span class="home-card-title">相册</span>
                                     <span class="home-card-desc">按房间查看图片</span>
                                 </button>
-                                <button class="home-card" onclick="switchView('member-dynamic')">
-                                    <span class="home-card-title">动态</span>
-                                    <span class="home-card-desc">查看成员口袋动态</span>
+                                <button class="home-card" onclick="switchView('performance')">
+                                    <span class="home-card-title">公演</span>
+                                    <span class="home-card-desc">查看公演与成员记录</span>
                                 </button>
                                 <button class="home-card" onclick="switchView('member-weibo')">
                                     <span class="home-card-title">微博</span>
@@ -416,7 +416,7 @@
 
                         <div class="home-panel home-panel-data">
                             <div class="home-panel-title">数据</div>
-                            <div class="home-panel-subtitle">成员档案、成员行程、公演记录、鸡腿榜、48区</div>
+                            <div class="home-panel-subtitle">成员档案、成员行程、成员动态、鸡腿榜、48区</div>
                             <div class="home-panel-actions home-card-grid">
                                 <button class="home-card" onclick="switchView('profile')">
                                     <span class="home-card-title">档案</span>
@@ -426,9 +426,9 @@
                                     <span class="home-card-title">行程</span>
                                     <span class="home-card-desc">查看公演与活动安排</span>
                                 </button>
-                                <button class="home-card" onclick="switchView('openlive')">
-                                    <span class="home-card-title">公演</span>
-                                    <span class="home-card-desc">查看公演与活动记录</span>
+                                <button class="home-card" onclick="switchView('member-dynamic')">
+                                    <span class="home-card-title">动态</span>
+                                    <span class="home-card-desc">查看成员口袋动态</span>
                                 </button>
                                 <button class="home-card" onclick="switchView('community')">
                                     <span class="home-card-title">社区</span>
@@ -528,7 +528,7 @@
                             <h2 style="margin: 0; color: var(--primary); font-size: 16px; line-height: 26px; transform: translateY(-1px);">聚聚</h2>
                             <div style="display: flex; gap: 8px;">
                                 <button id="btn-toggle-all-followed-notifications" type="button"
-                                    class="followed-notification-all-toggle"
+                                    class="followed-notification-all-toggle is-initializing"
                                     onclick="toggleAllFollowedRoomNotifications()" title="一键开启所有通知"
                                     aria-label="一键开启所有通知" aria-pressed="false">
                                     <svg class="followed-notification-all-icon" aria-hidden="true" viewBox="0 0 24 24">
@@ -611,6 +611,27 @@
                             </div>
 
                             <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+                                <button id="btn-open-followed-flip-question" type="button"
+                                    class="followed-notification-toggle followed-flip-question-button"
+                                    onclick="openActiveFollowedFlipQuestion()" title="向当前成员翻牌提问"
+                                    aria-label="向当前成员翻牌提问">
+                                    <svg class="followed-flip-question-icon" aria-hidden="true" viewBox="0 0 24 24">
+                                        <path d="M20 7.4A9 9 0 1 0 20 16.6L12 12Z" />
+                                        <circle cx="11" cy="7.5" r="1" />
+                                    </svg>
+                                </button>
+
+                                <button id="btn-open-followed-room-album" type="button"
+                                    class="followed-notification-toggle followed-room-album-button"
+                                    onclick="openActiveFollowedRoomAlbum()" title="打开当前房间相册"
+                                    aria-label="打开当前房间相册">
+                                    <svg class="followed-room-album-icon" aria-hidden="true" viewBox="0 0 24 24">
+                                        <rect x="3" y="5" width="18" height="14" rx="2" />
+                                        <circle cx="8.5" cy="10" r="1.5" />
+                                        <path d="M3 16l5-5 4 4 3-3 6 6" />
+                                    </svg>
+                                </button>
+
                                 <button id="btn-toggle-followed-notification" type="button"
                                     class="followed-notification-toggle" onclick="toggleActiveFollowedRoomNotification()"
                                     title="开启通知" aria-label="开启通知" aria-pressed="false">
@@ -727,7 +748,7 @@
                         自动录制
                     </button>
 
-                    <button class="btn btn-secondary" onclick="fetchLiveList()"
+                    <button id="btn-live-refresh" class="btn btn-secondary" onclick="fetchLiveList()"
                         style="white-space: nowrap; padding: 0 15px; height: 38px;">
                         刷新列表
                     </button>
@@ -784,7 +805,8 @@
                         style="display: flex; flex-direction: column; justify-content: flex-start;">
                     <div id="vod-loading"
                         style="text-align: center; padding: 20px; color: var(--text-sub); display: none;"></div>
-                        <div class="live-card-grid" id="vod-list-container"></div>
+                        <div class="live-card-grid" id="live-list-container" hidden></div>
+                        <div class="vod-list-mode" id="vod-list-container"></div>
                 </div>
 
                 <div id="live-player-view" style="display: none; height: 100%; flex-direction: column; padding: 0;">
@@ -817,16 +839,12 @@
                                 style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
                                 <button id="btn-player-rank" class="btn btn-secondary" onclick="openLiveRankPanel()"
                                     style="display: none; height: 36px; min-width: 74px; padding: 0 14px; font-size: 14px; flex-shrink: 0;">贡献榜</button>
+                                <button id="btn-player-participants" class="btn btn-secondary"
+                                    onclick="openOpenLiveParticipantsModal()"
+                                    style="display: none; height: 36px; min-width: 94px; padding: 0 14px; font-size: 14px; flex-shrink: 0;">参与成员</button>
                                 <button class="btn btn-secondary" onclick="backToLiveList()"
-                                    style="height: 36px; min-width: 86px; padding: 0 14px; font-size: 14px; flex-shrink: 0;">返回列表</button>
+                                    style="height: 36px; min-width: 74px; padding: 0 14px; font-size: 14px; flex-shrink: 0;">返回</button>
                             </div>
-                        </div>
-
-                        <div id="current-openlive-members-wrap"
-                            style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);">
-                            <div style="font-size: 11px; color: var(--text-sub); margin-bottom: 6px;">参与成员</div>
-                            <div id="current-openlive-members"
-                                style="font-size: 13px; line-height: 1.7; color: var(--text); word-break: break-word;"></div>
                         </div>
                     </div>
 
@@ -2485,9 +2503,15 @@
                             <div id="flip-config-area" style="display:none;">
 
                                 <div class="Box-row" style="z-index: 15;">
-                                    <h3
-                                        style="margin-top: 0; font-size: 16px; margin-bottom: 15px; border-left: 4px solid var(--primary); padding-left: 10px; color: var(--text);">
-                                        设置类型</h3>
+                                    <div class="flip-config-heading">
+                                        <h3
+                                            style="margin: 0; font-size: 16px; border-left: 4px solid var(--primary); padding-left: 10px; color: var(--text);">
+                                            设置类型</h3>
+                                        <button type="button" class="btn btn-secondary flip-default-settings-button"
+                                            onclick="openFlipDefaultSettings()" title="设置默认翻牌类型和公开设置">
+                                            默认设置
+                                        </button>
+                                    </div>
 
                                     <div style="display: flex; gap: 20px;">
                                         <div style="flex: 1;">
@@ -2790,6 +2814,50 @@
                             <div id="profile-result-container" style="margin-top: 20px;"></div>
                         </div>
                     </div>
+                    <div id="view-performance" class="performance-view"
+                        style="height: 100%; overflow-y: auto; display: none; padding: 20px 40px; box-sizing: border-box;">
+                        <div class="list-container performance-shell">
+                            <div class="performance-toolbar" aria-label="公演筛选与搜索">
+                                <div class="performance-filter-row performance-group-filter-row">
+                                    <button type="button" class="performance-filter is-active" data-performance-group="all"
+                                        aria-pressed="true" onclick="selectPerformanceGroup('all')">全部</button>
+                                    <button type="button" class="performance-filter" data-performance-group="snh"
+                                        aria-pressed="false" onclick="selectPerformanceGroup('snh')">SNH48</button>
+                                    <button type="button" class="performance-filter" data-performance-group="gnz"
+                                        aria-pressed="false" onclick="selectPerformanceGroup('gnz')">GNZ48</button>
+                                    <button type="button" class="performance-filter" data-performance-group="bej"
+                                        aria-pressed="false" onclick="selectPerformanceGroup('bej')">BEJ48</button>
+                                    <button type="button" class="performance-filter" data-performance-group="ckg"
+                                        aria-pressed="false" onclick="selectPerformanceGroup('ckg')">CKG48</button>
+                                    <button type="button" class="performance-filter" data-performance-group="cgt"
+                                        aria-pressed="false" onclick="selectPerformanceGroup('cgt')">CGT48</button>
+                                    <button type="button" class="performance-filter" data-performance-group="other"
+                                        aria-pressed="false" onclick="selectPerformanceGroup('other')">其它</button>
+                                    <div class="performance-member-search">
+                                        <input type="text" id="performance-member-input" class="performance-search-input"
+                                            placeholder="搜索成员" aria-label="搜索成员" autocomplete="off"
+                                            oninput="handlePerformanceMemberSearch(this.value)"
+                                            onfocus="handlePerformanceMemberSearch(this.value)">
+                                        <div id="performance-member-results" class="suggestion-box"></div>
+                                    </div>
+                                    <label class="performance-search" for="performance-search-input">
+                                        <input type="search" id="performance-search-input" class="performance-search-input"
+                                            placeholder="搜索公演或日期" aria-label="搜索公演或日期" autocomplete="off"
+                                            oninput="searchPerformanceList(this.value)">
+                                    </label>
+                                </div>
+                                <div id="performance-team-filters" class="performance-filter-row performance-team-filter-row"
+                                    aria-label="按队伍筛选公演" hidden></div>
+                            </div>
+
+                            <div id="performance-list" class="performance-list" aria-live="polite"></div>
+                            <div id="performance-load-sentinel" class="performance-load-sentinel" role="status"
+                                aria-live="polite"></div>
+                            <button type="button" id="performance-load-more" class="btn btn-secondary performance-load-more"
+                                onclick="loadMorePerformanceList()" hidden>重新加载</button>
+                        </div>
+                    </div>
+
                     <div id="view-open-live"
                         style="height: 100%; overflow-y: auto; display: none; padding: 20px 40px; box-sizing: border-box;">
                         <div class="list-container">
@@ -2826,11 +2894,6 @@
                     <div id="view-room-radio"
                         style="height: 100%; overflow-y: auto; display: none; padding: 20px 40px; box-sizing: border-box;">
                         <div class="list-container">
-                            <div class="page-header">
-                                <h2 class="page-title">房间电台</h2>
-                                <span id="room-radio-status" style="font-size: 13px; color: var(--text-sub);"></span>
-                            </div>
-
                             <div class="Box-row room-radio-scan-panel">
                                 <div class="room-radio-scan-head">
                                     <div class="room-radio-scan-heading">
@@ -2845,12 +2908,6 @@
                                             onclick="openAutoRoomRadioRecordModal()">自动录制</button>
                                         <button type="button" id="btn-room-radio-scan" class="btn btn-secondary"
                                             onclick="toggleAllMemberRoomRadioScan()">刷新列表</button>
-                                    </div>
-                                </div>
-
-                                <div id="room-radio-scan-progress" class="room-radio-scan-progress" hidden>
-                                    <div class="room-radio-scan-progress-track">
-                                        <div id="room-radio-scan-progress-bar" class="room-radio-scan-progress-bar"></div>
                                     </div>
                                 </div>
 
@@ -3091,6 +3148,74 @@
                         </div>
         </main>
     </div>
+    <div class="modal-overlay" id="openLiveParticipantsModal"
+        onclick="if(event.target===this) closeOpenLiveParticipantsModal()">
+        <div class="modal-content openlive-participants-modal" role="dialog" aria-modal="true"
+            aria-labelledby="openlive-participants-modal-title">
+            <div class="modal-header">
+                <span class="modal-title" id="openlive-participants-modal-title">参与成员</span>
+                <button type="button" class="close-btn openlive-participants-modal-close"
+                    onclick="closeOpenLiveParticipantsModal()" aria-label="关闭">×</button>
+            </div>
+            <div class="modal-body openlive-participants-modal-body">
+                <div id="openlive-participants-modal-status" class="openlive-participants-modal-status">正在读取参与成员...</div>
+                <div id="openlive-participants-modal-list" class="openlive-participants-modal-list"></div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-overlay" id="flipDefaultSettingsModal"
+        onclick="if(event.target===this) closeFlipDefaultSettings()">
+        <div class="modal-content flip-default-settings-modal" role="dialog" aria-modal="true"
+            aria-labelledby="flip-default-settings-title">
+            <div class="modal-header">
+                <span class="modal-title" id="flip-default-settings-title">默认设置</span>
+                <span class="close-btn" onclick="closeFlipDefaultSettings()">×</span>
+            </div>
+            <div class="modal-body flip-default-settings-body">
+                <div class="flip-default-settings-field">
+                    <span>翻牌类型</span>
+                    <div class="flip-default-dropdown-wrapper">
+                        <input type="hidden" id="flip-default-answer-type" value="1">
+                        <input type="text" id="flip-default-answer-display" class="input-control"
+                            value="文字翻牌" readonly
+                            onclick="toggleFlipDefaultSettingsDropdown('answer')">
+                        <span class="flip-default-dropdown-arrow">▼</span>
+                        <div id="flip-default-answer-dropdown" class="suggestion-box">
+                            <div class="suggestion-item"
+                                onclick="selectFlipDefaultSetting('answer', '1', '文字翻牌')">文字翻牌</div>
+                            <div class="suggestion-item"
+                                onclick="selectFlipDefaultSetting('answer', '2', '语音翻牌')">语音翻牌</div>
+                            <div class="suggestion-item"
+                                onclick="selectFlipDefaultSetting('answer', '3', '视频翻牌')">视频翻牌</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="flip-default-settings-field">
+                    <span>公开设置</span>
+                    <div class="flip-default-dropdown-wrapper">
+                        <input type="hidden" id="flip-default-privacy-type" value="1">
+                        <input type="text" id="flip-default-privacy-display" class="input-control"
+                            value="公开（所有人可见）" readonly
+                            onclick="toggleFlipDefaultSettingsDropdown('privacy')">
+                        <span class="flip-default-dropdown-arrow">▼</span>
+                        <div id="flip-default-privacy-dropdown" class="suggestion-box">
+                            <div class="suggestion-item"
+                                onclick="selectFlipDefaultSetting('privacy', '1', '公开（所有人可见）')">公开（所有人可见）</div>
+                            <div class="suggestion-item"
+                                onclick="selectFlipDefaultSetting('privacy', '3', '匿名（所有人可见，隐藏 ID）')">匿名（所有人可见，隐藏 ID）</div>
+                            <div class="suggestion-item"
+                                onclick="selectFlipDefaultSetting('privacy', '2', '私密（仅自己和成员可见）')">私密（仅自己和成员可见）</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="flip-default-settings-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeFlipDefaultSettings()">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveFlipDefaultSettings()">保存</button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal-overlay" id="userModal">
         <div class="modal-content">
             <div class="modal-header">
@@ -3217,7 +3342,6 @@
 
                 <div class="auto-live-record-list-head">
                     <b>自动录制名单</b>
-                    <span id="auto-live-record-member-count">0 位</span>
                 </div>
                 <div id="auto-live-record-member-list" class="auto-live-record-member-list"></div>
             </div>
@@ -3251,7 +3375,6 @@
 
                 <div class="auto-live-record-list-head">
                     <b>自动录制名单</b>
-                    <span id="auto-room-radio-record-member-count">0 位</span>
                 </div>
                 <div id="auto-room-radio-record-member-list" class="auto-live-record-member-list"></div>
             </div>
@@ -3277,6 +3400,7 @@
     <script src="./src/renderer/official-media-feature.js"></script>
     <script src="./src/renderer/official-site-music-feature.js"></script>
     <script src="./src/renderer/openlive-feature.js"></script>
+    <script src="./src/renderer/performance-feature.js"></script>
     <script src="./src/renderer/media-utils-feature.js"></script>
     <script src="./src/renderer/community-feature.js"></script>
     <script src="./src/renderer/member-lookup-feature.js"></script>

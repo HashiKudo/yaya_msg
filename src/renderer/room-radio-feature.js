@@ -51,6 +51,7 @@
         let pendingFollowedRoomRadioAutoConnect = null;
         let roomRadioAutoScanTimer = null;
         let isRoomRadioAutoScanEnabled = false;
+        let roomRadioAutoScanFollowedOnly = false;
         let autoRoomRadioRecordEnabled = false;
         let autoRoomRadioRecordMembers = [];
         let autoRoomRadioRecordPollTimer = null;
@@ -140,8 +141,6 @@
         function getRoomRadioScanElements() {
             return {
                 button: document.getElementById('btn-room-radio-scan'),
-                progress: document.getElementById('room-radio-scan-progress'),
-                progressBar: document.getElementById('room-radio-scan-progress-bar'),
                 progressCopy: document.getElementById('room-radio-scan-progress-copy'),
                 progressText: document.getElementById('room-radio-scan-progress-text'),
                 summary: document.getElementById('room-radio-scan-summary'),
@@ -173,13 +172,11 @@
         }
 
         function updateRoomRadioScanProgress(statusText = '') {
-            const { progress, progressBar, progressCopy, progressText, summary } = getRoomRadioScanElements();
-            if (progress) progress.hidden = false;
+            const { progressCopy, progressText, summary } = getRoomRadioScanElements();
             if (progressCopy) progressCopy.hidden = false;
             const percent = roomRadioScanTotal > 0
                 ? Math.min(100, Math.round((roomRadioScanCompleted / roomRadioScanTotal) * 100))
                 : 0;
-            if (progressBar) progressBar.style.width = `${percent}%`;
             if (progressText) {
                 progressText.textContent = statusText
                     || `正在扫描 ${roomRadioScanCompleted}/${roomRadioScanTotal}（${percent}%）`;
@@ -260,7 +257,6 @@
             if (status) {
                 if (!autoRoomRadioRecordEnabled) status.textContent = '尚未启用';
                 else if (!autoRoomRadioRecordMembers.length) status.textContent = '请先添加需要自动录制的成员';
-                else if (activeCount > 0) status.textContent = `正在录制 ${activeCount} 路`;
                 else status.textContent = `正在监控 ${autoRoomRadioRecordMembers.length} 位成员`;
             }
         }
@@ -1001,7 +997,10 @@
             }
 
             try {
-                await scanAllMemberRoomRadios({ silent: true });
+                await scanAllMemberRoomRadios({
+                    followedOnly: roomRadioAutoScanFollowedOnly,
+                    silent: true
+                });
             } catch (error) {
                 isRoomRadioScanning = false;
                 setRoomRadioScanButton();
@@ -1013,13 +1012,24 @@
         }
 
         function startAllMemberRoomRadioAutoScan() {
-            if (isRoomRadioAutoScanEnabled) return;
+            const alreadyScanningAll = isRoomRadioAutoScanEnabled && !roomRadioAutoScanFollowedOnly;
             isRoomRadioAutoScanEnabled = true;
+            roomRadioAutoScanFollowedOnly = false;
+            if (alreadyScanningAll) return;
+            scheduleAllMemberRoomRadioAutoScan(0);
+        }
+
+        function startFollowedMemberRoomRadioAutoScan() {
+            const alreadyScanningFollowed = isRoomRadioAutoScanEnabled && roomRadioAutoScanFollowedOnly;
+            isRoomRadioAutoScanEnabled = true;
+            roomRadioAutoScanFollowedOnly = true;
+            if (alreadyScanningFollowed) return;
             scheduleAllMemberRoomRadioAutoScan(0);
         }
 
         function stopAllMemberRoomRadioAutoScan() {
             isRoomRadioAutoScanEnabled = false;
+            roomRadioAutoScanFollowedOnly = false;
             clearAllMemberRoomRadioAutoScanTimer();
         }
 
@@ -1673,6 +1683,7 @@
             autoConnectFollowedRoomRadio,
             ensureRoomRadioScanFresh,
             startAllMemberRoomRadioAutoScan,
+            startFollowedMemberRoomRadioAutoScan,
             stopAllMemberRoomRadioAutoScan,
             toggleAllMemberRoomRadioScan,
             toggleScannedRoomRadioMute,

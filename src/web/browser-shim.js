@@ -69,6 +69,7 @@
         'fetch-open-live',
         'fetch-open-live-one',
         'fetch-open-live-public-list',
+        'fetch-seine-performance-list',
         'fetch-open-live-participants',
         'fetch-flip-prices',
         'send-flip-question',
@@ -1256,6 +1257,11 @@
                     host.style.cssText = 'position:fixed;right:16px;bottom:16px;width:442px;max-width:calc(100vw - 32px);z-index:2147483647;display:flex;flex-direction:column;gap:10px;pointer-events:none;';
                     document.body.appendChild(host);
                 }
+                const existingToast = host.firstElementChild;
+                if (existingToast && typeof existingToast._updateYayaNotification === 'function') {
+                    existingToast._updateYayaNotification(payload || {});
+                    return { success: true, merged: true };
+                }
                 const toast = document.createElement('div');
                 toast.style.cssText = 'position:relative;min-height:112px;padding:12px 48px 14px 18px;color:#f7f8fa;background:#1d2025;border:1px solid rgba(255,255,255,.14);border-radius:13px;box-shadow:0 10px 32px rgba(0,0,0,.42);pointer-events:auto;cursor:pointer;font-family:"Segoe UI","Microsoft YaHei",sans-serif;';
                 const header = document.createElement('div');
@@ -1289,30 +1295,42 @@
                 close.style.cssText = 'position:absolute;top:7px;right:9px;width:32px;height:32px;border:0;border-radius:7px;color:#d8dce3;background:transparent;font-size:25px;line-height:28px;cursor:pointer;';
                 close.onclick = event => {
                     event.stopPropagation();
+                    if (toast._yayaRemovalTimer) window.clearTimeout(toast._yayaRemovalTimer);
                     toast.remove();
                 };
                 toast.append(header, close, content);
                 toast.onclick = () => {
+                    const currentPayload = toast._yayaPayload || {};
                     window.focus();
                     if (typeof window.switchView === 'function') window.switchView('followed-rooms');
                     window.setTimeout(() => {
                         if (typeof window.openFollowedChat === 'function') {
                             window.openFollowedChat(
-                                payload?.memberName || '成员',
-                                payload?.channelId || '',
-                                payload?.serverId || '',
+                                currentPayload.memberName || '成员',
+                                currentPayload.channelId || '',
+                                currentPayload.serverId || '',
                                 {
-                                    mainChannelId: payload?.mainChannelId || payload?.channelId || '',
-                                    roomType: payload?.roomType === 'small' ? 'small' : 'big'
+                                    mainChannelId: currentPayload.mainChannelId || currentPayload.channelId || '',
+                                    roomType: currentPayload.roomType === 'small' ? 'small' : 'big'
                                 }
                             );
                         }
                     }, 180);
+                    if (toast._yayaRemovalTimer) window.clearTimeout(toast._yayaRemovalTimer);
                     toast.remove();
                 };
+                toast._updateYayaNotification = nextPayload => {
+                    const currentPayload = nextPayload || {};
+                    toast._yayaPayload = currentPayload;
+                    avatar.src = currentPayload.iconUrl || './web-icon.png';
+                    title.textContent = currentPayload.title || '牙牙消息';
+                    body.textContent = currentPayload.body || '收到一条新消息';
+                    if (toast._yayaRemovalTimer) window.clearTimeout(toast._yayaRemovalTimer);
+                    toast._yayaRemovalTimer = window.setTimeout(() => toast.remove(), 8000);
+                };
                 host.appendChild(toast);
-                while (host.children.length > 4) host.firstElementChild?.remove();
-                window.setTimeout(() => toast.remove(), 8000);
+                while (host.children.length > 1) host.firstElementChild?.remove();
+                toast._updateYayaNotification(payload || {});
                 return { success: true };
             }
             if (channel === 'open-external-player') {
