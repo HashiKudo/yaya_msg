@@ -121,7 +121,7 @@
         const footer = document.querySelector('.home-footer-credit');
         if (!footer || document.querySelector('.web-limit-notice')) return;
         const desktopVersion = 'v2.10';
-        const releaseStamp = '20260815';
+        const releaseStamp = '20260815-fe62beb';
         const notice = createElement('div', { className: 'web-limit-notice' });
         notice.append(createElement('span', {
             className: 'web-limit-copy',
