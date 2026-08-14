@@ -1,4 +1,43 @@
 /* Web-only overrides. Kept in source so the build does not rewrite desktop CSS. */
+html[data-platform="web"].web-shell-pending {
+    background-color: var(--bg);
+}
+
+html[data-platform="web"].web-shell-pending body {
+    overflow: hidden;
+    transition: none;
+}
+
+html[data-platform="web"] body {
+    isolation: isolate;
+}
+
+html[data-platform="web"] .web-background-layer {
+    display: block !important;
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    pointer-events: none;
+    background-color: var(--bg);
+    object-fit: cover;
+    object-position: center;
+}
+
+html[data-platform="web"] .custom-title-bar,
+html[data-platform="web"] .web-app-topbar,
+html[data-platform="web"] .app-container {
+    position: relative;
+    z-index: 1;
+}
+
+html[data-platform="web"].web-shell-pending .custom-title-bar,
+html[data-platform="web"].web-shell-pending .app-container,
+html[data-platform="web"].web-shell-pending .web-app-topbar {
+    visibility: hidden !important;
+}
+
 html[data-platform="web"] .window-controls {
     display: none;
 }

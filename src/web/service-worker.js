@@ -1,4 +1,4 @@
-const MUSIC_COVER_CACHE_NAME = 'yaya-music-covers-v1';
+const MUSIC_COVER_CACHE_NAME = 'yaya-music-covers-v2';
 const MUSIC_COVER_CACHE_PREFIX = 'yaya-music-covers-';
 
 self.addEventListener('install', () => {
@@ -18,6 +18,9 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
     const request = event.request;
     if (request.method !== 'GET' || request.destination !== 'image') return;
+
+    const requestUrl = new URL(request.url);
+    if (requestUrl.origin !== self.location.origin) return;
 
     event.respondWith((async () => {
         const cache = await caches.open(MUSIC_COVER_CACHE_NAME);

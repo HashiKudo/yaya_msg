@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy"
         content="default-src 'self' file: https: data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' file: https: data: blob:; media-src 'self' file: https: http: data: blob:; connect-src 'self' file: https: http: ws: wss: data: blob:; font-src 'self' data:;">
-    <title>牙牙消息 v2.10</title>
+    <title>牙牙消息</title>
     <link rel="icon" href="./icon.png" type="image/x-icon">
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="./src/web/web-overrides.css?v=__YAYA_BUILD_VERSION__">
@@ -16,11 +16,15 @@
     <script src="./src/web/browser-shim.js?v=__YAYA_BUILD_VERSION__"></script>
     <script src="./src/web/web-shell.js?v=__YAYA_BUILD_VERSION__"></script>
 
-    <script src="./src/renderer/theme-init.js"></script>
+    <script src="./src/renderer/theme-init.js?v=__YAYA_BUILD_VERSION__"></script>
 
 </head>
 
 <body class="topbar-page-title-enabled">
+    <img id="web-background-layer" class="web-background-layer"
+        src="https://data.gnz.hk/assets/default-background.jpg?v=20260815" alt="" aria-hidden="true"
+        style="display: none;"
+        onerror="window.__recoverYayaWebBackground && window.__recoverYayaWebBackground(this)">
     <script>
         (function () {
             const platform = (window.desktop && window.desktop.platform) || '';
@@ -28,6 +32,10 @@
             root.dataset.platform = platform;
             if (platform !== 'web') return;
 
+            const backgroundLayer = document.getElementById('web-background-layer');
+            if (backgroundLayer && window.__yayaCurrentBackgroundUrl) {
+                backgroundLayer.src = window.__yayaCurrentBackgroundUrl;
+            }
         })();
     </script>
     <div id="loading-shield" style="display: none;">

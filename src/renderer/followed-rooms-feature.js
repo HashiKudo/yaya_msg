@@ -7,6 +7,8 @@
             getActiveFollowedChannel,
             getAdaptivePollDelay,
             getAppToken,
+            getCurrentUserId,
+            getAccountSessionGeneration,
             getMemberData,
             getMemberDataLoaded,
             getPinyinInitials,
@@ -23,12 +25,15 @@
         let followedRoomsAutoRefreshTimer = null;
         let followedRoomsAutoRefreshEnabled = false;
         let followedRoomsAutoRefreshRunning = false;
+        let followedRoomsPollGeneration = 0;
+        let followedRoomsLoadGeneration = 0;
         let followedRoomsLastRenderHtml = '';
         let followedRoomContextMenu = null;
         let followedRoomContextTarget = null;
         let followedRoomNotificationTimer = null;
         let followedRoomNotificationRunning = false;
         let followedRoomNotificationEnabled = false;
+        let followedRoomNotificationGeneration = 0;
         const followedNotificationServerDetailCache = new Map();
         window.allFollowedIds = window.allFollowedIds || new Set();
         const FOLLOWED_CUSTOM_ORDER_KEY = 'yaya_followed_custom_order';
@@ -36,8 +41,34 @@
         const FOLLOWED_NOTIFICATION_ROOMS_KEY = 'yaya_followed_notification_rooms';
         const FOLLOWED_NOTIFICATION_CURSORS_KEY = 'yaya_followed_notification_cursors';
         const FOLLOWED_NOTIFICATION_POLL_INTERVAL = 2000;
+        const FOLLOWED_ACCOUNT_SETTING_KEYS = new Set([
+            FOLLOWED_CUSTOM_ORDER_KEY,
+            FOLLOWED_PINNED_CHANNELS_KEY,
+            FOLLOWED_NOTIFICATION_ROOMS_KEY,
+            FOLLOWED_NOTIFICATION_CURSORS_KEY
+        ]);
 
-        function readJsonSetting(key, fallbackValue) {
+        function getFollowedNotificationAccountSuffix() {
+            const userId = String(typeof getCurrentUserId === 'function' ? getCurrentUserId() || '' : '').trim();
+            if (userId) return `user-${userId.replace(/[^a-z0-9_-]/gi, '_')}`;
+
+            const token = String(getAppToken() || '').trim();
+            if (!token) return 'signed-out';
+            let hash = 2166136261;
+            for (let index = 0; index < token.length; index += 1) {
+                hash ^= token.charCodeAt(index);
+                hash = Math.imul(hash, 16777619);
+            }
+            return `token-${(hash >>> 0).toString(36)}`;
+        }
+
+        function getFollowedSettingStorageKey(key) {
+            return FOLLOWED_ACCOUNT_SETTING_KEYS.has(key)
+                ? `${key}_${getFollowedNotificationAccountSuffix()}`
+                : key;
+        }
+
+        function readRawJsonSetting(key, fallbackValue) {
             if (typeof window.readStoredJsonSetting === 'function') {
                 return window.readStoredJsonSetting(key, fallbackValue);
             }
@@ -49,12 +80,42 @@
             }
         }
 
-        function writeJsonSetting(key, value) {
+        function writeRawJsonSetting(key, value) {
             if (typeof window.writeStoredJsonSetting === 'function') {
                 return window.writeStoredJsonSetting(key, value);
             }
             localStorage.setItem(key, JSON.stringify(value));
             return value;
+        }
+
+        function removeRawSetting(key) {
+            if (typeof window.removeStoredSetting === 'function') {
+                window.removeStoredSetting(key);
+                return;
+            }
+            localStorage.removeItem(key);
+        }
+
+        function readJsonSetting(key, fallbackValue) {
+            const storageKey = getFollowedSettingStorageKey(key);
+            const storedValue = readRawJsonSetting(storageKey, null);
+            if (storedValue !== null) return storedValue;
+
+            // 旧版本的关注设置是全局的，只迁移给升级后首次使用的当前账号。
+            if (storageKey !== key && getFollowedNotificationAccountSuffix() !== 'signed-out') {
+                const legacyValue = readRawJsonSetting(key, null);
+                if (legacyValue !== null) {
+                    writeRawJsonSetting(storageKey, legacyValue);
+                    removeRawSetting(key);
+                    return legacyValue;
+                }
+            }
+
+            return fallbackValue;
+        }
+
+        function writeJsonSetting(key, value) {
+            return writeRawJsonSetting(getFollowedSettingStorageKey(key), value);
         }
 
         function getFollowedNotificationConfigs() {
@@ -358,6 +419,7 @@
         }
 
         function stopFollowedRoomNotificationPolling() {
+            followedRoomNotificationGeneration += 1;
             followedRoomNotificationEnabled = false;
             if (followedRoomNotificationTimer) {
                 clearTimeout(followedRoomNotificationTimer);
@@ -369,10 +431,12 @@
         function startFollowedRoomNotificationPolling(delayMs = 1000, options = {}) {
             stopFollowedRoomNotificationPolling();
             followedRoomNotificationEnabled = true;
+            const pollingGeneration = followedRoomNotificationGeneration;
             let silentInitialSyncPending = options?.silentInitialSync === true;
 
             const scheduleNext = (delay) => {
-                if (!followedRoomNotificationEnabled) return;
+                if (!followedRoomNotificationEnabled
+                    || pollingGeneration !== followedRoomNotificationGeneration) return;
                 const normalizedDelay = Number(delay);
                 followedRoomNotificationTimer = setTimeout(
                     runPoll,
@@ -382,7 +446,8 @@
 
             const runPoll = async () => {
                 const pollStartedAt = Date.now();
-                if (!followedRoomNotificationEnabled) return;
+                if (!followedRoomNotificationEnabled
+                    || pollingGeneration !== followedRoomNotificationGeneration) return;
                 if (followedRoomNotificationRunning) {
                     scheduleNext(FOLLOWED_NOTIFICATION_POLL_INTERVAL);
                     return;
@@ -415,6 +480,8 @@
                         pa,
                         serverIdList
                     });
+                    if (!followedRoomNotificationEnabled
+                        || pollingGeneration !== followedRoomNotificationGeneration) return;
                     const lastMessages = latestResponse?.content?.lastMsgList || [];
                     const lastMessagesByChannel = new Map(lastMessages.map(message => [
                         String(message.channelId || ''),
@@ -455,6 +522,8 @@
                             }
                         })
                     ]);
+                    if (!followedRoomNotificationEnabled
+                        || pollingGeneration !== followedRoomNotificationGeneration) return;
 
                     for (const room of rooms) {
                         const lastMessage = lastMessagesByChannel.get(room.channelId);
@@ -598,6 +667,8 @@
                     }
 
                     for (const pendingNotification of pendingNotificationsByMember.values()) {
+                        if (!followedRoomNotificationEnabled
+                            || pollingGeneration !== followedRoomNotificationGeneration) return;
                         const { room, senderName, messagePreview, iconUrl } = pendingNotification;
                         const roomName = getCachedFollowedNotificationRoomName(room);
                         try {
@@ -627,6 +698,7 @@
                 } catch (error) {
                     console.warn('[口袋通知] 后台检查失败:', error);
                 } finally {
+                    if (pollingGeneration !== followedRoomNotificationGeneration) return;
                     followedRoomNotificationRunning = false;
                     const elapsed = Date.now() - pollStartedAt;
                     scheduleNext(Math.max(100, FOLLOWED_NOTIFICATION_POLL_INTERVAL - elapsed));
@@ -984,6 +1056,19 @@
                 container.innerHTML = '<div class="placeholder-tip"><h3>未登录</h3></div>';
                 return;
             }
+            const loadGeneration = ++followedRoomsLoadGeneration;
+            const accountGeneration = typeof getAccountSessionGeneration === 'function'
+                ? getAccountSessionGeneration()
+                : 0;
+            const isCurrentAccount = () => (
+                String(getAppToken() || '').trim() === String(token || '').trim()
+                && (typeof getAccountSessionGeneration !== 'function'
+                    || getAccountSessionGeneration() === accountGeneration)
+            );
+            const isCurrentRequest = () => (
+                loadGeneration === followedRoomsLoadGeneration
+                && isCurrentAccount()
+            );
 
             const refreshBtn = document.querySelector('button[onclick="loadFollowedRooms()"]');
             if (refreshBtn && !silent) {
@@ -998,12 +1083,14 @@
             try {
                 const pa = window.getPA ? window.getPA() : null;
                 const friendsRes = await ipcRenderer.invoke('fetch-friends-ids', { token, pa });
+                if (!isCurrentRequest()) return;
                 if (friendsRes.status !== 200 || !friendsRes.content?.data) throw new Error('获取失败');
 
                 const followedIds = friendsRes.content.data;
                 window.allFollowedIds = new Set(followedIds.map(id => String(id)));
 
                 if (!getMemberDataLoaded()) await loadMemberData();
+                if (!isCurrentRequest()) return;
 
                 const followedMembers = [];
                 const serverIds = new Set();
@@ -1020,6 +1107,7 @@
                 const msgRes = await ipcRenderer.invoke('fetch-last-messages', {
                     token, pa, serverIdList: Array.from(serverIds)
                 });
+                if (!isCurrentRequest()) return;
 
                 const lastMsgs = msgRes.content?.lastMsgList || [];
 
@@ -1054,13 +1142,14 @@
                     selectQuickFollowMember(currentSearchName, currentSearchId);
                 }
             } catch (e) {
+                if (!isCurrentRequest()) return;
                 if (silent) {
                     console.warn('口袋房间列表自动刷新失败:', e);
                 } else {
                     container.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`;
                 }
             } finally {
-                if (refreshBtn && !silent) {
+                if (isCurrentAccount() && refreshBtn && !silent) {
                     refreshBtn.innerText = '刷新';
                     refreshBtn.disabled = false;
                 }
@@ -1068,6 +1157,7 @@
         }
 
         function stopFollowedRoomsPolling() {
+            followedRoomsPollGeneration += 1;
             followedRoomsAutoRefreshEnabled = false;
             if (followedRoomsAutoRefreshTimer) {
                 clearTimeout(followedRoomsAutoRefreshTimer);
@@ -1077,7 +1167,10 @@
         }
 
         function resetFollowedRoomsState() {
+            followedRoomsLoadGeneration += 1;
             stopFollowedRoomsPolling();
+            stopFollowedRoomNotificationPolling();
+            followedNotificationServerDetailCache.clear();
             currentFollowedData = [];
             followedRoomsLastRenderHtml = '';
             window.allFollowedIds = new Set();
@@ -1100,14 +1193,15 @@
         function startFollowedRoomsPolling() {
             stopFollowedRoomsPolling();
             followedRoomsAutoRefreshEnabled = true;
+            const pollingGeneration = followedRoomsPollGeneration;
 
             const scheduleNext = () => {
-                if (!followedRoomsAutoRefreshEnabled) return;
+                if (!followedRoomsAutoRefreshEnabled || pollingGeneration !== followedRoomsPollGeneration) return;
                 followedRoomsAutoRefreshTimer = setTimeout(runPoll, getAdaptivePollDelay());
             };
 
             const runPoll = async () => {
-                if (!followedRoomsAutoRefreshEnabled) return;
+                if (!followedRoomsAutoRefreshEnabled || pollingGeneration !== followedRoomsPollGeneration) return;
                 const view = document.getElementById('view-followed-rooms');
                 if (!view || view.style.display === 'none' || followedRoomsAutoRefreshRunning) {
                     scheduleNext();
@@ -1121,6 +1215,7 @@
                         preserveScroll: true
                     });
                 } finally {
+                    if (pollingGeneration !== followedRoomsPollGeneration) return;
                     followedRoomsAutoRefreshRunning = false;
                     scheduleNext();
                 }

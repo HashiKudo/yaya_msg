@@ -120,19 +120,21 @@
     function addDownloadNotice() {
         const footer = document.querySelector('.home-footer-credit');
         if (!footer || document.querySelector('.web-limit-notice')) return;
+        const desktopVersion = 'v2.10';
+        const releaseStamp = '20260815';
         const notice = createElement('div', { className: 'web-limit-notice' });
         notice.append(createElement('span', {
             className: 'web-limit-copy',
-            text: '由于网页限制，使用完整功能请下载桌面端。'
+            text: `由于网页限制，使用完整功能请下载桌面端 ${desktopVersion}。`
         }));
         const actions = createElement('div', {
             className: 'web-download-actions',
             attributes: { 'aria-label': '桌面端下载' }
         });
         [
-            ['Windows', '/downloads/yaya_msg-v2.10-win.zip?v=20260805'],
-            ['macOS', '/downloads/yaya_msg-v2.10-mac.zip?v=20260805'],
-            ['Linux', '/downloads/yaya_msg-v2.10-linux.tar.gz?v=20260805']
+            ['Windows', `/downloads/yaya_msg-${desktopVersion}-win.zip?v=${releaseStamp}`],
+            ['macOS', `/downloads/yaya_msg-${desktopVersion}-mac.zip?v=${releaseStamp}`],
+            ['Linux', `/downloads/yaya_msg-${desktopVersion}-linux.tar.gz?v=${releaseStamp}`]
         ].forEach(([label, href]) => {
             actions.append(createElement('a', {
                 className: 'web-desktop-download-btn',
@@ -167,6 +169,9 @@
         addDownloadNotice();
         syncViewport();
         document.title = '牙牙消息';
+        window.requestAnimationFrame(() => {
+            document.documentElement.classList.remove('web-shell-pending');
+        });
     }
 
     window.addEventListener('resize', syncViewport, { passive: true });

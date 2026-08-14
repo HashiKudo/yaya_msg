@@ -7,6 +7,7 @@ const DEFAULT_API_BACKEND = 'https://api.gnz.hk';
 const DESKTOP_DOWNLOAD_FILE = 'yaya_msg-v2.10-win.zip';
 const R2_MUSIC_LIST_CACHE_TTL_SECONDS = 6 * 60 * 60;
 const R2_MUSIC_LIST_CACHE_TTL_MS = R2_MUSIC_LIST_CACHE_TTL_SECONDS * 1000;
+const POCKET_PROXY_RETRY_DELAYS_MS = [350, 900];
 
 let r2MusicListCache = null;
 
@@ -22,6 +23,15 @@ function logWorkerEvent(level, event, details = {}) {
             ? console.warn
             : console.log;
     logger(entry);
+}
+
+function createProxyDeviceId() {
+    if (globalThis.crypto?.randomUUID) {
+        return globalThis.crypto.randomUUID().toUpperCase();
+    }
+    const bytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(bytes);
+    return `WEB-${Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 }
 
 const invoiceChannels = new Set([
@@ -700,34 +710,72 @@ async function handlePocketProxy(request) {
         const body = await request.json();
         const apiPath = normalizePocketPath(body?.path);
         const postData = normalizePostData(body?.postData);
-        const response = await fetch(`https://pocketapi.48.cn${apiPath}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json;charset=utf-8',
-                'User-Agent': 'PocketFans201807/7.1.35 (iPhone; iOS 16.3; Scale/3.00)',
-                'Accept-Language': 'zh-Hans-CN;q=1',
-                appInfo: JSON.stringify({
-                    vendor: 'apple',
-                    deviceId: createDeviceId(),
-                    appVersion: '7.1.35',
-                    appBuild: '25101021',
-                    osVersion: '16.3.0',
-                    osType: 'ios',
-                    deviceName: 'iPhone 14 Pro',
-                    os: 'ios'
-                })
-            },
-            body: JSON.stringify(postData)
-        });
+        const requestUrl = `https://pocketapi.48.cn${apiPath}`;
+        let lastStatus = 502;
 
-        const text = await response.text();
-        return new Response(text || '{"status":500,"content":{}}', {
-            status: response.ok ? 200 : response.status,
-            headers: {
-                'Content-Type': 'application/json;charset=utf-8',
-                'Cache-Control': 'no-store'
+        for (let attempt = 0; attempt <= POCKET_PROXY_RETRY_DELAYS_MS.length; attempt += 1) {
+            try {
+                const response = await fetch(requestUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json;charset=utf-8',
+                        'User-Agent': 'PocketFans201807/7.1.35 (iPhone; iOS 16.3; Scale/3.00)',
+                        'Accept-Language': 'zh-Hans-CN;q=1',
+                        appInfo: JSON.stringify({
+                            vendor: 'apple',
+                            deviceId: createProxyDeviceId(),
+                            appVersion: '7.1.35',
+                            appBuild: '25101021',
+                            osVersion: '16.3.0',
+                            osType: 'ios',
+                            deviceName: 'iPhone 14 Pro',
+                            os: 'ios'
+                        })
+                    },
+                    body: JSON.stringify(postData)
+                });
+
+                const text = await response.text();
+                lastStatus = response.status;
+                let validJson = false;
+                try {
+                    if (text) JSON.parse(text);
+                    validJson = Boolean(text);
+                } catch (error) {
+                    validJson = false;
+                }
+
+                const retryable = !validJson || response.status === 429 || response.status >= 500;
+                if (retryable && attempt < POCKET_PROXY_RETRY_DELAYS_MS.length) {
+                    await new Promise((resolve) => setTimeout(resolve, POCKET_PROXY_RETRY_DELAYS_MS[attempt]));
+                    continue;
+                }
+
+                if (!validJson) {
+                    return json({
+                        status: 502,
+                        message: '口袋 API 暂时返回了网页内容，请稍后重试。',
+                        content: {}
+                    }, 502);
+                }
+
+                return new Response(text, {
+                    status: response.ok ? 200 : response.status,
+                    headers: {
+                        'Content-Type': 'application/json;charset=utf-8',
+                        'Cache-Control': 'no-store'
+                    }
+                });
+            } catch (error) {
+                if (attempt < POCKET_PROXY_RETRY_DELAYS_MS.length) {
+                    await new Promise((resolve) => setTimeout(resolve, POCKET_PROXY_RETRY_DELAYS_MS[attempt]));
+                    continue;
+                }
+                throw error;
             }
-        });
+        }
+
+        return json({ status: lastStatus, message: 'Pocket API 请求失败', content: {} }, lastStatus);
     } catch (error) {
         logWorkerEvent('error', 'pocket_proxy_failed', {
             error: getErrorMessage(error)

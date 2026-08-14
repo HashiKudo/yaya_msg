@@ -4,6 +4,10 @@
     }
 
     document.documentElement.dataset.platform = 'web';
+    document.documentElement.classList.add('web-shell-pending');
+    window.setTimeout(() => {
+        document.documentElement.classList.remove('web-shell-pending');
+    }, 5000);
     if ('serviceWorker' in navigator && window.location.protocol !== 'file:') {
         window.addEventListener('load', () => {
             navigator.serviceWorker.register('/service-worker.js', { scope: '/' })

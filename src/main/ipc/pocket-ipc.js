@@ -5,6 +5,7 @@ const { POCKET_CHANNEL_METHODS } = require('../../common/pocket-channel-config')
 
 const YAYA_API_PROXY_SETTING_KEY = 'useYayaApiProxy';
 const DEFAULT_YAYA_API_BASE = 'https://api.gnz.hk';
+const YAYA_API_RETRY_DELAYS_MS = [350, 900];
 const MEET48_CHANNELS = new Set([
     'fetch-meet48-live-list',
     'fetch-meet48-live-one'
@@ -45,25 +46,77 @@ function getYayaPocketApiProxyUrl(baseUrl) {
     return new URL('/api/pocket', baseUrl).toString();
 }
 
+function waitForRetry(delayMs) {
+    return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+function isTransientYayaApiFailure(response, text, data, parseFailed) {
+    const message = String(data?.msg || data?.message || '');
+    const combined = `${String(text || '')}\n${message}`;
+    return parseFailed
+        || /^\s*</.test(text || '')
+        || /<!doctype|unexpected token\s+['"]?<|not valid json|cloudflare|浏览器校验|返回了?网页内容/i.test(combined)
+        || response.status === 429
+        || response.status >= 500;
+}
+
+async function fetchYayaApiJson(url, options) {
+    let lastNetworkError = null;
+
+    for (let attempt = 0; attempt <= YAYA_API_RETRY_DELAYS_MS.length; attempt += 1) {
+        let response;
+        try {
+            response = await fetch(url, options);
+        } catch (error) {
+            lastNetworkError = error;
+            if (attempt < YAYA_API_RETRY_DELAYS_MS.length) {
+                await waitForRetry(YAYA_API_RETRY_DELAYS_MS[attempt]);
+                continue;
+            }
+            throw error;
+        }
+
+        const text = await response.text();
+        let data = null;
+        let parseFailed = false;
+        try {
+            data = text ? JSON.parse(text) : null;
+        } catch (error) {
+            parseFailed = true;
+        }
+
+        const transientFailure = isTransientYayaApiFailure(response, text, data, parseFailed);
+        if (transientFailure && attempt < YAYA_API_RETRY_DELAYS_MS.length) {
+            await waitForRetry(YAYA_API_RETRY_DELAYS_MS[attempt]);
+            continue;
+        }
+
+        return { response, text, data, parseFailed, transientFailure };
+    }
+
+    throw lastNetworkError || new Error('Yaya API 代理请求失败');
+}
+
 async function invokeYayaApiProxy(channel, payload, baseUrl) {
     const requestPayload = withLocalMeet48Auth(channel, payload);
-    const response = await fetch(getYayaApiProxyUrl(baseUrl), {
+    const result = await fetchYayaApiJson(getYayaApiProxyUrl(baseUrl), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channel, payload: requestPayload || {} })
     });
+    const { response, text, data, parseFailed, transientFailure } = result;
 
-    const text = await response.text();
-    let data = null;
-    try {
-        data = text ? JSON.parse(text) : null;
-    } catch (error) {
+    if (parseFailed) {
         return {
             success: false,
             msg: /^\s*</.test(text || '')
                 ? 'Yaya API 代理返回了网页内容，请稍后重试。'
                 : 'Yaya API 代理返回内容不是 JSON'
         };
+    }
+
+    if (transientFailure) {
+        return { success: false, msg: 'Yaya API 代理暂时不可用，请稍后重试。' };
     }
 
     if (!response.ok) {
@@ -74,7 +127,7 @@ async function invokeYayaApiProxy(channel, payload, baseUrl) {
 }
 
 async function invokeYayaPocketApiProxy(payload, baseUrl) {
-    const response = await fetch(getYayaPocketApiProxyUrl(baseUrl), {
+    const result = await fetchYayaApiJson(getYayaPocketApiProxyUrl(baseUrl), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -82,18 +135,23 @@ async function invokeYayaPocketApiProxy(payload, baseUrl) {
             postData: payload?.postData || {}
         })
     });
+    const { response, text, data, parseFailed, transientFailure } = result;
 
-    const text = await response.text();
-    let data = null;
-    try {
-        data = text ? JSON.parse(text) : null;
-    } catch (error) {
+    if (parseFailed) {
         return {
             status: 500,
             content: {},
             message: /^\s*</.test(text || '')
                 ? 'Yaya API 代理返回了网页内容，请稍后重试。'
                 : 'Yaya API 代理返回内容不是 JSON'
+        };
+    }
+
+    if (transientFailure) {
+        return {
+            status: 503,
+            content: {},
+            message: 'Yaya API 代理暂时不可用，请稍后重试。'
         };
     }
 

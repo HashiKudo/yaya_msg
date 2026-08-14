@@ -15,6 +15,7 @@
             formatPrivateMessageTime,
             getAdaptivePollDelay,
             getAppToken,
+            getAccountSessionGeneration,
             getCurrentPlayingAudio,
             getCurrentSearchKeyword,
             getMemberData,
@@ -37,6 +38,10 @@
         let privateMessageAutoRefreshTimer = null;
         let privateMessageAutoRefreshRunning = false;
         let privateMessageAutoRefreshEnabled = false;
+        let privateMessagePollGeneration = 0;
+        let privateMessageAccountGeneration = 0;
+        let privateMessageListRequestGeneration = 0;
+        let privateMessageDetailRequestGeneration = 0;
         let privateMessagePendingItems = [];
         let privateMessagePendingKeys = new Set();
         let privateMessageFlipPrices = [];
@@ -45,6 +50,28 @@
         let privateMessageContextMenu = null;
         let privateMessageContextTarget = null;
         const deletingPrivateMessageIds = new Set();
+
+        function capturePrivateMessageAccount(token = getPrivateMessagesToken(), targetUserId = '') {
+            return {
+                token: String(token || '').trim(),
+                targetUserId: String(targetUserId || '').trim(),
+                localGeneration: privateMessageAccountGeneration,
+                sessionGeneration: typeof getAccountSessionGeneration === 'function'
+                    ? getAccountSessionGeneration()
+                    : 0
+            };
+        }
+
+        function isPrivateMessageAccountCurrent(snapshot, checkTarget = false) {
+            if (!snapshot) return false;
+            if (snapshot.localGeneration !== privateMessageAccountGeneration) return false;
+            if (String(getPrivateMessagesToken() || '').trim() !== snapshot.token) return false;
+            if (typeof getAccountSessionGeneration === 'function'
+                && getAccountSessionGeneration() !== snapshot.sessionGeneration) return false;
+            if (checkTarget
+                && String(privateMessageDetailState.targetUserId || '').trim() !== snapshot.targetUserId) return false;
+            return true;
+        }
 
         function setPrivateMessageDetailLoading(isLoading) {
             privateMessageDetailState.loading = isLoading;
@@ -149,6 +176,7 @@
         }
 
         function resetPrivateMessageDetailPanel() {
+            privateMessageDetailRequestGeneration += 1;
             privateMessageDetailState.targetUserId = '';
             privateMessageDetailState.title = '';
             privateMessageDetailState.avatar = './icon.png';
@@ -429,6 +457,10 @@
                     showToast('请先登录账号');
                     return;
                 }
+                const accountSnapshot = capturePrivateMessageAccount(
+                    token,
+                    privateMessageDetailState.targetUserId
+                );
 
                 deletingPrivateMessageIds.add(msgId);
                 showToast('正在删除私信');
@@ -438,6 +470,7 @@
                         pa: getPrivateMessageSafePa(),
                         msgId
                     });
+                    if (!isPrivateMessageAccountCurrent(accountSnapshot, true)) return;
 
                     if (!res || !res.success) {
                         showToast(`删除失败: ${res?.msg || '未知错误'}`);
@@ -457,6 +490,7 @@
                     }), 300);
                     showToast('已删除私信');
                 } catch (error) {
+                    if (!isPrivateMessageAccountCurrent(accountSnapshot, true)) return;
                     showToast(`删除失败: ${error.message}`);
                 } finally {
                     deletingPrivateMessageIds.delete(msgId);
@@ -995,6 +1029,7 @@
 
             const targetId = String(privateMessageDetailState.targetUserId || '').trim();
             if (!targetId) return;
+            const accountSnapshot = capturePrivateMessageAccount(getPrivateMessagesToken(), targetId);
 
             if (!getPrivateMessagesMemberDataLoaded() && typeof loadMemberData === 'function') {
                 try {
@@ -1003,6 +1038,7 @@
                     console.warn('私信翻牌入口加载成员库失败:', error);
                 }
             }
+            if (!isPrivateMessageAccountCurrent(accountSnapshot, true)) return;
 
             const member = findActivePrivateMessageMember();
             if (!member) return;
@@ -1025,14 +1061,13 @@
             syncPrivateMessageFlipControls();
 
             try {
-                const token = getPrivateMessagesToken();
                 const res = await ipcRenderer.invoke('fetch-flip-prices', {
-                    token,
+                    token: accountSnapshot.token,
                     pa: getPrivateMessageSafePa(),
                     memberId
                 });
 
-                if (String(privateMessageDetailState.targetUserId || '').trim() !== targetId) return;
+                if (!isPrivateMessageAccountCurrent(accountSnapshot, true)) return;
 
                 if (res && res.success && res.content && Array.isArray(res.content.customs)) {
                     privateMessageFlipPrices = res.content.customs;
@@ -1045,12 +1080,12 @@
                     setPrivateMessageFlipStatus(`翻牌设置读取失败: ${res?.msg || '未知错误'}`, 'error');
                 }
             } catch (error) {
-                if (String(privateMessageDetailState.targetUserId || '').trim() !== targetId) return;
+                if (!isPrivateMessageAccountCurrent(accountSnapshot, true)) return;
                 privateMessageFlipPrices = [];
                 populatePrivateMessageFlipOptions();
                 setPrivateMessageFlipStatus(`翻牌设置读取失败: ${error.message}`, 'error');
             } finally {
-                if (String(privateMessageDetailState.targetUserId || '').trim() !== targetId) return;
+                if (!isPrivateMessageAccountCurrent(accountSnapshot, true)) return;
                 privateMessageFlipLoading = false;
                 syncPrivateMessageFlipControls();
             }
@@ -1064,6 +1099,7 @@
             }
 
             if (reset) {
+                privateMessageDetailRequestGeneration += 1;
                 privateMessageDetailState.targetUserId = String(targetUserId || '');
                 privateMessageDetailState.title = title || '私信详情';
                 privateMessageDetailState.avatar = avatar || './icon.png';
@@ -1071,6 +1107,7 @@
                 privateMessageDetailState.items = [];
                 privateMessageDetailState.hasMore = true;
                 privateMessageDetailState.sending = false;
+                privateMessageDetailState.loading = false;
 
                 const headerEl = document.getElementById('private-message-detail-panel-header');
                 const titleEl = document.getElementById('private-message-detail-title');
@@ -1105,6 +1142,13 @@
             }
 
             if (!privateMessageDetailState.targetUserId || privateMessageDetailState.loading) return;
+            const requestGeneration = ++privateMessageDetailRequestGeneration;
+            const requestTargetUserId = String(privateMessageDetailState.targetUserId || '').trim();
+            const accountSnapshot = capturePrivateMessageAccount(token, requestTargetUserId);
+            const isCurrentRequest = () => (
+                requestGeneration === privateMessageDetailRequestGeneration
+                && isPrivateMessageAccountCurrent(accountSnapshot, true)
+            );
 
             setPrivateMessageDetailLoading(true);
             try {
@@ -1115,9 +1159,10 @@
                 const res = await ipcRenderer.invoke('fetch-private-message-info', {
                     token,
                     pa,
-                    targetUserId: privateMessageDetailState.targetUserId,
+                    targetUserId: requestTargetUserId,
                     lastTime: isAutoRefresh ? 0 : privateMessageDetailState.cursor
                 });
+                if (!isCurrentRequest()) return;
 
                 if (!res || !res.success || !res.content) {
                     throw new Error(res && res.msg ? res.msg : '获取私信详情失败');
@@ -1207,12 +1252,13 @@
                     }
                 }
             } catch (error) {
+                if (!isCurrentRequest()) return;
                 console.error('加载私信详情失败:', error);
                 if (!isAutoRefresh) {
                     showToast(`私信详情加载失败: ${error.message}`);
                 }
             } finally {
-                setPrivateMessageDetailLoading(false);
+                if (isCurrentRequest()) setPrivateMessageDetailLoading(false);
             }
         }
 
@@ -1343,6 +1389,12 @@
             }
 
             if (privateMessageListState.loading) return;
+            const requestGeneration = ++privateMessageListRequestGeneration;
+            const accountSnapshot = capturePrivateMessageAccount(token);
+            const isCurrentRequest = () => (
+                requestGeneration === privateMessageListRequestGeneration
+                && isPrivateMessageAccountCurrent(accountSnapshot)
+            );
 
             if (!getPrivateMessagesMemberDataLoaded() && typeof loadMemberData === 'function') {
                 try {
@@ -1351,6 +1403,7 @@
                     console.warn('私信列表加载前预热成员库失败:', error);
                 }
             }
+            if (!isCurrentRequest()) return;
 
             if (reset) {
                 privateMessageListState.cursor = Date.now();
@@ -1384,6 +1437,7 @@
                         pa,
                         lastTime: requestCursor
                     });
+                    if (!isCurrentRequest()) return;
 
                     if (!res || !res.success || !res.content) {
                         throw new Error(res && res.msg ? res.msg : '获取失败');
@@ -1422,6 +1476,7 @@
                 filterPrivateMessageList(getCurrentSearchKeyword(), { preserveScroll });
                 updatePrivateMessagesStatus('');
             } catch (error) {
+                if (!isCurrentRequest()) return;
                 console.error('加载私信列表失败:', error);
                 if (!silent) {
                     updatePrivateMessagesStatus('私信列表读取失败');
@@ -1430,7 +1485,7 @@
                     listEl.innerHTML = `<div class="empty-state">${escapePrivateMessageHtml(error.message || '私信列表读取失败')}</div>`;
                 }
             } finally {
-                setPrivateMessagesLoading(false, { silent });
+                if (isCurrentRequest()) setPrivateMessagesLoading(false, { silent });
             }
         }
 
@@ -1463,6 +1518,10 @@
 
         async function sendPrivateMessageFlipQuestion(text, input) {
             const token = getPrivateMessagesToken();
+            const accountSnapshot = capturePrivateMessageAccount(
+                token,
+                privateMessageDetailState.targetUserId
+            );
             const { answerType, privacyType, costInput } = getPrivateMessageFlipPanelElements();
 
             if (!privateMessageFlipMember || !privateMessageFlipMember.id) {
@@ -1508,6 +1567,7 @@
                     pa: getPrivateMessageSafePa(),
                     payload
                 });
+                if (!isPrivateMessageAccountCurrent(accountSnapshot, true)) return;
 
                 if (!res || !res.success) {
                     throw new Error(res && res.msg ? res.msg : '发送失败');
@@ -1546,10 +1606,11 @@
                     }
                 }, 3000);
             } catch (error) {
+                if (!isPrivateMessageAccountCurrent(accountSnapshot, true)) return;
                 console.error('发送私信翻牌失败:', error);
                 setPrivateMessageFlipStatus(`发送失败: ${error.message}`, 'error');
             } finally {
-                setPrivateMessageSending(false);
+                if (isPrivateMessageAccountCurrent(accountSnapshot, true)) setPrivateMessageSending(false);
             }
         }
 
@@ -1631,11 +1692,14 @@
             }
 
             const targetUserId = String(privateMessageDetailState.targetUserId || '');
+            const accountSnapshot = capturePrivateMessageAccount(token, targetUserId);
             setPrivateMessageSending(true);
             setPrivateMessageImageButtonText('上传中');
             try {
                 const dataUrl = await readPrivateMessageImageData(file);
+                if (!isPrivateMessageAccountCurrent(accountSnapshot, true)) return;
                 const imageSize = await getPrivateMessageImageSize(dataUrl);
+                if (!isPrivateMessageAccountCurrent(accountSnapshot, true)) return;
                 const uploadRes = await ipcRenderer.invoke('upload-private-message-image', {
                     token,
                     pa: getPrivateMessageSafePa(),
@@ -1643,6 +1707,7 @@
                     mimeType: mimeType || 'image/jpeg',
                     dataBase64: dataUrl
                 });
+                if (!isPrivateMessageAccountCurrent(accountSnapshot, true)) return;
 
                 if (!uploadRes || !uploadRes.success) {
                     throw new Error(uploadRes && uploadRes.msg ? uploadRes.msg : '上传图片失败');
@@ -1669,6 +1734,7 @@
                     text: '',
                     image: imagePayload
                 });
+                if (!isPrivateMessageAccountCurrent(accountSnapshot, true)) return;
 
                 if (!res || !res.success || !res.content) {
                     throw new Error(res && res.msg ? res.msg : '发送图片失败');
@@ -1691,11 +1757,14 @@
                     filterPrivateMessageList(getCurrentSearchKeyword(), { preserveScroll: true });
                 }
             } catch (error) {
+                if (!isPrivateMessageAccountCurrent(accountSnapshot, true)) return;
                 console.error('发送私信图片失败:', error);
                 showToast(`发送图片失败: ${error.message}`);
             } finally {
-                setPrivateMessageImageButtonText('图片');
-                setPrivateMessageSending(false);
+                if (isPrivateMessageAccountCurrent(accountSnapshot, true)) {
+                    setPrivateMessageImageButtonText('图片');
+                    setPrivateMessageSending(false);
+                }
             }
         }
 
@@ -1711,6 +1780,8 @@
                 return switchView('login');
             }
             if (!privateMessageDetailState.targetUserId) return;
+            const targetUserId = String(privateMessageDetailState.targetUserId || '').trim();
+            const accountSnapshot = capturePrivateMessageAccount(token, targetUserId);
 
             const input = document.getElementById('private-message-reply-input');
             const rawText = input ? input.value : '';
@@ -1737,9 +1808,10 @@
                 const res = await ipcRenderer.invoke('send-private-message-reply', {
                     token,
                     pa: getPrivateMessageSafePa(),
-                    targetUserId: privateMessageDetailState.targetUserId,
+                    targetUserId,
                     text
                 });
+                if (!isPrivateMessageAccountCurrent(accountSnapshot, true)) return;
 
                 if (!res || !res.success || !res.content) {
                     throw new Error(res && res.msg ? res.msg : '发送失败');
@@ -1753,7 +1825,7 @@
                 });
                 renderPrivateMessageDetail({ stickToBottom: true });
 
-                const conversation = privateMessageListState.items.find(entry => String(entry.user?.userId || '') === String(privateMessageDetailState.targetUserId));
+                const conversation = privateMessageListState.items.find(entry => String(entry.user?.userId || '') === targetUserId);
                 if (conversation) {
                     conversation.newestMessage = text;
                     conversation.newestMessagetime = Number(res.content.timestamp) || Date.now();
@@ -1765,14 +1837,16 @@
                     input.focus();
                 }
             } catch (error) {
+                if (!isPrivateMessageAccountCurrent(accountSnapshot, true)) return;
                 console.error('发送私信失败:', error);
                 showToast(`发送失败: ${error.message}`);
             } finally {
-                setPrivateMessageSending(false);
+                if (isPrivateMessageAccountCurrent(accountSnapshot, true)) setPrivateMessageSending(false);
             }
         }
 
         function stopPrivateMessagePolling() {
+            privateMessagePollGeneration += 1;
             privateMessageAutoRefreshEnabled = false;
             if (privateMessageAutoRefreshTimer) {
                 clearTimeout(privateMessageAutoRefreshTimer);
@@ -1782,11 +1856,13 @@
         }
 
         function resetPrivateMessageListState() {
+            privateMessageAccountGeneration += 1;
+            privateMessageListRequestGeneration += 1;
             stopPrivateMessagePolling();
             privateMessageListState.items = [];
             privateMessageListState.cursor = Date.now();
             privateMessageListState.hasMore = true;
-            privateMessageListState.loading = false;
+            setPrivateMessagesLoading(false);
             privateMessageListState.initialized = false;
             resetPrivateMessageDetailPanel();
             const searchEl = document.getElementById('private-message-search');
@@ -1800,14 +1876,15 @@
         function startPrivateMessagePolling() {
             stopPrivateMessagePolling();
             privateMessageAutoRefreshEnabled = true;
+            const pollingGeneration = privateMessagePollGeneration;
 
             const scheduleNext = () => {
-                if (!privateMessageAutoRefreshEnabled) return;
+                if (!privateMessageAutoRefreshEnabled || pollingGeneration !== privateMessagePollGeneration) return;
                 privateMessageAutoRefreshTimer = setTimeout(runPoll, getAdaptivePollDelay());
             };
 
             const runPoll = async () => {
-                if (!privateMessageAutoRefreshEnabled) return;
+                if (!privateMessageAutoRefreshEnabled || pollingGeneration !== privateMessagePollGeneration) return;
                 const view = document.getElementById('view-private-messages');
                 if (!view || view.style.display === 'none' || privateMessageAutoRefreshRunning) {
                     scheduleNext();
@@ -1832,6 +1909,7 @@
 
                     await Promise.allSettled(tasks);
                 } finally {
+                    if (pollingGeneration !== privateMessagePollGeneration) return;
                     privateMessageAutoRefreshRunning = false;
                     scheduleNext();
                 }

@@ -94,6 +94,7 @@
         let updateAllFollowedRoomNotificationsButton;
         let updateFollowedRoomNotificationButton;
         let resetFollowedRoomsState;
+        let pocketAccountSessionGeneration = 0;
         let closeFollowedProfileVideo;
         let openFollowedProfileVideo;
         let resetPrivateMessageListState;
@@ -2700,6 +2701,8 @@
             getActiveFollowedChannel: () => getActiveFollowedChannel(),
             getAdaptivePollDelay: () => getAdaptivePollDelay(),
             getAppToken: () => getCurrentAppToken(),
+            getCurrentUserId: () => (typeof currentPocketUserId !== 'undefined' ? currentPocketUserId : ''),
+            getAccountSessionGeneration: () => pocketAccountSessionGeneration,
             getMemberData: () => memberData || [],
             getMemberDataLoaded: () => !!window.isMemberDataLoaded,
             getPinyinInitials,
@@ -2813,6 +2816,7 @@
             formatPrivateMessageTime,
             getAdaptivePollDelay: () => getAdaptivePollDelay(),
             getAppToken: () => getCurrentAppToken(),
+            getAccountSessionGeneration: () => pocketAccountSessionGeneration,
             getCurrentPlayingAudio: () => currentPlayingAudio,
             getCurrentSearchKeyword: () => (document.getElementById('private-message-search')?.value || ''),
             getMemberData: () => memberData || [],
@@ -7461,6 +7465,7 @@
         }
 
         function resetAccountScopedSessionState() {
+            pocketAccountSessionGeneration += 1;
             resetFlipSessionState();
             if (typeof resetFollowedRoomsState === 'function') {
                 resetFollowedRoomsState();
@@ -7468,7 +7473,35 @@
             if (typeof resetPrivateMessageListState === 'function') {
                 resetPrivateMessageListState();
             }
+            if (typeof window.resetInvoiceAccountState === 'function') {
+                window.resetInvoiceAccountState();
+            }
+            if (typeof window.invalidateAutoMessageFetchAccountState === 'function') {
+                window.invalidateAutoMessageFetchAccountState();
+            }
+            if (typeof window.invalidatePocketAccountRequestState === 'function') {
+                window.invalidatePocketAccountRequestState();
+            }
         }
+
+        function getPocketAccountScopeKey() {
+            const userId = String(
+                typeof currentPocketUserId !== 'undefined' ? currentPocketUserId || '' : ''
+            ).trim();
+            if (userId) return `user-${userId.replace(/[^a-z0-9_-]/gi, '_')}`;
+
+            const token = String(getCurrentAppToken() || '').trim();
+            if (!token) return 'signed-out';
+            let hash = 2166136261;
+            for (let index = 0; index < token.length; index += 1) {
+                hash ^= token.charCodeAt(index);
+                hash = Math.imul(hash, 16777619);
+            }
+            return `token-${(hash >>> 0).toString(36)}`;
+        }
+
+        window.getPocketAccountScopeKey = getPocketAccountScopeKey;
+        window.getPocketAccountSessionGeneration = () => pocketAccountSessionGeneration;
 
         function getPinyinInitials(pinyinStr) {
             if (!pinyinStr) return "";
