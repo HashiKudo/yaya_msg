@@ -2,6 +2,7 @@
     window.YayaRendererFeatures = window.YayaRendererFeatures || {};
 
     window.YayaRendererFeatures.createDanmuTimelineFeature = function createDanmuTimelineFeature(deps) {
+        const isWebRuntime = window.desktop?.platform === 'web';
         const {
             DATA_BASE_URL,
             escapeHtml,
@@ -404,8 +405,8 @@
                 if (currentTimelineMode === 'subtitle') {
                     headerDiv.innerHTML =
                         createHeaderCol('时间', '--col-time', false, false, true) +
-                        createHeaderCol('字幕内容', null, true) +
-                        createHeaderCol('操作', '--col-act', false, true);
+                        createHeaderCol('字幕内容', null, true, isWebRuntime) +
+                        (isWebRuntime ? '' : createHeaderCol('操作', '--col-act', false, true));
                 } else {
                     headerDiv.innerHTML =
                         createHeaderCol('时间', '--col-time', false, false, true) +
@@ -451,7 +452,7 @@
                 });
             }
 
-            container.innerHTML = '';
+            container.replaceChildren();
             container.scrollTop = 0;
             if (countDisplay) countDisplay.innerText = `共 ${list.length} 条`;
 
@@ -479,7 +480,7 @@
 
                 const endPointTime = (currentTimelineMode === 'subtitle' && item.endTime) ? item.endTime : item.time;
 
-                const actionHtml = currentTimelineMode === 'subtitle' ? `
+                const actionHtml = currentTimelineMode === 'subtitle' && !isWebRuntime ? `
                     <div style="width: var(--col-act); display: flex; gap: 6px; justify-content: flex-end; align-items: center; flex-shrink: 0; margin-left: 10px; padding-right: 8px;">
                         <button style="border: 1px solid #28a745; background: transparent; color: #28a745; padding: 2px 8px; font-size: 11px; border-radius: 4px; cursor: pointer; transition: all 0.2s;"
                                 onmouseover="this.style.background='#28a745'; this.style.color='#fff'"
@@ -547,7 +548,7 @@
             const timelineWrapper = document.getElementById('danmu-timeline-wrapper');
             if (timelineWrapper) timelineWrapper.style.display = 'none';
             const danmuBody = document.getElementById('danmu-list-body');
-            if (danmuBody) danmuBody.innerHTML = '';
+            if (danmuBody) danmuBody.replaceChildren();
             const danmuCount = document.getElementById('danmu-count-display');
             if (danmuCount) danmuCount.textContent = '';
             lastActiveIndex = -1;

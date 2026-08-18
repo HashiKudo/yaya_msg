@@ -1,6 +1,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { reportIgnoredError } = require('./error-utils');
 
 const INTERNAL_FILES = ['data_cache.json', 'scan_manifest.json'];
 
@@ -26,8 +27,7 @@ function resolveLinuxDocumentsDir(homeDir) {
                 return resolved;
             }
         }
-    } catch (error) {
-    }
+    } catch (error) { reportIgnoredError(error, 'src/common/storage-paths.js'); }
 
     return '';
 }

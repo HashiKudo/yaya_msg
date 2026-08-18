@@ -1,6 +1,6 @@
         import React, { useState, useMemo, useRef, useEffect } from 'react';
         import { createRoot } from 'react-dom/client';
-        import { pinyin } from 'https://esm.sh/pinyin-pro@3.24.2';
+        import { pinyin } from 'pinyin-pro';
         import { Search, Users, Filter, Upload, Heart, MapPin, Calendar, Hash, X, ChevronRight, Layers, Flag, CheckCircle2, ChevronDown, Check, Cake, Trophy, FileText, Clock, ArrowUpCircle, LogOut, GraduationCap, Copy, Moon, Sun, List, UserSquare2, Sparkles, TrendingUp, TrendingDown, Minus, Music, Disc, AlertCircle, Mic2, Loader2, ExternalLink, ClipboardCopy, Star, Ruler, Droplet, UserCircle, CalendarDays, Activity } from 'lucide-react';
         const DEMO_DATA = [];
         const DATABASE_UI_STATE_KEY = 'yaya_database_ui_state_v1';
@@ -802,7 +802,7 @@
                     textArea.value = displayValue;
                     document.body.appendChild(textArea);
                     textArea.select();
-                    try { document.execCommand('copy'); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (err) { }
+                    try { document.execCommand('copy'); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (err) { window.YayaRendererUtils.reportIgnoredError(err, 'src/renderer/database/app.jsx'); }
                     document.body.removeChild(textArea);
                 };
                 return (
@@ -941,7 +941,7 @@
                     </div>
                     {previewPhoto && (
                         <div
-                            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+                            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm animate-backdrop"
                             onClick={(e) => {
                                 e.stopPropagation();
                                 setPreviewPhoto(null);
@@ -1906,5 +1906,7 @@
             );
         }
 
-        const root = createRoot(document.getElementById('root'));
+        const rootElement = document.getElementById('database-root') || document.getElementById('root');
+        if (!rootElement) throw new Error('数据库挂载节点不存在');
+        const root = createRoot(rootElement);
         root.render(<App />);

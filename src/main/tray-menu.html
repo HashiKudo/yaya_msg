@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>牙牙消息</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --menu-bg: #ffffff;
+            --menu-border: rgba(44, 50, 60, 0.12);
+            --menu-text: #272b33;
+            --menu-sub: #7b818c;
+            --menu-hover: rgba(35, 40, 48, 0.07);
+            --menu-divider: rgba(44, 50, 60, 0.09);
+            --menu-danger: #d94855;
+            --menu-danger-hover: rgba(217, 72, 85, 0.1);
+        }
+
+        html[data-theme="dark"] {
+            color-scheme: dark;
+            --menu-bg: #1d1f25;
+            --menu-border: rgba(255, 255, 255, 0.12);
+            --menu-text: #f1f2f4;
+            --menu-sub: #a5a9b1;
+            --menu-hover: rgba(255, 255, 255, 0.09);
+            --menu-divider: rgba(255, 255, 255, 0.09);
+            --menu-danger: #ff7b86;
+            --menu-danger-hover: rgba(255, 123, 134, 0.12);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: transparent;
+            font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+            user-select: none;
+        }
+
+        body {
+            padding: 0;
+        }
+
+        .tray-menu {
+            width: 100%;
+            height: 100%;
+            padding: 4px;
+            border: 1px solid var(--menu-border);
+            border-radius: 11px;
+            background: var(--menu-bg);
+        }
+
+        .tray-menu-divider {
+            height: 1px;
+            margin: 3px 7px;
+            background: var(--menu-divider);
+        }
+
+        .tray-menu-item {
+            width: 100%;
+            height: 32px;
+            padding: 0 10px;
+            border: 0;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            background: transparent;
+            color: var(--menu-text);
+            font: inherit;
+            font-size: 13px;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .tray-menu-item:hover,
+        .tray-menu-item:focus-visible {
+            outline: none;
+            background: var(--menu-hover);
+        }
+
+        .tray-menu-item:active {
+            filter: brightness(0.96);
+        }
+
+        .tray-menu-item.is-danger {
+            color: var(--menu-danger);
+        }
+
+        .tray-menu-item.is-danger:hover,
+        .tray-menu-item.is-danger:focus-visible {
+            background: var(--menu-danger-hover);
+        }
+
+    </style>
+</head>
+
+<body>
+    <main class="tray-menu" role="menu" aria-label="牙牙消息托盘菜单">
+        <button class="tray-menu-item" type="button" role="menuitem" data-action="show">
+            <span>显示主窗口</span>
+        </button>
+        <div class="tray-menu-divider"></div>
+        <button class="tray-menu-item is-danger" type="button" role="menuitem" data-action="quit">
+            <span>退出软件</span>
+        </button>
+    </main>
+    <script>
+        window.trayMenu.onTheme((theme) => {
+            document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light';
+        });
+
+        document.querySelectorAll('[data-action]').forEach((button) => {
+            button.addEventListener('click', () => window.trayMenu.action(button.dataset.action));
+        });
+    </script>
+</body>
+
+</html>

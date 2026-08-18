@@ -33,6 +33,9 @@
 
         let pendingLiveReconnectTimer = null;
         const LIVE_STALL_RECOVERY_DELAY = 5000;
+        const MEDIA_SIGNATURE_TIMEOUT_MS = 6000;
+        const LEGACY_FLV_FALLBACK_TIMEOUT_MS = 10000;
+        const detectedMediaTypeCache = new Map();
 
         function getLiveReconnectDelay(attempt = 0) {
             return Math.min(5000 + Math.max(0, (Number(attempt) || 0) - 1) * 5000, 30000);
@@ -43,15 +46,18 @@
             return !!playerView && playerView.style.display !== 'none';
         }
 
-        function applyDPlayerVideoTransform(dp) {
+        function applyDPlayerVideoTransform(dp, { animate = true } = {}) {
             if (!dp || !dp.video) return;
             const degree = Number(dp.yayaRotateDegree) || 0;
             const mirror = dp.yayaMirrorMode || 'none';
             const isPerpendicular = degree % 180 !== 0;
-            const bounds = (dp.container || dp.video.parentElement || dp.video).getBoundingClientRect();
-            const rotateScale = isPerpendicular && bounds.width > 0 && bounds.height > 0
-                ? Math.min(1, bounds.width / bounds.height, bounds.height / bounds.width)
-                : 1;
+            let rotateScale = 1;
+            if (isPerpendicular) {
+                const bounds = (dp.container || dp.video.parentElement || dp.video).getBoundingClientRect();
+                if (bounds.width > 0 && bounds.height > 0) {
+                    rotateScale = Math.min(1, bounds.width / bounds.height, bounds.height / bounds.width);
+                }
+            }
             const rotateTransform = degree ? `rotate(${degree}deg)` : '';
             const scaleTransform = rotateScale < 1 ? `scale(${rotateScale})` : '';
             const mirrorTransform = mirror === 'horizontal'
@@ -59,7 +65,7 @@
                 : mirror === 'vertical'
                     ? 'scaleY(-1)'
                     : '';
-            dp.video.style.transition = 'transform 0.3s ease';
+            dp.video.style.transition = animate ? 'transform 0.3s ease' : 'none';
             dp.video.style.transformOrigin = 'center center';
             dp.video.style.objectFit = isPerpendicular ? 'contain' : '';
             dp.video.style.transform = [rotateTransform, scaleTransform, mirrorTransform].filter(Boolean).join(' ');
@@ -121,7 +127,22 @@
             setTimeout(install, 500);
             if (!dp.yayaTransformResizeBound) {
                 dp.yayaTransformResizeBound = true;
-                window.addEventListener('resize', () => applyDPlayerVideoTransform(dp));
+                let resizeFrame = 0;
+                const handleResize = () => {
+                    const degree = Number(dp.yayaRotateDegree) || 0;
+                    if (degree % 180 === 0 || resizeFrame) return;
+                    resizeFrame = window.requestAnimationFrame(() => {
+                        resizeFrame = 0;
+                        applyDPlayerVideoTransform(dp, { animate: false });
+                    });
+                };
+                dp.yayaTransformResizeCleanup = () => {
+                    window.removeEventListener('resize', handleResize);
+                    if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
+                    resizeFrame = 0;
+                    dp.yayaTransformResizeBound = false;
+                };
+                window.addEventListener('resize', handleResize, { passive: true });
             }
         }
 
@@ -158,7 +179,7 @@
             const textEl = document.getElementById('live-announcement-text');
 
             if (textEl) {
-                textEl.innerHTML = '';
+                textEl.replaceChildren();
             }
 
             if (announcementBar) {
@@ -174,7 +195,7 @@
 
             if (rankList) {
                 rankList.style.display = 'none';
-                rankList.innerHTML = '';
+                rankList.replaceChildren();
             }
 
             if (rankArrow) {
@@ -202,7 +223,7 @@
                 rankContainer.innerHTML = `
                     <div onclick="toggleRankPanel()" style="padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; background: var(--input-bg); user-select: none;">
                         <div style="display: flex; align-items: center;">
-                            <span style="font-weight: bold; margin-right: 10px;">💡 贡献榜</span>
+                            <span style="font-weight: bold; margin-right: 10px;">贡献榜</span>
                         </div>
                         <div style="display: flex; align-items: center; gap: 8px;">
                             <button class="btn btn-secondary" onclick="event.stopPropagation(); fetchLiveRank();" style="padding: 0 6px; height: 20px; font-size: 12px;">↻</button>
@@ -235,6 +256,145 @@
             return '';
         }
 
+        function normalizePlaybackUrl(url) {
+            const value = String(url || '').trim();
+            if (!value || !/^https?:\/\//i.test(value)) return value;
+
+            try {
+                const parsed = new URL(value);
+                const hostname = parsed.hostname.toLowerCase();
+                if (parsed.protocol === 'http:' && (hostname === '48.cn' || hostname.endsWith('.48.cn'))) {
+                    parsed.protocol = 'https:';
+                    return parsed.href;
+                }
+            } catch (error) {
+                window.YayaRendererUtils.reportIgnoredError(error, 'player-core:normalize-playback-url');
+            }
+
+            return value;
+        }
+
+        async function readRemoteMediaSignature(url, byteCount = 16) {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), MEDIA_SIGNATURE_TIMEOUT_MS);
+            let reader = null;
+
+            try {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        Range: `bytes=0-${Math.max(0, byteCount - 1)}`
+                    },
+                    cache: 'no-store',
+                    credentials: 'omit',
+                    signal: controller.signal
+                });
+
+                if (!response.ok) return null;
+
+                if (!response.body || typeof response.body.getReader !== 'function') {
+                    const contentLength = Number(response.headers.get('content-length'));
+                    if (Number.isFinite(contentLength) && contentLength > 4096) return null;
+                    return new Uint8Array(await response.arrayBuffer()).slice(0, byteCount);
+                }
+
+                reader = response.body.getReader();
+                const bytes = [];
+                while (bytes.length < byteCount) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    for (const byte of value) {
+                        bytes.push(byte);
+                        if (bytes.length >= byteCount) break;
+                    }
+                }
+                return Uint8Array.from(bytes);
+            } finally {
+                clearTimeout(timeout);
+                if (reader) {
+                    try {
+                        await reader.cancel();
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'player-core:cancel-media-signature-read'); }
+                }
+            }
+        }
+
+        async function detectMediaPlaybackType(url) {
+            const normalizedUrl = String(url || '').trim();
+            if (!normalizedUrl) return '';
+            if (/\.flv(?:$|[?#])/i.test(normalizedUrl)) return 'flv';
+            if (/\.m3u8(?:$|[?#])/i.test(normalizedUrl)) return 'm3u8';
+            if (!/^https?:\/\//i.test(normalizedUrl)) return '';
+
+            if (detectedMediaTypeCache.has(normalizedUrl)) {
+                return detectedMediaTypeCache.get(normalizedUrl);
+            }
+
+            try {
+                const signature = await readRemoteMediaSignature(normalizedUrl);
+                const detectedType = signature
+                    && signature.length >= 3
+                    && signature[0] === 0x46
+                    && signature[1] === 0x4c
+                    && signature[2] === 0x56
+                    ? 'flv'
+                    : '';
+
+                if (detectedType) {
+                    detectedMediaTypeCache.set(normalizedUrl, detectedType);
+                    console.info('[播放器] 检测到扩展名与内容不一致，按 FLV 点播加载');
+                }
+                return detectedType;
+            } catch (error) {
+                if (error?.name !== 'AbortError') {
+                    window.YayaRendererUtils.reportIgnoredError(error, 'player-core:detect-media-type');
+                }
+                return '';
+            }
+        }
+
+        async function switchToCompatVodPlayback(video, videoUrl, player, reason = '') {
+            if (!video || video.yayaCompatFallbackStarted) return;
+            if (window.desktop?.platform === 'web') return;
+
+            const currentArt = getArt();
+            if (!currentArt || currentArt.video !== video) return;
+            video.yayaCompatFallbackStarted = true;
+
+            if (video.yayaCompatFallbackTimer) {
+                clearTimeout(video.yayaCompatFallbackTimer);
+                video.yayaCompatFallbackTimer = null;
+            }
+
+            try {
+                if (currentArt.notice) {
+                    currentArt.notice.show = '旧版视频加载较慢，正在切换兼容模式...';
+                }
+                if (player) {
+                    try { player.unload(); } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'player-core:compat-unload'); }
+                    try { player.detachMediaElement(); } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'player-core:compat-detach'); }
+                    try { player.destroy(); } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'player-core:compat-destroy'); }
+                }
+                video.mpegts = null;
+
+                const result = await ipcRenderer.invoke('prepare-compat-vod', videoUrl);
+                const latestArt = getArt();
+                if (!latestArt || latestArt.video !== video || !result?.url) return;
+
+                video.src = result.url;
+                video.load();
+                await video.play().catch((error) => {
+                    window.YayaRendererUtils.reportIgnoredError(error, 'player-core:compat-autoplay');
+                });
+                if (latestArt.notice) latestArt.notice.show = '已切换兼容播放';
+            } catch (error) {
+                console.error('[播放器] 兼容播放失败:', reason, error);
+                if (typeof showToast === 'function') {
+                    showToast(error?.message || '旧版直播兼容播放失败');
+                }
+            }
+        }
+
         function canUseNativeHls(video) {
             if (!video || typeof video.canPlayType !== 'function') return false;
             return Boolean(
@@ -247,6 +407,8 @@
             let stallRecoverCount = 0;
             let stallRecoverTimer = null;
             let lastRecoverAt = 0;
+            let sourceLoaded = false;
+            let hasPlayableMedia = false;
 
             const recoverFromStall = (reason = 'stalled') => {
                 if (!video || video.paused || video.ended) return;
@@ -255,26 +417,43 @@
                 lastRecoverAt = now;
                 stallRecoverCount += 1;
 
+                const resumeAt = Math.max(0, Number(video.currentTime) || 0);
+
                 try {
-                    hls.startLoad(Math.max(0, video.currentTime - 0.5));
-                } catch (error) {}
+                    hls.stopLoad();
+                    hls.startLoad(Math.max(0, resumeAt - 1));
+                } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/player-core-feature.js'); }
 
                 if (stallRecoverCount % 2 === 0) {
                     try {
                         hls.recoverMediaError();
-                    } catch (error) {}
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/player-core-feature.js'); }
                 }
 
-                if (stallRecoverCount >= 3 && Number.isFinite(video.currentTime)) {
+                if (stallRecoverCount === 3) {
                     try {
-                        video.currentTime = Math.max(0, video.currentTime + 0.08);
-                    } catch (error) {}
+                        hls.detachMedia();
+                        hls.attachMedia(video);
+                        hls.startLoad(Math.max(0, resumeAt - 1));
+                        if (Number.isFinite(resumeAt)) video.currentTime = resumeAt;
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'player-core:hls-reattach'); }
                 }
 
                 console.warn(`[播放器] HLS ${reason}，尝试自动恢复 #${stallRecoverCount}`);
+                if (stallRecoverCount < 5) {
+                    clearTimeout(stallRecoverTimer);
+                    stallRecoverTimer = setTimeout(() => {
+                        if (video && !video.paused && !video.ended && video.readyState < 3) {
+                            recoverFromStall('persistent stall');
+                        }
+                    }, 2500);
+                }
             };
 
             const scheduleStallRecovery = (reason) => {
+                // `waiting` is expected while the first fragment is loading. Aborting it here
+                // makes slower connections restart the same fragment indefinitely.
+                if (!hasPlayableMedia) return;
                 clearTimeout(stallRecoverTimer);
                 stallRecoverTimer = setTimeout(() => {
                     if (video && !video.paused && !video.ended && video.readyState < 3) {
@@ -291,19 +470,67 @@
 
             const hls = new window.Hls({
                 enableWorker: true,
+                progressive: true,
                 lowLatencyMode: false,
                 startFragPrefetch: !isLiveContent,
                 backBufferLength: isLiveContent ? 15 : 90,
-                maxBufferLength: isLiveContent ? 30 : 300,
-                maxMaxBufferLength: isLiveContent ? 60 : 600,
-                maxBufferSize: 400 * 1000 * 1000,
-                manifestLoadingMaxRetry: 5,
-                manifestLoadingRetryDelay: 800,
-                levelLoadingMaxRetry: 5,
-                levelLoadingRetryDelay: 800,
-                fragLoadingMaxRetry: 8,
-                fragLoadingRetryDelay: 800,
-                fragLoadingMaxRetryTimeout: 8000
+                maxBufferLength: isLiveContent ? 30 : 90,
+                maxMaxBufferLength: isLiveContent ? 60 : 180,
+                maxBufferSize: 128 * 1000 * 1000,
+                manifestLoadPolicy: {
+                    default: {
+                        maxTimeToFirstByteMs: 4000,
+                        maxLoadTimeMs: 10000,
+                        timeoutRetry: {
+                            maxNumRetry: 3,
+                            retryDelayMs: 300,
+                            maxRetryDelayMs: 2000,
+                            backoff: 'linear'
+                        },
+                        errorRetry: {
+                            maxNumRetry: 3,
+                            retryDelayMs: 500,
+                            maxRetryDelayMs: 4000,
+                            backoff: 'linear'
+                        }
+                    }
+                },
+                playlistLoadPolicy: {
+                    default: {
+                        maxTimeToFirstByteMs: 4000,
+                        maxLoadTimeMs: 10000,
+                        timeoutRetry: {
+                            maxNumRetry: 3,
+                            retryDelayMs: 300,
+                            maxRetryDelayMs: 2000,
+                            backoff: 'linear'
+                        },
+                        errorRetry: {
+                            maxNumRetry: 3,
+                            retryDelayMs: 500,
+                            maxRetryDelayMs: 4000,
+                            backoff: 'linear'
+                        }
+                    }
+                },
+                fragLoadPolicy: {
+                    default: {
+                        maxTimeToFirstByteMs: 4000,
+                        maxLoadTimeMs: 15000,
+                        timeoutRetry: {
+                            maxNumRetry: 4,
+                            retryDelayMs: 300,
+                            maxRetryDelayMs: 2500,
+                            backoff: 'linear'
+                        },
+                        errorRetry: {
+                            maxNumRetry: 5,
+                            retryDelayMs: 500,
+                            maxRetryDelayMs: 5000,
+                            backoff: 'linear'
+                        }
+                    }
+                }
             });
 
             if (window.Hls.Events && window.Hls.ErrorTypes) {
@@ -332,10 +559,24 @@
             video.webkitPreservesPitch = true;
             video.addEventListener('waiting', () => scheduleStallRecovery('waiting'));
             video.addEventListener('stalled', () => scheduleStallRecovery('stalled'));
-            video.addEventListener('playing', clearStallRecovery);
-            video.addEventListener('canplay', clearStallRecovery);
-            hls.loadSource(videoUrl);
+            const markPlayable = () => {
+                hasPlayableMedia = true;
+                clearStallRecovery();
+            };
+            video.addEventListener('loadeddata', markPlayable);
+            video.addEventListener('playing', markPlayable);
+            video.addEventListener('canplay', markPlayable);
+
+            const loadSourceAfterAttach = () => {
+                if (sourceLoaded) return;
+                sourceLoaded = true;
+                hls.loadSource(videoUrl);
+            };
+            if (window.Hls.Events?.MEDIA_ATTACHED) {
+                hls.once(window.Hls.Events.MEDIA_ATTACHED, loadSourceAfterAttach);
+            }
             hls.attachMedia(video);
+            if (!window.Hls.Events?.MEDIA_ATTACHED) loadSourceAfterAttach();
             video.hls = hls;
             return hls;
         }
@@ -431,6 +672,9 @@
             if (giftContainer) {
                 giftContainer.style.display = mode === 'live' ? 'block' : 'none';
             }
+            if (mode === 'live' && typeof window.updateLiveBalance === 'function') {
+                void window.updateLiveBalance();
+            }
 
             const giftPanel = document.getElementById('live-gift-panel');
             const giftArrow = document.getElementById('gift-panel-arrow');
@@ -452,14 +696,13 @@
                 authorEl.textContent = item.userInfo ? item.userInfo.nickname : (item.nickname || '未知成员');
             }
 
-            const openLiveMembersWrap = document.getElementById('current-openlive-members-wrap');
-            const openLiveMembersEl = document.getElementById('current-openlive-members');
-            if (openLiveMembersWrap) {
-                openLiveMembersWrap.style.display = 'none';
+            const participantsButton = document.getElementById('btn-player-participants');
+            const participantsModal = document.getElementById('openLiveParticipantsModal');
+            if (participantsButton) {
+                participantsButton.style.display = 'none';
+                participantsButton.textContent = '参与成员';
             }
-            if (openLiveMembersEl) {
-                openLiveMembersEl.textContent = '';
-            }
+            if (participantsModal) participantsModal.style.display = 'none';
 
             const titleContainer = document.getElementById('current-live-title');
             const dateContainer = document.getElementById('current-live-date');
@@ -613,8 +856,7 @@
                             const secureUrl = danmuUrl.replace(/^http:\/\//i, 'https://');
                             const danmuText = await fetchDanmuNative(secureUrl);
                             danmuData = parsePocketDanmu(danmuText);
-                        } catch (e) {
-                        }
+                        } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/player-core-feature.js'); }
                     }
 
                     if (typeof renderDanmuListUI === 'function') {
@@ -636,6 +878,7 @@
                 clearAuxPanels = false,
                 autoRecoveryAttempt = 0
             } = options || {};
+            url = normalizePlaybackUrl(url);
             destroyPlayers({ clearTimeline: isLiveContent, clearAuxPanels });
             const container = document.getElementById('live-player-container');
             if (!container) return;
@@ -831,6 +1074,7 @@
                 await window.ensureYayaWebPlayerLibs('player');
             }
             if (window.Artplayer) Artplayer.CONTEXTMENU = false;
+            const playbackType = await detectMediaPlaybackType(url);
 
             const applyVideoTransform = (art) => {
                 if (!art || !art.video) return;
@@ -856,6 +1100,7 @@
             const nextArt = new Artplayer({
                 container: '.artplayer-app',
                 url,
+                type: playbackType,
                 title,
                 isLive: isLiveContent,
                 theme: '#FF8EBF',
@@ -1034,10 +1279,41 @@
                                 type: 'flv',
                                 url: videoUrl,
                                 isLive: isLiveContent
+                            }, {
+                                enableWorker: false,
+                                enableStashBuffer: isLiveContent,
+                                stashInitialSize: 32 * 1024,
+                                deferLoadAfterSourceOpen: false,
+                                lazyLoad: !isLiveContent,
+                                accurateSeek: !isLiveContent,
+                                rangeLoadZeroStart: !isLiveContent,
+                                reuseRedirectedURL: true,
+                                autoCleanupSourceBuffer: true,
+                                autoCleanupMaxBackwardDuration: 120,
+                                autoCleanupMinBackwardDuration: 60
                             });
+
+                            if (window.mpegts.Events?.ERROR) {
+                                player.on(window.mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
+                                    const detail = String(errorInfo?.msg || errorDetail || errorType || '未知错误');
+                                    console.error('[播放器] FLV 加载失败:', errorType, errorDetail, errorInfo);
+                                    setTimeout(() => switchToCompatVodPlayback(video, videoUrl, player, detail), 0);
+                                });
+                            }
                             player.attachMediaElement(video);
                             player.load();
                             video.mpegts = player;
+                            const clearFallbackTimer = () => {
+                                if (!video.yayaCompatFallbackTimer) return;
+                                clearTimeout(video.yayaCompatFallbackTimer);
+                                video.yayaCompatFallbackTimer = null;
+                            };
+                            video.addEventListener('canplay', clearFallbackTimer, { once: true });
+                            video.addEventListener('playing', clearFallbackTimer, { once: true });
+                            video.yayaCompatFallbackTimer = setTimeout(() => {
+                                if (video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return;
+                                switchToCompatVodPlayback(video, videoUrl, player, 'playback timeout');
+                            }, LEGACY_FLV_FALLBACK_TIMEOUT_MS);
                         } else {
                             video.src = videoUrl;
                         }
@@ -1092,6 +1368,10 @@
             }
 
             if (currentArt && currentArt.destroy) {
+                if (currentArt.video.yayaCompatFallbackTimer) {
+                    clearTimeout(currentArt.video.yayaCompatFallbackTimer);
+                    currentArt.video.yayaCompatFallbackTimer = null;
+                }
                 if (currentArt.video.mpegts) {
                     currentArt.video.mpegts.destroy();
                     currentArt.video.mpegts = null;
@@ -1105,6 +1385,10 @@
             }
 
             if (currentDp) {
+                if (typeof currentDp.yayaTransformResizeCleanup === 'function') {
+                    currentDp.yayaTransformResizeCleanup();
+                    currentDp.yayaTransformResizeCleanup = null;
+                }
                 if (typeof currentDp.yayaLiveCleanup === 'function') {
                     currentDp.yayaLiveCleanup();
                     currentDp.yayaLiveCleanup = null;
@@ -1112,7 +1396,7 @@
                 if (currentDp.yayaFlvPlayer && typeof currentDp.yayaFlvPlayer.destroy === 'function') {
                     try {
                         currentDp.yayaFlvPlayer.destroy();
-                    } catch (error) {}
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/player-core-feature.js'); }
                     currentDp.yayaFlvPlayer = null;
                 }
                 currentDp.destroy();
@@ -1126,7 +1410,7 @@
 
             const container = document.getElementById('live-player-container');
             if (container) {
-                container.innerHTML = '';
+                container.replaceChildren();
             }
 
             if (clearAuxPanels) {

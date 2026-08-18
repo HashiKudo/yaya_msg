@@ -8,13 +8,16 @@
             fetchPocketAPI,
             getAdaptivePollDelay,
             getAppToken,
+            getCurrentUserId,
             getOptimizedThumbUrl,
             getMemberData,
             ipcRenderer,
             loadMemberData,
             playArchiveFromMessage,
             playLiveStream,
+            setMediaReturnView,
             replaceTencentEmoji,
+            showConfirm,
             showToast,
             switchView,
             downloadMediaFileIconMode
@@ -24,11 +27,14 @@
         let activeFollowedChannel = '';
         let activeFollowedServer = '';
         let activeFollowedName = '';
+        let activeFollowedMemberId = '';
         let activeFollowedNextTime = 0;
         let isFollowedChatLoading = false;
+        let followedChatRequestRevision = 0;
 
         let followedAutoRefreshTimer = null;
         let followedAutoRefreshRunning = false;
+        let followedAutoRefreshCycle = 0;
         let activeFollowedMainChannel = '';
         let isFollowedSmallRoomMode = false;
         let followedStickToBottom = true;
@@ -44,8 +50,29 @@
         let followedUserProfileRequestToken = 0;
         let followedUserProfileCurrentEntry = null;
         let followedProfileVideoCoverObserver = null;
+        let followedProfileDynamicStatsObserver = null;
         const followedUserProfileHistory = [];
         const followedServerDetailCache = new Map();
+        const followedProfileDynamicStatsCache = new Map();
+        const followedProfileDynamicStatsRequests = new Map();
+        const followedProfileDynamicCommentStateMap = new Map();
+        const FOLLOWED_CHAT_REQUEST_TIMEOUT_MS = 20000;
+
+        function fetchFollowedRoomMessagesWithTimeout(payload) {
+            let timeoutId = null;
+            const timeoutPromise = new Promise((_, reject) => {
+                timeoutId = setTimeout(() => {
+                    reject(new Error('口袋房间消息加载超时'));
+                }, FOLLOWED_CHAT_REQUEST_TIMEOUT_MS);
+            });
+
+            return Promise.race([
+                ipcRenderer.invoke('fetch-room-messages', payload),
+                timeoutPromise
+            ]).finally(() => {
+                if (timeoutId) clearTimeout(timeoutId);
+            });
+        }
 
         function escapeFollowedHtml(value) {
             return String(value == null ? '' : value)
@@ -426,7 +453,7 @@
             const modal = document.getElementById('followedProfileVideoModal');
             if (!modal) return;
             const slot = modal.querySelector('.followed-profile-video-slot');
-            if (slot) slot.innerHTML = '';
+            if (slot) slot.replaceChildren();
             modal.style.display = 'none';
         }
 
@@ -619,6 +646,11 @@
             );
         }
 
+        function renderFollowedDynamicCommentText(value) {
+            const escaped = renderFollowedDynamicPlainText(value);
+            return typeof replaceTencentEmoji === 'function' ? replaceTencentEmoji(escaped) : escaped;
+        }
+
         function getFollowedDynamicMentionUserId(href) {
             const raw = String(href || '').trim();
             const match = raw.match(/^snh48:\/\/(\d+)/i);
@@ -651,7 +683,7 @@
                 if ((raw.startsWith('{') && raw.endsWith('}')) || (raw.startsWith('[') && raw.endsWith(']'))) {
                     try {
                         return extractFollowedDynamicTextCandidate(JSON.parse(raw), visited, depth + 1);
-                    } catch (error) {}
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/followed-chat-feature.js'); }
                 }
                 return raw;
             }
@@ -1024,6 +1056,44 @@
             </div>`;
         }
 
+        function getFollowedDynamicCount(value, keys) {
+            const sources = [value, value?.postsInfo, value?.post, value?.data?.postsInfo, value?.data?.post].filter(Boolean);
+            for (const source of sources) {
+                for (const key of keys) {
+                    const raw = source?.[key];
+                    if (raw === undefined || raw === null || raw === '') continue;
+                    const number = Number(raw);
+                    if (Number.isFinite(number)) return number;
+                }
+            }
+            return null;
+        }
+
+        function getFollowedDynamicTime(value) {
+            const sources = [value, value?.postsInfo, value?.post, value?.data?.postsInfo, value?.data?.post].filter(Boolean);
+            [value?.extInfo, value?.data?.extInfo].forEach(extInfo => {
+                if (!extInfo) return;
+                if (typeof extInfo === 'object') {
+                    sources.push(extInfo);
+                    return;
+                }
+                if (typeof extInfo === 'string') {
+                    try {
+                        const parsed = JSON.parse(extInfo.replace(/:\s*([0-9]{16,})/g, ':"$1"'));
+                        if (parsed && typeof parsed === 'object') sources.push(parsed);
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'parse_followed_dynamic_time'); }
+                }
+            });
+            const keys = ['ctime', 'createTime', 'createAt', 'postTime', 'msgTime', 'sendTime', 'publishTime', 'time', 'timestamp'];
+            for (const source of sources) {
+                for (const key of keys) {
+                    const raw = source?.[key];
+                    if (raw !== undefined && raw !== null && String(raw).trim() !== '') return raw;
+                }
+            }
+            return '';
+        }
+
         function flattenFollowedDynamicItems(value, items = [], seen = new Set(), visited = new WeakSet(), depth = 0) {
             if (!value || items.length >= 240 || depth > 8) return items;
             if (typeof value === 'string') {
@@ -1031,7 +1101,7 @@
                 if ((raw.startsWith('{') && raw.endsWith('}')) || (raw.startsWith('[') && raw.endsWith(']'))) {
                     try {
                         return flattenFollowedDynamicItems(JSON.parse(raw), items, seen, visited, depth + 1);
-                    } catch (error) {}
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/followed-chat-feature.js'); }
                 }
                 return items;
             }
@@ -1047,7 +1117,7 @@
             if (body && typeof body === 'string') {
                 try {
                     flattenFollowedDynamicItems(JSON.parse(body), items, seen, visited, depth + 1);
-                } catch (error) {}
+                } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/followed-chat-feature.js'); }
             } else if (body && typeof body === 'object') {
                 flattenFollowedDynamicItems(body, items, seen, visited, depth + 1);
             }
@@ -1067,13 +1137,29 @@
                 : [];
             const images = [...new Set([...directImages, ...nestedImages])];
             const key = String(postId || text || images[0] || '');
+            if (key && seen.has(key)) {
+                const existing = items.find(item => String(item.postId || item.text || item.images?.[0] || '') === key);
+                if (existing) {
+                    const nextViewCount = getFollowedDynamicCount(value, ['viewCount', 'readCount']);
+                    const nextLikeCount = getFollowedDynamicCount(value, ['likeCount', 'likeNum']);
+                    const nextCommentCount = getFollowedDynamicCount(value, ['commentCount', 'commentNum']);
+                    const nextTime = getFollowedDynamicTime(value);
+                    if (!Number.isFinite(existing.viewCount) && Number.isFinite(nextViewCount)) existing.viewCount = nextViewCount;
+                    if (!Number.isFinite(existing.likeCount) && Number.isFinite(nextLikeCount)) existing.likeCount = nextLikeCount;
+                    if (!Number.isFinite(existing.commentCount) && Number.isFinite(nextCommentCount)) existing.commentCount = nextCommentCount;
+                    if (!existing.ctime && nextTime) existing.ctime = nextTime;
+                }
+            }
             if (key && !seen.has(key) && (text || images.length)) {
                 seen.add(key);
                 items.push({
                     text,
                     images,
-                    ctime: value.ctime || value.createTime || value.postTime || value.time || '',
-                    postId
+                    ctime: getFollowedDynamicTime(value),
+                    postId,
+                    viewCount: getFollowedDynamicCount(value, ['viewCount', 'readCount']),
+                    likeCount: getFollowedDynamicCount(value, ['likeCount', 'likeNum']),
+                    commentCount: getFollowedDynamicCount(value, ['commentCount', 'commentNum'])
                 });
             }
 
@@ -1085,8 +1171,15 @@
 
         function dedupeFollowedDynamicItems(items = []) {
             const deduped = [];
-            const scoreItem = (item) =>
-                (item?.text ? 4 : 0) + (item?.postId ? 3 : 0) + (item?.ctime ? 1 : 0) + Math.min(2, Array.isArray(item?.images) ? item.images.length : 0);
+                const scoreItem = item => (
+                    (item?.text ? 4 : 0)
+                    + (item?.postId ? 3 : 0)
+                    + (item?.ctime ? 1 : 0)
+                    + (Number.isFinite(item?.viewCount) ? 1 : 0)
+                    + (Number.isFinite(item?.likeCount) ? 1 : 0)
+                    + (Number.isFinite(item?.commentCount) ? 1 : 0)
+                    + Math.min(2, Array.isArray(item?.images) ? item.images.length : 0)
+                );
 
             items.forEach((item) => {
                 if (!item || typeof item !== 'object') return;
@@ -1118,6 +1211,9 @@
                     text: richer.text || other.text || '',
                     postId: richer.postId || other.postId || '',
                     ctime: richer.ctime || other.ctime || '',
+                    viewCount: Number.isFinite(richer.viewCount) ? richer.viewCount : other.viewCount,
+                    likeCount: Number.isFinite(richer.likeCount) ? richer.likeCount : other.likeCount,
+                    commentCount: Number.isFinite(richer.commentCount) ? richer.commentCount : other.commentCount,
                     images: [...new Set([...richer.images, ...other.images])]
                 };
             });
@@ -1125,16 +1221,385 @@
             return deduped;
         }
 
+        function formatFollowedDynamicNumber(value) {
+            const number = Number(value);
+            if (!Number.isFinite(number)) return '--';
+            if (number >= 10000) return `${(number / 10000).toFixed(number >= 100000 ? 0 : 1).replace(/\.0$/, '')}万`;
+            return String(number);
+        }
+
+        function getFollowedDynamicStatsFromContent(content) {
+            const post = content?.postsInfo || content?.post || content?.data?.postsInfo || content?.data?.post || content || {};
+            return {
+                viewCount: getFollowedDynamicCount(post, ['viewCount', 'readCount']),
+                likeCount: getFollowedDynamicCount(post, ['likeCount', 'likeNum']),
+                commentCount: getFollowedDynamicCount(post, ['commentCount', 'commentNum']),
+                ctime: getFollowedDynamicTime(post)
+            };
+        }
+
+        function updateFollowedProfileDynamicStats(postId, stats = {}) {
+            const card = document.getElementById(`followed-profile-dynamic-card-${postId}`);
+            if (!card) return;
+            [
+                ['viewCount', '.followed-pocket-dynamic-view-count'],
+                ['likeCount', '.followed-pocket-dynamic-like-count'],
+                ['commentCount', '.followed-pocket-dynamic-comment-count']
+            ].forEach(([key, selector]) => {
+                if (stats[key] === null || stats[key] === undefined || !Number.isFinite(Number(stats[key]))) return;
+                const element = card.querySelector(selector);
+                if (element) element.textContent = formatFollowedDynamicNumber(stats[key]);
+            });
+            if (stats.ctime) {
+                const timeElement = card.querySelector('.followed-pocket-dynamic-time');
+                if (timeElement) timeElement.textContent = formatFollowedProfileDateTime(stats.ctime);
+            }
+        }
+
+        function loadFollowedProfileDynamicStats(postId) {
+            const normalizedPostId = String(postId || '').trim();
+            if (!normalizedPostId) return Promise.resolve(null);
+            const cached = followedProfileDynamicStatsCache.get(normalizedPostId);
+            if (cached
+                && Number.isFinite(cached.viewCount)
+                && Number.isFinite(cached.likeCount)
+                && Number.isFinite(cached.commentCount)
+                && cached.ctime) {
+                return Promise.resolve(cached);
+            }
+            if (followedProfileDynamicStatsRequests.has(normalizedPostId)) {
+                return followedProfileDynamicStatsRequests.get(normalizedPostId);
+            }
+
+            const request = (async () => {
+                const token = getAppToken ? getAppToken() : '';
+                if (!token) return null;
+                const result = await ipcRenderer.invoke('fetch-area48-post-details', {
+                    token,
+                    pa: window.getPA ? window.getPA() : null,
+                    postId: normalizedPostId
+                });
+                if (!result?.success || !result.content) return null;
+                const stats = getFollowedDynamicStatsFromContent(result.content);
+                const mergedStats = { ...(cached || {}) };
+                Object.entries(stats).forEach(([key, value]) => {
+                    if (Number.isFinite(value) || (key === 'ctime' && value)) mergedStats[key] = value;
+                });
+                followedProfileDynamicStatsCache.set(normalizedPostId, mergedStats);
+                return mergedStats;
+            })().finally(() => followedProfileDynamicStatsRequests.delete(normalizedPostId));
+            followedProfileDynamicStatsRequests.set(normalizedPostId, request);
+            return request;
+        }
+
+        function observeFollowedProfileDynamicStats(container) {
+            if (followedProfileDynamicStatsObserver) followedProfileDynamicStatsObserver.disconnect();
+            const cards = container?.querySelectorAll('.followed-pocket-dynamic-card[data-needs-stats="1"]') || [];
+            if (!cards.length) return;
+            const hydrate = card => {
+                const postId = String(card.dataset.followedDynamicPostId || '').trim();
+                if (!postId) return;
+                loadFollowedProfileDynamicStats(postId)
+                    .then(stats => {
+                        if (stats) updateFollowedProfileDynamicStats(postId, stats);
+                    })
+                    .catch(error => console.warn('读取主页动态统计失败', error));
+            };
+            if (typeof IntersectionObserver !== 'function') {
+                cards.forEach(hydrate);
+                return;
+            }
+            followedProfileDynamicStatsObserver = new IntersectionObserver(entries => {
+                entries.forEach(entry => {
+                    if (!entry.isIntersecting) return;
+                    followedProfileDynamicStatsObserver.unobserve(entry.target);
+                    hydrate(entry.target);
+                });
+            }, { rootMargin: '160px 0px' });
+            cards.forEach(card => followedProfileDynamicStatsObserver.observe(card));
+        }
+
+        function getFollowedProfileDynamicCommentUserMap(content) {
+            const map = new Map();
+            const users = Array.isArray(content?.commentUserList) ? content.commentUserList : [];
+            users.forEach(user => map.set(String(user.userId || ''), user));
+            return map;
+        }
+
+        function renderFollowedProfileDynamicComments(postId) {
+            const state = followedProfileDynamicCommentStateMap.get(String(postId));
+            if (!state?.open) {
+                return `<div id="followed-profile-dynamic-comments-${escapeFollowedHtml(postId)}" class="followed-pocket-dynamic-comments"></div>`;
+            }
+            const comments = Array.isArray(state.comments) ? state.comments : [];
+            const currentUserId = typeof getCurrentUserId === 'function' ? String(getCurrentUserId() || '') : '';
+            const itemsHtml = comments.map(comment => {
+                const user = state.userMap.get(String(comment.userId || '')) || {};
+                const userId = String(user.userId || comment.userId || '').trim();
+                const name = user.nickname || user.realNickName || user.name || userId || '用户';
+                const avatar = normalizeFollowedSourceUrl(user.avatar || user.headImg || user.icon || '');
+                const commentId = String(comment.commentId || comment.resourceId || '').trim();
+                const canDelete = commentId && currentUserId && String(comment.userId || '') === currentUserId;
+                const openProfile = userId
+                    ? `onclick="openFollowedUserProfile(${toFollowedInlineArg(userId)}, ${toFollowedInlineArg(name)}, ${toFollowedInlineArg(avatar)}, false)"`
+                    : '';
+                return `<div class="followed-pocket-dynamic-comment-item">
+                    <button type="button" class="followed-pocket-dynamic-comment-avatar" ${openProfile} ${userId ? `aria-label="查看 ${escapeFollowedHtml(name)} 的用户主页"` : 'disabled'}>
+                        ${avatar ? `<img src="${escapeFollowedHtml(avatar)}" alt="">` : '<span></span>'}
+                    </button>
+                    <div class="followed-pocket-dynamic-comment-body">
+                        <div class="followed-pocket-dynamic-comment-head">
+                            <button type="button" class="followed-pocket-dynamic-comment-name" ${openProfile} ${userId ? '' : 'disabled'}>${escapeFollowedHtml(name)}</button>
+                            <span>${escapeFollowedHtml(formatFollowedProfileDateTime(comment.ctime))}</span>
+                            ${canDelete ? `<button type="button" class="followed-pocket-dynamic-comment-delete" onclick="deleteFollowedProfileDynamicComment(${toFollowedInlineArg(postId)}, ${toFollowedInlineArg(commentId)})">删除</button>` : ''}
+                        </div>
+                        <div class="followed-pocket-dynamic-comment-text">${renderFollowedDynamicCommentText(comment.msg || comment.comment || '')}</div>
+                    </div>
+                </div>`;
+            }).join('');
+            return `<div id="followed-profile-dynamic-comments-${escapeFollowedHtml(postId)}" class="followed-pocket-dynamic-comments is-open">
+                <div class="followed-pocket-dynamic-comment-compose">
+                    <input id="followed-profile-dynamic-comment-input-${escapeFollowedHtml(postId)}" type="text" placeholder="写评论" onkeydown="if(event.key==='Enter'){event.preventDefault();sendFollowedProfileDynamicComment(${toFollowedInlineArg(postId)})}">
+                    <button id="followed-profile-dynamic-comment-send-${escapeFollowedHtml(postId)}" type="button" onclick="sendFollowedProfileDynamicComment(${toFollowedInlineArg(postId)})">发送</button>
+                </div>
+                ${state.loading && !comments.length ? '<div class="followed-pocket-dynamic-comments-empty">正在读取评论...</div>' : ''}
+                ${itemsHtml ? `<div class="followed-pocket-dynamic-comments-list">${itemsHtml}</div>` : ''}
+                ${!state.loading && state.loaded && !comments.length ? '<div class="followed-pocket-dynamic-comments-empty">暂无评论</div>' : ''}
+                ${state.hasMore ? `<button type="button" class="followed-pocket-dynamic-comments-more" onclick="loadMoreFollowedProfileDynamicComments(${toFollowedInlineArg(postId)})">${state.loading ? '加载中' : '查看更多评论'}</button>` : ''}
+            </div>`;
+        }
+
+        function updateFollowedProfileDynamicComments(postId) {
+            const panel = document.getElementById(`followed-profile-dynamic-comments-${postId}`);
+            if (panel) panel.outerHTML = renderFollowedProfileDynamicComments(postId);
+        }
+
+        function setFollowedProfileDynamicCommentCount(postId, count) {
+            const number = Number(count);
+            if (!Number.isFinite(number)) return;
+            const normalizedPostId = String(postId || '').trim();
+            const cached = followedProfileDynamicStatsCache.get(normalizedPostId) || {};
+            cached.commentCount = Math.max(0, number);
+            followedProfileDynamicStatsCache.set(normalizedPostId, cached);
+            updateFollowedProfileDynamicStats(normalizedPostId, cached);
+        }
+
+        async function loadFollowedProfileDynamicComments(postId, append = false) {
+            const normalizedPostId = String(postId || '').trim();
+            if (!normalizedPostId) return;
+            const existing = followedProfileDynamicCommentStateMap.get(normalizedPostId) || {
+                open: true,
+                loaded: false,
+                loading: false,
+                comments: [],
+                userMap: new Map(),
+                next: 0,
+                hasMore: false
+            };
+            if (existing.loading) return;
+            existing.open = true;
+            existing.loading = true;
+            followedProfileDynamicCommentStateMap.set(normalizedPostId, existing);
+            updateFollowedProfileDynamicComments(normalizedPostId);
+
+            try {
+                const token = getAppToken ? getAppToken() : '';
+                const result = await ipcRenderer.invoke('fetch-area48-comments', {
+                    token,
+                    pa: window.getPA ? window.getPA() : null,
+                    resourceId: normalizedPostId,
+                    next: append ? existing.next : 0
+                });
+                if (!result?.success || !result.content) throw new Error(result?.msg || '获取评论失败');
+                const content = result.content;
+                const fetched = Array.isArray(content.commentList) ? content.commentList : [];
+                const nextUserMap = getFollowedProfileDynamicCommentUserMap(content);
+                existing.userMap.forEach((user, id) => nextUserMap.set(id, user));
+                const merged = append ? existing.comments.concat(fetched) : fetched;
+                const seen = new Set();
+                existing.comments = merged.filter(comment => {
+                    const key = String(comment.commentId || `${comment.userId || ''}-${comment.ctime || ''}-${comment.msg || ''}`);
+                    if (seen.has(key)) return false;
+                    seen.add(key);
+                    return true;
+                });
+                existing.userMap = nextUserMap;
+                existing.next = content.next || 0;
+                existing.hasMore = Boolean(existing.next) && fetched.length > 0;
+                existing.loaded = true;
+                const commentCount = Number(content.commentNum);
+                if (Number.isFinite(commentCount)) {
+                    existing.commentCount = commentCount;
+                    setFollowedProfileDynamicCommentCount(normalizedPostId, commentCount);
+                }
+            } catch (error) {
+                if (typeof showToast === 'function') showToast(error.message || '获取评论失败');
+            } finally {
+                existing.loading = false;
+                followedProfileDynamicCommentStateMap.set(normalizedPostId, existing);
+                updateFollowedProfileDynamicComments(normalizedPostId);
+            }
+        }
+
+        function toggleFollowedProfileDynamicComments(postId) {
+            const normalizedPostId = String(postId || '').trim();
+            if (!normalizedPostId) return;
+            const state = followedProfileDynamicCommentStateMap.get(normalizedPostId);
+            if (state?.open) {
+                state.open = false;
+                followedProfileDynamicCommentStateMap.set(normalizedPostId, state);
+                updateFollowedProfileDynamicComments(normalizedPostId);
+                return;
+            }
+            if (state?.loaded) {
+                state.open = true;
+                followedProfileDynamicCommentStateMap.set(normalizedPostId, state);
+                updateFollowedProfileDynamicComments(normalizedPostId);
+                return;
+            }
+            void loadFollowedProfileDynamicComments(normalizedPostId, false);
+        }
+
+        function loadMoreFollowedProfileDynamicComments(postId) {
+            void loadFollowedProfileDynamicComments(postId, true);
+        }
+
+        async function sendFollowedProfileDynamicComment(postId) {
+            const normalizedPostId = String(postId || '').trim();
+            const input = document.getElementById(`followed-profile-dynamic-comment-input-${normalizedPostId}`);
+            const button = document.getElementById(`followed-profile-dynamic-comment-send-${normalizedPostId}`);
+            if (!normalizedPostId || button?.disabled) return;
+            const commentMsg = String(input?.value || '').trim();
+            if (!commentMsg) {
+                if (typeof showToast === 'function') showToast('请输入评论内容');
+                return;
+            }
+            const token = getAppToken ? getAppToken() : '';
+            if (!token) {
+                if (typeof showToast === 'function') showToast('请先登录账号');
+                return;
+            }
+            if (button) {
+                button.disabled = true;
+                button.textContent = '发送中';
+            }
+
+            try {
+                const result = await ipcRenderer.invoke('add-area48-comment', {
+                    token,
+                    pa: window.getPA ? window.getPA() : null,
+                    resourceId: normalizedPostId,
+                    commentMsg
+                });
+                if (!result?.success || !result.content) throw new Error(result?.msg || '发送评论失败');
+                const content = result.content;
+                const state = followedProfileDynamicCommentStateMap.get(normalizedPostId) || {
+                    open: true,
+                    loaded: true,
+                    loading: false,
+                    comments: [],
+                    userMap: new Map(),
+                    next: 0,
+                    hasMore: false
+                };
+                if (content.commentUser?.userId) {
+                    state.userMap.set(String(content.commentUser.userId), content.commentUser);
+                }
+                if (content.comment) {
+                    const newComment = content.comment;
+                    const newKey = String(newComment.commentId || `${newComment.userId || ''}-${newComment.ctime || ''}-${newComment.msg || ''}`);
+                    state.comments = [
+                        newComment,
+                        ...state.comments.filter(comment => String(comment.commentId || `${comment.userId || ''}-${comment.ctime || ''}-${comment.msg || ''}`) !== newKey)
+                    ];
+                    state.open = true;
+                    state.loaded = true;
+                    const cachedCount = followedProfileDynamicStatsCache.get(normalizedPostId)?.commentCount;
+                    const currentCount = Number.isFinite(Number(state.commentCount))
+                        ? Number(state.commentCount)
+                        : (Number.isFinite(Number(cachedCount)) ? Number(cachedCount) : state.comments.length - 1);
+                    state.commentCount = currentCount + 1;
+                    followedProfileDynamicCommentStateMap.set(normalizedPostId, state);
+                    setFollowedProfileDynamicCommentCount(normalizedPostId, state.commentCount);
+                    updateFollowedProfileDynamicComments(normalizedPostId);
+                } else {
+                    state.loading = false;
+                    followedProfileDynamicCommentStateMap.set(normalizedPostId, state);
+                    await loadFollowedProfileDynamicComments(normalizedPostId, false);
+                }
+                if (typeof showToast === 'function') showToast('评论已发送');
+            } catch (error) {
+                if (typeof showToast === 'function') showToast(error.message || '发送评论失败');
+            } finally {
+                const nextButton = document.getElementById(`followed-profile-dynamic-comment-send-${normalizedPostId}`);
+                if (nextButton) {
+                    nextButton.disabled = false;
+                    nextButton.textContent = '发送';
+                }
+            }
+        }
+
+        function deleteFollowedProfileDynamicComment(postId, commentId) {
+            const normalizedPostId = String(postId || '').trim();
+            const normalizedCommentId = String(commentId || '').trim();
+            if (!normalizedPostId || !normalizedCommentId) return;
+
+            const performDelete = async () => {
+                const token = getAppToken ? getAppToken() : '';
+                if (!token) {
+                    if (typeof showToast === 'function') showToast('请先登录账号');
+                    return;
+                }
+                try {
+                    const result = await ipcRenderer.invoke('delete-area48-comment', {
+                        token,
+                        pa: window.getPA ? window.getPA() : null,
+                        resourceId: normalizedCommentId
+                    });
+                    if (!result?.success) throw new Error(result?.msg || '删除评论失败');
+                    const state = followedProfileDynamicCommentStateMap.get(normalizedPostId);
+                    if (state) {
+                        state.comments = state.comments.filter(comment => String(comment.commentId || comment.resourceId || '') !== normalizedCommentId);
+                        const cachedCount = followedProfileDynamicStatsCache.get(normalizedPostId)?.commentCount;
+                        const currentCount = Number.isFinite(Number(state.commentCount))
+                            ? Number(state.commentCount)
+                            : (Number.isFinite(Number(cachedCount)) ? Number(cachedCount) : state.comments.length + 1);
+                        state.commentCount = Math.max(0, currentCount - 1);
+                        followedProfileDynamicCommentStateMap.set(normalizedPostId, state);
+                        setFollowedProfileDynamicCommentCount(normalizedPostId, state.commentCount);
+                        updateFollowedProfileDynamicComments(normalizedPostId);
+                    }
+                    if (typeof showToast === 'function') showToast('评论已删除');
+                } catch (error) {
+                    if (typeof showToast === 'function') showToast(error.message || '删除评论失败');
+                }
+            };
+
+            if (typeof showConfirm === 'function') {
+                showConfirm('确定要删除这条评论吗？', () => { void performDelete(); });
+            } else if (window.confirm('确定要删除这条评论吗？')) {
+                void performDelete();
+            }
+        }
+
         function renderFollowedDynamicList(dynamicContent) {
             const posts = dedupeFollowedDynamicItems(flattenFollowedDynamicItems(dynamicContent));
             if (!posts.length) return renderFollowedPocketProfileEmpty('暂无动态数据');
 
             return `<div class="followed-pocket-dynamic-list">
-                ${posts
-                    .slice(0, 120)
-                    .map(
-                        (item) => `
-                    <div class="followed-pocket-dynamic-card">
+                ${posts.slice(0, 120).map(item => {
+                    const cached = followedProfileDynamicStatsCache.get(String(item.postId || '')) || {};
+                    const viewCount = Number.isFinite(item.viewCount) ? item.viewCount : cached.viewCount;
+                    const likeCount = Number.isFinite(item.likeCount) ? item.likeCount : cached.likeCount;
+                    const commentCount = Number.isFinite(item.commentCount) ? item.commentCount : cached.commentCount;
+                    const ctime = item.ctime || cached.ctime || '';
+                    const needsStats = item.postId && (!Number.isFinite(viewCount) || !Number.isFinite(likeCount) || !Number.isFinite(commentCount) || !ctime);
+                    if (item.postId && !needsStats) {
+                        followedProfileDynamicStatsCache.set(String(item.postId), { viewCount, likeCount, commentCount, ctime });
+                    }
+                    return `
+                    <div class="followed-pocket-dynamic-card" ${item.postId ? `id="followed-profile-dynamic-card-${escapeFollowedHtml(item.postId)}" data-followed-dynamic-post-id="${escapeFollowedHtml(item.postId)}" ${needsStats ? 'data-needs-stats="1"' : ''}` : ''}>
+                        ${(item.postId || ctime) ? `<div class="followed-pocket-dynamic-time">${ctime ? escapeFollowedHtml(formatFollowedProfileDateTime(ctime)) : '--'}</div>` : ''}
                         ${item.text ? `<div class="followed-pocket-dynamic-text">${renderFollowedDynamicContent(item.text)}</div>` : ''}
                         ${
                             item.images.length
@@ -1145,16 +1610,16 @@
                                     (url) => `
                                 <button type="button" class="followed-pocket-dynamic-image" onclick="openImageModal(${toFollowedInlineArg(url)})">
                                     <img src="${escapeFollowedHtml(url)}" alt="" loading="lazy" onerror="this.style.display='none'">
-                                </button>`
-                                )
-                                .join('')}
-                        </div>`
-                                : ''
-                        }
-                        ${item.ctime ? `<div class="followed-pocket-dynamic-time">${escapeFollowedHtml(item.ctime)}</div>` : ''}
-                    </div>`
-                    )
-                    .join('')}
+                                </button>`).join('')}
+                        </div>` : ''}
+                        ${item.postId ? `<div class="followed-pocket-dynamic-stats">
+                            <span>浏览 <span class="followed-pocket-dynamic-view-count">${formatFollowedDynamicNumber(viewCount)}</span></span>
+                            <span>点赞 <span class="followed-pocket-dynamic-like-count">${formatFollowedDynamicNumber(likeCount)}</span></span>
+                            <button type="button" onclick="toggleFollowedProfileDynamicComments(${toFollowedInlineArg(item.postId)})">评论 <span class="followed-pocket-dynamic-comment-count">${formatFollowedDynamicNumber(commentCount)}</span></button>
+                        </div>
+                        ${renderFollowedProfileDynamicComments(item.postId)}` : ''}
+                    </div>`;
+                }).join('')}
             </div>`;
         }
 
@@ -1625,6 +2090,8 @@
             followedUserProfileRequestToken += 1;
             followedUserProfileHistory.length = 0;
             followedUserProfileCurrentEntry = null;
+            followedProfileDynamicCommentStateMap.clear();
+            if (followedProfileDynamicStatsObserver) followedProfileDynamicStatsObserver.disconnect();
             const modal = document.getElementById('followedUserProfileModal');
             if (modal) modal.style.display = 'none';
         }
@@ -1662,7 +2129,10 @@
                 return;
             }
 
-            const token = getAppToken ? getAppToken() : typeof window.getAppToken === 'function' ? window.getAppToken() : '';
+            followedProfileDynamicCommentStateMap.clear();
+            if (followedProfileDynamicStatsObserver) followedProfileDynamicStatsObserver.disconnect();
+
+            const token = getAppToken ? getAppToken() : (typeof window.getAppToken === 'function' ? window.getAppToken() : '');
             if (!token) {
                 if (typeof showToast === 'function') showToast('请先登录账号');
                 return;
@@ -1950,9 +2420,8 @@
                     if (activeTab) switchFollowedUserProfileTab(activeTab);
                     hydrateFollowedPreviewMedia(document.getElementById('followed-user-profile-body'));
                     hydrateFollowedProfileVideoCovers(document.getElementById('followed-user-profile-body'));
-                    const nextScrollEl = document.querySelector(
-                        '#followed-user-profile-body .followed-member-scroll, #followed-user-profile-body .followed-pocket-scroll'
-                    );
+                    observeFollowedProfileDynamicStats(document.getElementById('followed-user-profile-body'));
+                    const nextScrollEl = document.querySelector('#followed-user-profile-body .followed-member-scroll, #followed-user-profile-body .followed-pocket-scroll');
                     if (nextScrollEl && scrollTop > 0) nextScrollEl.scrollTop = scrollTop;
                     attachFollowedProfileAutoLoad();
                     return true;
@@ -2498,6 +2967,7 @@
                 const matchedLive = liveList.find((item) => String(item.liveId) === String(liveId));
 
                 if (matchedLive && typeof playLiveStream === 'function') {
+                    if (typeof setMediaReturnView === 'function') setMediaReturnView('followed-rooms');
                     switchView('media', 'live');
                     setTimeout(() => {
                         playLiveStream(matchedLive, 'live');
@@ -2509,17 +2979,24 @@
             }
 
             if (typeof playArchiveFromMessage === 'function') {
+                if (typeof setMediaReturnView === 'function') setMediaReturnView('followed-rooms');
                 playArchiveFromMessage(liveId, nickname, timeStr, title || '直播分享');
             }
         }
 
         function openFollowedChat(ownerName, channelId, serverId, options = {}) {
+            const requestRevision = ++followedChatRequestRevision;
+            const refreshCycle = ++followedAutoRefreshCycle;
+            // A room switch must not be blocked by an in-flight refresh for the
+            // previous room. That request will be discarded by its revision.
+            isFollowedChatLoading = false;
             const initialRoomType = options?.roomType === 'small' ? 'small' : 'big';
             const mainChannelId = String(options?.mainChannelId || channelId || '');
             activeFollowedChannel = channelId;
             activeFollowedMainChannel = mainChannelId;
             activeFollowedServer = serverId;
             activeFollowedName = ownerName;
+            activeFollowedMemberId = String(options?.memberId || '').trim();
             activeFollowedNextTime = 0;
             isFollowedSmallRoomMode = initialRoomType === 'small';
             followedStickToBottom = true;
@@ -2527,6 +3004,20 @@
             followedLastScrollTop = 0;
             invalidateFollowedAutoScrollJobs();
             resetFollowedPendingMessages();
+            if (typeof window.autoConnectFollowedRoomRadio === 'function') {
+                window.autoConnectFollowedRoomRadio(
+                    channelId,
+                    serverId,
+                    activeFollowedMemberId,
+                    ownerName
+                );
+            }
+            if (typeof window.ensureRoomRadioScanFresh === 'function') {
+                window.ensureRoomRadioScanFresh({
+                    preferredChannelId: channelId,
+                    prioritizeCurrent: true
+                });
+            }
             const followedView = document.getElementById('view-followed-rooms');
             if (followedView) followedView.classList.add('is-chat-open');
 
@@ -2569,16 +3060,17 @@
             msgBox.style.opacity = '0.4';
             msgBox.style.pointerEvents = 'none';
 
-            loadFollowedChatPage(false).finally(() => {
+            loadFollowedChatPage(false, false, requestRevision).finally(() => {
+                if (refreshCycle !== followedAutoRefreshCycle) return;
                 followedAutoRefreshEnabled = true;
 
                 const scheduleNext = () => {
-                    if (!followedAutoRefreshEnabled) return;
+                    if (!followedAutoRefreshEnabled || refreshCycle !== followedAutoRefreshCycle) return;
                     followedAutoRefreshTimer = setTimeout(runPoll, getAdaptivePollDelay());
                 };
 
                 const runPoll = async () => {
-                    if (!followedAutoRefreshEnabled) return;
+                    if (!followedAutoRefreshEnabled || refreshCycle !== followedAutoRefreshCycle) return;
                     const view = document.getElementById('view-followed-rooms');
                     if ((view && view.style.display === 'none') || followedAutoRefreshRunning) {
                         scheduleNext();
@@ -2588,6 +3080,7 @@
                     try {
                         await loadFollowedChatPage(false, true);
                     } finally {
+                        if (refreshCycle !== followedAutoRefreshCycle) return;
                         followedAutoRefreshRunning = false;
                         scheduleNext();
                     }
@@ -2603,10 +3096,77 @@
             if (followedView) followedView.classList.remove('is-chat-open');
         }
 
+        function openActiveFollowedRoomAlbum() {
+            if (!activeFollowedName || !activeFollowedChannel) {
+                showToast('请先打开成员房间');
+                return;
+            }
+
+            const memberInfo = getMemberData().find(member => (
+                (activeFollowedMemberId && String(member.id || member.userId || '') === activeFollowedMemberId)
+                || String(member.channelId || '') === String(activeFollowedMainChannel || activeFollowedChannel)
+                || String(member.ownerName || member.name || '') === String(activeFollowedName)
+            ));
+            const bigChannelId = String(
+                activeFollowedMainChannel
+                || memberInfo?.channelId
+                || activeFollowedChannel
+                || ''
+            );
+            const smallChannelId = String(
+                (isFollowedSmallRoomMode ? activeFollowedChannel : '')
+                || memberInfo?.smallChannelId
+                || memberInfo?.yklzId
+                || ''
+            );
+
+            if (typeof window.openRoomAlbumForRoom === 'function') {
+                window.openRoomAlbumForRoom(
+                    activeFollowedName,
+                    bigChannelId,
+                    smallChannelId,
+                    isFollowedSmallRoomMode ? 'small' : 'big'
+                );
+                return;
+            }
+
+            switchView('room-album');
+            if (typeof window.selectRoomAlbumMember === 'function') {
+                window.selectRoomAlbumMember(activeFollowedName, bigChannelId, smallChannelId);
+            }
+        }
+
+        function openActiveFollowedFlipQuestion() {
+            if (!activeFollowedName) {
+                showToast('请先打开成员房间');
+                return;
+            }
+
+            const memberInfo = getMemberData().find(member => (
+                (activeFollowedMemberId && String(member.id || member.userId || '') === activeFollowedMemberId)
+                || String(member.channelId || '') === String(activeFollowedMainChannel || activeFollowedChannel)
+                || String(member.ownerName || member.name || '') === String(activeFollowedName)
+            ));
+            const memberId = String(activeFollowedMemberId || memberInfo?.id || memberInfo?.userId || '').trim();
+            if (!memberId) {
+                showToast(`未找到 ${activeFollowedName} 的成员 ID`);
+                return;
+            }
+
+            window.suppressNextFlipMemberAutofocus = true;
+            switchView('send-flip');
+            if (typeof window.selectFlipSendMember === 'function') {
+                window.selectFlipSendMember(activeFollowedName, memberId);
+            }
+        }
+
         function toggleFollowedRoomType() {
             if (isFollowedChatLoading || !activeFollowedName) return;
 
-            const memberInfo = getMemberData().find((m) => m.ownerName === activeFollowedName);
+            followedChatRequestRevision += 1;
+            isFollowedChatLoading = false;
+
+            const memberInfo = getMemberData().find(m => m.ownerName === activeFollowedName);
 
             if (!isFollowedSmallRoomMode) {
                 const smallRoomId = memberInfo ? memberInfo.yklzId : null;
@@ -2631,6 +3191,20 @@
             }
 
             document.getElementById('followed-chat-subtitle').innerText = `Channel ID: ${activeFollowedChannel} ${isFollowedSmallRoomMode ? '' : ''}`;
+            if (typeof window.autoConnectFollowedRoomRadio === 'function') {
+                window.autoConnectFollowedRoomRadio(
+                    activeFollowedChannel,
+                    activeFollowedServer,
+                    activeFollowedMemberId,
+                    activeFollowedName
+                );
+            }
+            if (typeof window.ensureRoomRadioScanFresh === 'function') {
+                window.ensureRoomRadioScanFresh({
+                    preferredChannelId: activeFollowedChannel,
+                    prioritizeCurrent: true
+                });
+            }
             showFollowedChatTitle(getFollowedFallbackTitle());
             refreshFollowedChatTitle();
 
@@ -2644,7 +3218,7 @@
             msgBox.style.transition = 'opacity 0.2s';
             msgBox.style.opacity = '0.4';
             msgBox.style.pointerEvents = 'none';
-            msgBox.innerHTML = '';
+            msgBox.replaceChildren();
 
             loadFollowedChatPage(false);
         }
@@ -2664,6 +3238,7 @@
             if (isFollowedChatLoading) return;
 
             isFollowedChatAllMode = !isFollowedChatAllMode;
+            followedChatRequestRevision += 1;
             const btn = document.getElementById('btn-toggle-followed-mode');
             const msgBox = document.getElementById('followed-chat-messages');
 
@@ -2690,13 +3265,16 @@
             });
         }
 
-        async function loadFollowedChatPage(isLoadMore, isAutoRefresh = false) {
-            if (isFollowedChatLoading) return;
+        async function loadFollowedChatPage(isLoadMore, isAutoRefresh = false, requestRevision = followedChatRequestRevision) {
+            if (requestRevision !== followedChatRequestRevision || isFollowedChatLoading) return;
             isFollowedChatLoading = true;
 
             const msgBox = document.getElementById('followed-chat-messages');
             const token = getAppToken();
             const pa = window.getPA ? window.getPA() : null;
+            const requestServerId = activeFollowedServer;
+            const requestChannelId = activeFollowedChannel;
+            const requestFetchAll = isFollowedChatAllMode;
 
             const oldScrollHeight = msgBox.scrollHeight;
             const shouldAutoScroll = canFollowedAutoScroll(msgBox);
@@ -2709,21 +3287,18 @@
                     );
                 }
 
-                const res = await ipcRenderer.invoke('fetch-room-messages', {
+                const res = await fetchFollowedRoomMessagesWithTimeout({
                     token: token,
-                    serverId: activeFollowedServer,
-                    channelId: activeFollowedChannel,
+                    serverId: requestServerId,
+                    channelId: requestChannelId,
                     pa: pa,
                     nextTime: fetchNextTime,
-                    fetchAll: isFollowedChatAllMode
+                    fetchAll: requestFetchAll
                 });
 
-                if (!isAutoRefresh) {
-                    console.log(
-                        `[关注房间] fetch-room-messages 响应: success=${res?.success} hasData=${!!res?.data} hasContent=${!!res?.data?.content} usedServerId=${res?.usedServerId}`,
-                        res?.success ? undefined : res
-                    );
-                }
+                // The user may have switched rooms while IPC was pending. Never
+                // let the old response mutate the newly selected room.
+                if (requestRevision !== followedChatRequestRevision) return;
 
                 if (res.success && res.data.content) {
                     if (res.usedServerId) {
@@ -2741,7 +3316,7 @@
                         activeFollowedNextTime = content.nextTime;
                     }
 
-                    if (!isLoadMore && !isAutoRefresh) msgBox.innerHTML = '';
+                    if (!isLoadMore && !isAutoRefresh) msgBox.replaceChildren();
                     const oldBtn = document.getElementById('btn-load-more-followed');
                     if (oldBtn) oldBtn.remove();
 
@@ -2799,16 +3374,16 @@
                                 }
                             }
 
-                            try {
-                                let json = null;
-                                if (typeof body === 'string' && (body.startsWith('{') || body.startsWith('['))) {
-                                    try {
-                                        json = JSON.parse(body);
-                                        if (typeof json === 'string') json = JSON.parse(json);
-                                    } catch (parseErr) {}
-                                } else if (typeof body === 'object' && body !== null) {
-                                    json = body;
-                                }
+                        try {
+                            let json = null;
+                            if (typeof body === 'string' && (body.startsWith('{') || body.startsWith('['))) {
+                                try {
+                                    json = JSON.parse(body);
+                                    if (typeof json === 'string') json = JSON.parse(json);
+                                } catch (parseErr) { window.YayaRendererUtils.reportIgnoredError(parseErr, 'src/renderer/followed-chat-feature.js'); }
+                            } else if (typeof body === 'object' && body !== null) {
+                                json = body;
+                            }
 
                                 if (json) {
                                     const msgType = (m.msgType || '').toUpperCase();
@@ -2837,59 +3412,38 @@
                                            <blockquote class="ml-2 mb-2 p-2" style="background: var(--blockquote-bg); border-left: 4px solid var(--border); color: var(--text-sub); border-radius: 0 4px 4px 0;">
                                                ${rName}：${rText}
                                            </blockquote>`;
-                                    } else if (msgType === 'AUDIO') {
-                                        let mediaUrl = json.url.startsWith('http')
-                                            ? json.url
-                                            : `https://mp4.48.cn${json.url.startsWith('/') ? '' : '/'}${json.url}`;
-                                        const dlFilename = `AUDIO_${m.msgTime}_${activeFollowedName}.mp3`;
-                                        txt = `<div class="mb-2 preview-media-placeholder" data-type="audio" data-src="${mediaUrl}" data-filename="${dlFilename}"></div>`;
-                                    } else if (msgType === 'VIDEO') {
-                                        let mediaUrl = json.url.startsWith('http')
-                                            ? json.url
-                                            : `https://mp4.48.cn${json.url.startsWith('/') ? '' : '/'}${json.url}`;
-                                        const dlFilename = `VIDEO_${m.msgTime}_${activeFollowedName}.mp4`;
-                                        txt = `<div class="mb-2 preview-media-placeholder" data-type="video" data-src="${mediaUrl}" data-filename="${dlFilename}"></div>`;
-                                    } else if (jsonType === 'GIFT_TEXT' || msgType === 'GIFT_TEXT') {
-                                        const info = json.giftInfo || json;
-                                        txt = renderFollowedPocketGiftCard(info);
-                                    } else if (msgType.includes('FLIPCARD') || jsonType.includes('FLIPCARD')) {
-                                        const possibleKeys = [
-                                            'flipCardInfo',
-                                            'filpCardInfo',
-                                            'flipCardAudioInfo',
-                                            'filpCardAudioInfo',
-                                            'flipCardVideoInfo',
-                                            'filpCardVideoInfo'
-                                        ];
-                                        let flipInfo = null;
-                                        for (const key of possibleKeys) {
-                                            if (json[key]) {
-                                                flipInfo = json[key];
-                                                break;
+                                } else if (msgType === 'AUDIO') {
+                                    let mediaUrl = json.url.startsWith('http') ? json.url : `https://mp4.48.cn${json.url.startsWith('/') ? '' : '/'}${json.url}`;
+                                    txt = `<div class="mb-2 preview-media-placeholder" data-type="audio" data-src="${mediaUrl}"></div>`;
+                                } else if (msgType === 'VIDEO') {
+                                    let mediaUrl = json.url.startsWith('http') ? json.url : `https://mp4.48.cn${json.url.startsWith('/') ? '' : '/'}${json.url}`;
+                                    txt = `<div class="mb-2 preview-media-placeholder" data-type="video" data-src="${mediaUrl}"></div>`;
+                                } else if (jsonType === 'GIFT_TEXT' || msgType === 'GIFT_TEXT') {
+                                    const info = json.giftInfo || json;
+                                    txt = renderFollowedPocketGiftCard(info);
+                                } else if (msgType.includes('FLIPCARD') || jsonType.includes('FLIPCARD')) {
+                                    const possibleKeys = ['flipCardInfo', 'filpCardInfo', 'flipCardAudioInfo', 'filpCardAudioInfo', 'flipCardVideoInfo', 'filpCardVideoInfo'];
+                                    let flipInfo = null;
+                                    for (const key of possibleKeys) {
+                                        if (json[key]) { flipInfo = json[key]; break; }
+                                        if (json.bodys && json.bodys[key]) { flipInfo = json.bodys[key]; break; }
+                                    }
+                                    const qText = flipInfo?.question || json.question || '（无法解析的问题内容）';
+                                    let aContent = flipInfo?.answer || json.answer || '';
+                                    let ansHtml = '';
+                                    if (msgType === 'FLIPCARD' || (jsonType === 'FLIPCARD' && typeof aContent === 'string' && !aContent.includes('url'))) {
+                                        ansHtml = `<div style="font-size:14px; color:var(--text); line-height:1.6; padding:0 4px;">${safeStr(aContent)}</div>`;
+                                    } else {
+                                        try {
+                                            const ansObj = typeof aContent === 'string' ? JSON.parse(aContent) : aContent;
+                                            if (ansObj && ansObj.url) {
+                                                let mediaUrl = ansObj.url.startsWith('http') ? ansObj.url : `https://mp4.48.cn${ansObj.url.startsWith('/') ? '' : '/'}${ansObj.url}`;
+                                                const mType = (msgType.includes('AUDIO') || jsonType.includes('AUDIO')) ? 'audio' : 'video';
+                                                ansHtml = `<div class="preview-media-placeholder" data-type="${mType}" data-src="${mediaUrl}" style="margin-top:8px;"></div>`;
                                             }
-                                            if (json.bodys && json.bodys[key]) {
-                                                flipInfo = json.bodys[key];
-                                                break;
-                                            }
-                                        }
-                                        const qText = flipInfo?.question || json.question || '（无法解析的问题内容）';
-                                        let aContent = flipInfo?.answer || json.answer || '';
-                                        let ansHtml = '';
-                                        if (msgType === 'FLIPCARD' || (jsonType === 'FLIPCARD' && typeof aContent === 'string' && !aContent.includes('url'))) {
-                                            ansHtml = `<div style="font-size:14px; color:var(--text); line-height:1.6; padding:0 4px;">${safeStr(aContent)}</div>`;
-                                        } else {
-                                            try {
-                                                const ansObj = typeof aContent === 'string' ? JSON.parse(aContent) : aContent;
-                                                if (ansObj && ansObj.url) {
-                                                    let mediaUrl = ansObj.url.startsWith('http')
-                                                        ? ansObj.url
-                                                        : `https://mp4.48.cn${ansObj.url.startsWith('/') ? '' : '/'}${ansObj.url}`;
-                                                    const mType = msgType.includes('AUDIO') || jsonType.includes('AUDIO') ? 'audio' : 'video';
-                                                    ansHtml = `<div class="preview-media-placeholder" data-type="${mType}" data-src="${mediaUrl}" style="margin-top:8px;"></div>`;
-                                                }
-                                            } catch (e) {}
-                                        }
-                                        txt = `<div style="margin-bottom: 8px;">
+                                        } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/followed-chat-feature.js'); }
+                                    }
+                                    txt = `<div style="margin-bottom: 8px;">
                                                 <span class="flip-label question-tag" style="margin-right:8px; transform:none; display:inline-flex;">翻牌提问</span>
                                                 <span style="font-size:14px; color:var(--text); line-height: 1.5;">${safeStr(qText)}</span>
                                            </div>
@@ -3076,14 +3630,21 @@
                     hydrateFollowedPreviewMedia(msgBox);
                 }
             } catch (e) {
-                console.error(e);
+                if (requestRevision === followedChatRequestRevision) {
+                    console.error(e);
+                    if (!isAutoRefresh && !isLoadMore) {
+                        msgBox.innerHTML = '<div class="empty-state" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--text-sub); font-size: 14px;">消息加载失败，请重新选择房间重试</div>';
+                    }
+                }
             } finally {
-                isFollowedChatLoading = false;
+                if (requestRevision === followedChatRequestRevision) {
+                    isFollowedChatLoading = false;
 
-                const msgBox = document.getElementById('followed-chat-messages');
-                if (!isAutoRefresh) {
-                    msgBox.style.opacity = '1';
-                    msgBox.style.pointerEvents = 'auto';
+                    const msgBox = document.getElementById('followed-chat-messages');
+                    if (!isAutoRefresh) {
+                        msgBox.style.opacity = '1';
+                        msgBox.style.pointerEvents = 'auto';
+                    }
                 }
             }
         }
@@ -3166,6 +3727,7 @@
             backToFollowedRoomList,
             backFollowedUserProfile,
             closeFollowedUserProfile,
+            deleteFollowedProfileDynamicComment,
             flushFollowedPendingMessages,
             getActiveFollowedChannel,
             jumpToFullRoom,
@@ -3175,9 +3737,14 @@
             openFollowedProfileRoom,
             openFollowedProfileVideo,
             openFollowedUserProfile,
+            loadMoreFollowedProfileDynamicComments,
+            openActiveFollowedFlipQuestion,
+            openActiveFollowedRoomAlbum,
             playSharedLiveFromMessage,
+            sendFollowedProfileDynamicComment,
             closeFollowedProfileVideo,
             switchFollowedUserProfileTab,
+            toggleFollowedProfileDynamicComments,
             toggleFollowedProfileFollow,
             toggleFollowedChatMode,
             toggleFollowedRoomType

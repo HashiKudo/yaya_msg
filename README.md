@@ -1,6 +1,6 @@
 # 牙牙消息
 > 一个口袋48电脑端工具
-<img width="689" height="495" alt="ScreenShot_2026-07-28_135511_018" src="https://github.com/user-attachments/assets/afbdb153-8382-40bd-aef8-1278525500c3" />
+<img width="689" height="495" alt="ScreenShot_2026-08-15_015747_491" src="https://github.com/user-attachments/assets/6741754f-ce9a-4306-afa1-8b958bd0c860" />
 
 
 ## 主要功能
@@ -15,6 +15,7 @@
 - 房间上麦：收听、录制成员房间上麦。
 - 公演直播：查看公演直播（B站源）。
 - 切片：直播实时切片、录播回放切片、公演切片。
+- 录制：直播、上麦自动录制。
 
 ### 口袋功能类
 - 口袋房间：查看关注成员的口袋房间消息。
@@ -48,7 +49,7 @@
 
 
 ## 说点别的
-为什么要叫牙牙消息呢？因为原本只是太无聊了想看看牙以前发了什么消息，奈何直接下载出来的html文件看的实在是不太方便，于是想着写一个能检索消息的工具，方便我查找牙在什么时候发了什么消息。之后为了方便在电脑上看直播，于是加入了直播和回放，然后功能就越做越多了。Anyway，感谢使用。
+现在没什么好说的了
 
 
 ## 免责声明
@@ -60,11 +61,4 @@
 
 
 ## 灵感来源
-Gemini ChatGPT [48tools](https://github.com/duan602728596/48tools) [msg48](https://msg48.org) [WebPocket48Assistant](https://github.com/Lawaxi/WebPocket48Assistant) [Partner48](https://github.com/Akimaylilll/Partner48)
-
-
-## 特别感谢
-泊然 · 恩帅没有心 · linlin · Thri_Twee · 西伯利亚土拨鼠 · 仙欲喵 · 小可w · 小日月 · 小吸吸 · yimo
-
-
-
+Gemini ChatGPT [48tools](https://github.com/duan602728596/48tools) [msg48](https://github.com/Gexi0619) [WebPocket48Assistant](https://github.com/Lawaxi/WebPocket48Assistant) [Partner48](https://github.com/Akimaylilll/Partner48)

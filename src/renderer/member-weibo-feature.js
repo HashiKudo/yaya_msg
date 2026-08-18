@@ -2,6 +2,7 @@
     window.YayaRendererFeatures = window.YayaRendererFeatures || {};
 
     window.YayaRendererFeatures.createMemberWeiboFeature = function createMemberWeiboFeature(deps) {
+        const { escapeHtml, escapeJsString, normalize48Url } = window.YayaRendererUtils;
         const {
             getAppToken,
             getMemberData,
@@ -28,31 +29,6 @@
         const weiboQueuedThumbs = new WeakSet();
         const WEIBO_THUMB_CONCURRENCY = 3;
         const EMPTY_IMAGE_SRC = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
-
-        function escapeHtml(value) {
-            return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#39;'
-            }[char]));
-        }
-
-        function escapeJsString(value) {
-            return String(value == null ? '' : value)
-                .replace(/\\/g, '\\\\')
-                .replace(/'/g, "\\'")
-                .replace(/\r?\n/g, ' ');
-        }
-
-        function normalize48Url(value) {
-            const raw = String(value || '').trim();
-            if (!raw) return '';
-            if (/^https?:\/\//i.test(raw)) return raw;
-            if (raw.includes('48.cn')) return `https://${raw.replace(/^\/+/, '')}`;
-            return raw.startsWith('/') ? `https://source3.48.cn${raw}` : `https://source3.48.cn/${raw}`;
-        }
 
         function normalizeWeiboJumpUrl(ext) {
             const candidates = [
@@ -263,8 +239,7 @@
                         if (cached?.success && cached.url) {
                             sources.push(cached.url);
                         }
-                    } catch (error) {
-                    }
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/member-weibo-feature.js'); }
                 }
 
                 [fallbackUrl, fullUrl].forEach((source) => {
@@ -303,8 +278,7 @@
                             finish(success);
                             return;
                         }
-                    } catch (error) {
-                    }
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/member-weibo-feature.js'); }
                 }
 
                 finish(false);
@@ -507,7 +481,7 @@
                 currentWeiboNextTime = result.content.nextTime || 0;
 
                 if (!isLoadMore) {
-                    container.innerHTML = '';
+                    container.replaceChildren();
                     container.className = 'member-weibo-list';
                 }
 

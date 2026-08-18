@@ -32,8 +32,7 @@
                         updateSessionAvatar(channelId, fullUrl);
                     }
                 }
-            } catch (e) {
-            }
+            } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/avatar-cache-feature.js'); }
         }
 
         function updateSessionAvatar(channelId, url) {

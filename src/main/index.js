@@ -1,8 +1,14 @@
 const { app, globalShortcut } = require('electron');
 const { createWindow } = require('./window');
 const { getMainWindow } = require('./window');
+const { markAppQuitting } = require('./window');
+const { createTray, destroyTray } = require('./tray');
 const { ensureWasmLoaded } = require('./services/wasm-service');
-const { cleanupMediaTasks } = require('./services/media-service');
+const {
+    cleanupMediaTasks,
+    finalizeLiveRecordingsBeforeQuit,
+    recoverInterruptedLiveRecordings
+} = require('./services/media-service');
 const { registerWindowIpc } = require('./ipc/window-ipc');
 const { registerMediaIpc } = require('./ipc/media-ipc');
 const { registerBilibiliIpc } = require('./ipc/bilibili-ipc');
@@ -26,6 +32,31 @@ const MEDIA_KEY_SHORTCUTS = [
     ['MediaNextTrack', 'next'],
     ['MediaPreviousTrack', 'previous']
 ];
+let quitCleanupStarted = false;
+let quitCleanupFinished = false;
+let finalCleanupPerformed = false;
+
+function runLiveRecordingRecovery() {
+    return recoverInterruptedLiveRecordings()
+        .then((result) => {
+            if (!result || (!result.recovered && !result.preserved && !result.failed)) return;
+            console.log('[live-record-recovery]', result);
+            const window = getMainWindow();
+            if (window && !window.isDestroyed()) {
+                window.webContents.send('live-recording-recovery', result);
+            }
+        })
+        .catch(error => console.warn('[live-record-recovery] failed:', error));
+}
+
+function performFinalCleanup() {
+    if (finalCleanupPerformed) return;
+    finalCleanupPerformed = true;
+    markAppQuitting();
+    destroyTray();
+    cleanupMediaTasks();
+    closeMessageIndex();
+}
 
 function sendMediaKeyAction(action) {
     const window = getMainWindow();
@@ -55,6 +86,7 @@ if (process.platform === 'win32') {
 app.whenReady().then(() => {
     ensureStoragePaths();
     createWindow();
+    createTray();
     startMessageIndexWatcher((result) => {
         const window = getMainWindow();
         if (!window || window.isDestroyed()) return;
@@ -62,15 +94,8 @@ app.whenReady().then(() => {
     });
     registerMediaKeyShortcuts();
     ensureWasmLoaded();
-});
-
-app.on('activate', () => {
-    const win = getMainWindow();
-    if (!win || win.isDestroyed()) {
-        createWindow();
-    } else {
-        win.show();
-    }
+    runLiveRecordingRecovery();
+    setTimeout(runLiveRecordingRecovery, 20_000);
 });
 
 app.on('window-all-closed', () => {
@@ -79,10 +104,23 @@ app.on('window-all-closed', () => {
     }
 });
 
-app.on('before-quit', () => {
-    app.isQuitting = true;
-    cleanupMediaTasks();
-    closeMessageIndex();
+app.on('before-quit', (event) => {
+    if (quitCleanupFinished) {
+        performFinalCleanup();
+        return;
+    }
+
+    event.preventDefault();
+    if (quitCleanupStarted) return;
+    quitCleanupStarted = true;
+
+    finalizeLiveRecordingsBeforeQuit()
+        .catch(error => console.warn('[app-quit] live recording finalize failed:', error))
+        .finally(() => {
+            quitCleanupFinished = true;
+            performFinalCleanup();
+            app.quit();
+        });
 });
 
 app.on('will-quit', () => {

@@ -1,10 +1,23 @@
-const { BrowserWindow, shell, app } = require('electron');
+const { app, BrowserWindow, shell } = require('electron');
 const path = require('path');
+const { reportIgnoredError } = require('../common/error-utils');
+const settingsService = require('./services/settings-service');
 
 let mainWindow = null;
+let isAppQuitting = false;
 const preloadPath = path.join(__dirname, 'preload.js');
 const SAFE_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
 const PAGE_ZOOM_FACTOR = 1;
+
+function getWindowCloseBehavior() {
+    try {
+        return settingsService.readSettings().windowCloseBehavior === 'quit'
+            ? 'quit'
+            : 'minimize-to-tray';
+    } catch (error) {
+        return 'minimize-to-tray';
+    }
+}
 
 function resetPageZoom(webContents) {
     if (!webContents || webContents.isDestroyed()) return;
@@ -12,8 +25,7 @@ function resetPageZoom(webContents) {
     try {
         webContents.setZoomLevel(0);
         webContents.setZoomFactor(PAGE_ZOOM_FACTOR);
-    } catch (error) {
-    }
+    } catch (error) { reportIgnoredError(error, 'src/main/window.js'); }
 }
 
 function isPageZoomShortcut(input) {
@@ -49,7 +61,8 @@ function createWindow() {
             nodeIntegration: false,
             contextIsolation: false,
             sandbox: false,
-            webSecurity: false
+            webSecurity: false,
+            backgroundThrottling: false
         }
     });
 
@@ -91,6 +104,15 @@ function createWindow() {
         mainWindow = null;
     });
 
+    mainWindow.on('close', (event) => {
+        if (isAppQuitting || process.platform !== 'win32' || mainWindow.webContents.isDestroyed()) return;
+        event.preventDefault();
+        if (getWindowCloseBehavior() === 'quit') {
+            app.quit();
+            return;
+        }
+        mainWindow.hide();
+    });
     return mainWindow;
 }
 
@@ -98,7 +120,18 @@ function getMainWindow() {
     return mainWindow;
 }
 
+function markAppQuitting() {
+    isAppQuitting = true;
+}
+
+function requestWindowClose() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.close();
+}
+
 module.exports = {
     createWindow,
-    getMainWindow
+    getMainWindow,
+    markAppQuitting,
+    requestWindowClose
 };

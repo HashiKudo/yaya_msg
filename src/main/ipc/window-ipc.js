@@ -1,5 +1,5 @@
 const { ipcMain } = require('electron');
-const { getMainWindow } = require('../window');
+const { getMainWindow, requestWindowClose } = require('../window');
 
 function registerWindowIpc() {
     ipcMain.on('window-min', () => {
@@ -24,10 +24,7 @@ function registerWindowIpc() {
     });
 
     ipcMain.on('window-close', () => {
-        const mainWindow = getMainWindow();
-        if (mainWindow) {
-            mainWindow.close();
-        }
+        requestWindowClose();
     });
 }
 

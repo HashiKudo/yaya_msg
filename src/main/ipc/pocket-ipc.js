@@ -1,9 +1,11 @@
 const { ipcMain } = require('electron');
 const pocketService = require('../services/pocket-service');
 const settingsService = require('../services/settings-service');
+const { POCKET_CHANNEL_METHODS } = require('../../common/pocket-channel-config');
 
 const YAYA_API_PROXY_SETTING_KEY = 'useYayaApiProxy';
 const DEFAULT_YAYA_API_BASE = 'https://api.gnz.hk';
+const YAYA_API_RETRY_DELAYS_MS = [350, 900];
 const MEET48_CHANNELS = new Set([
     'fetch-meet48-live-list',
     'fetch-meet48-live-one'
@@ -44,25 +46,77 @@ function getYayaPocketApiProxyUrl(baseUrl) {
     return new URL('/api/pocket', baseUrl).toString();
 }
 
+function waitForRetry(delayMs) {
+    return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+function isTransientYayaApiFailure(response, text, data, parseFailed) {
+    const message = String(data?.msg || data?.message || '');
+    const combined = `${String(text || '')}\n${message}`;
+    return parseFailed
+        || /^\s*</.test(text || '')
+        || /<!doctype|unexpected token\s+['"]?<|not valid json|cloudflare|浏览器校验|返回了?网页内容/i.test(combined)
+        || response.status === 429
+        || response.status >= 500;
+}
+
+async function fetchYayaApiJson(url, options) {
+    let lastNetworkError = null;
+
+    for (let attempt = 0; attempt <= YAYA_API_RETRY_DELAYS_MS.length; attempt += 1) {
+        let response;
+        try {
+            response = await fetch(url, options);
+        } catch (error) {
+            lastNetworkError = error;
+            if (attempt < YAYA_API_RETRY_DELAYS_MS.length) {
+                await waitForRetry(YAYA_API_RETRY_DELAYS_MS[attempt]);
+                continue;
+            }
+            throw error;
+        }
+
+        const text = await response.text();
+        let data = null;
+        let parseFailed = false;
+        try {
+            data = text ? JSON.parse(text) : null;
+        } catch (error) {
+            parseFailed = true;
+        }
+
+        const transientFailure = isTransientYayaApiFailure(response, text, data, parseFailed);
+        if (transientFailure && attempt < YAYA_API_RETRY_DELAYS_MS.length) {
+            await waitForRetry(YAYA_API_RETRY_DELAYS_MS[attempt]);
+            continue;
+        }
+
+        return { response, text, data, parseFailed, transientFailure };
+    }
+
+    throw lastNetworkError || new Error('Yaya API 代理请求失败');
+}
+
 async function invokeYayaApiProxy(channel, payload, baseUrl) {
     const requestPayload = withLocalMeet48Auth(channel, payload);
-    const response = await fetch(getYayaApiProxyUrl(baseUrl), {
+    const result = await fetchYayaApiJson(getYayaApiProxyUrl(baseUrl), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channel, payload: requestPayload || {} })
     });
+    const { response, text, data, parseFailed, transientFailure } = result;
 
-    const text = await response.text();
-    let data = null;
-    try {
-        data = text ? JSON.parse(text) : null;
-    } catch (error) {
+    if (parseFailed) {
         return {
             success: false,
             msg: /^\s*</.test(text || '')
                 ? 'Yaya API 代理返回了网页内容，请稍后重试。'
                 : 'Yaya API 代理返回内容不是 JSON'
         };
+    }
+
+    if (transientFailure) {
+        return { success: false, msg: 'Yaya API 代理暂时不可用，请稍后重试。' };
     }
 
     if (!response.ok) {
@@ -73,7 +127,7 @@ async function invokeYayaApiProxy(channel, payload, baseUrl) {
 }
 
 async function invokeYayaPocketApiProxy(payload, baseUrl) {
-    const response = await fetch(getYayaPocketApiProxyUrl(baseUrl), {
+    const result = await fetchYayaApiJson(getYayaPocketApiProxyUrl(baseUrl), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -81,18 +135,23 @@ async function invokeYayaPocketApiProxy(payload, baseUrl) {
             postData: payload?.postData || {}
         })
     });
+    const { response, text, data, parseFailed, transientFailure } = result;
 
-    const text = await response.text();
-    let data = null;
-    try {
-        data = text ? JSON.parse(text) : null;
-    } catch (error) {
+    if (parseFailed) {
         return {
             status: 500,
             content: {},
             message: /^\s*</.test(text || '')
                 ? 'Yaya API 代理返回了网页内容，请稍后重试。'
                 : 'Yaya API 代理返回内容不是 JSON'
+        };
+    }
+
+    if (transientFailure) {
+        return {
+            status: 503,
+            content: {},
+            message: 'Yaya API 代理暂时不可用，请稍后重试。'
         };
     }
 
@@ -146,107 +205,14 @@ async function handlePocketApiPathRequest(payload) {
 }
 
 function registerPocketIpc() {
-    const handle = (channel, localHandler) => {
-        ipcMain.handle(channel, (event, payload) => handlePocketRequest(channel, payload, localHandler));
+    const handle = (channel) => {
+        ipcMain.handle(channel, (event, payload) => (
+            handlePocketRequest(channel, payload, preparedPayload => pocketService.invoke(channel, preparedPayload))
+        ));
     };
 
     ipcMain.handle('fetch-pocket-api', (event, payload) => handlePocketApiPathRequest(payload));
-    handle('login-send-sms', (payload) => pocketService.loginSendSms(payload));
-    handle('login-by-code', (payload) => pocketService.loginByCode(payload));
-    handle('login-check-token', (payload) => pocketService.loginCheckToken(payload));
-    handle('login-create-qr', () => pocketService.loginCreateQr());
-    handle('login-poll-qr', (payload) => pocketService.loginPollQr(payload));
-    handle('login-cancel-qr', (payload) => pocketService.loginCancelQr(payload));
-    handle('login-qr-status', () => pocketService.loginQrStatus());
-    handle('pocket-checkin', (payload) => pocketService.checkIn(payload));
-    handle('switch-big-small', (payload) => pocketService.switchBigSmall(payload));
-    handle('fetch-room-messages', (payload) => pocketService.fetchRoomMessages(payload));
-    handle('fetch-private-message-list', (payload) => pocketService.fetchPrivateMessageList(payload));
-    handle('fetch-private-message-info', (payload) => pocketService.fetchPrivateMessageInfo(payload));
-    handle('delete-private-message', (payload) => pocketService.deletePrivateMessage(payload));
-    handle('send-private-message-reply', (payload) => pocketService.sendPrivateMessageReply(payload));
-    handle('fetch-flip-list', (payload) => pocketService.fetchFlipList(payload));
-    handle('fetch-star-archives', (payload) => pocketService.fetchStarArchives(payload));
-    handle('fetch-star-history', (payload) => pocketService.fetchStarHistory(payload));
-    handle('fetch-open-live', (payload) => pocketService.fetchOpenLive(payload));
-    handle('fetch-open-live-one', (payload) => pocketService.fetchOpenLiveOne(payload));
-    handle('fetch-open-live-public-list', (payload) => pocketService.fetchOpenLivePublicList(payload));
-    handle('fetch-meet48-live-list', (payload) => pocketService.fetchMeet48LiveList(payload));
-    handle('fetch-meet48-live-one', (payload) => pocketService.fetchMeet48LiveOne(payload));
-    handle('fetch-open-live-participants', (payload) => pocketService.fetchOpenLiveParticipants(payload));
-    handle('fetch-flip-prices', (payload) => pocketService.fetchFlipPrices(payload));
-    handle('send-flip-question', (payload) => pocketService.sendFlipQuestion(payload));
-    handle('operate-flip-question', (payload) => pocketService.operateFlipQuestion(payload));
-    handle('fetch-member-photos', (payload) => pocketService.fetchMemberPhotos(payload));
-    handle('fetch-user-money', (payload) => pocketService.fetchUserMoney(payload));
-    handle('fetch-invoice-tips', (payload) => pocketService.fetchInvoiceTips(payload));
-    handle('fetch-invoice-config', (payload) => pocketService.fetchInvoiceConfig(payload));
-    handle('fetch-invoice-order-list', (payload) => pocketService.fetchInvoiceOrderList(payload));
-    handle('apply-electronic-invoice', (payload) => pocketService.applyElectronicInvoice(payload));
-    handle('fetch-checkin-today', (payload) => pocketService.fetchCheckinToday(payload));
-    handle('fetch-unread-message-count', (payload) => pocketService.fetchUnreadMessageCount(payload));
-    handle('edit-user-info', (payload) => pocketService.editUserInfo(payload));
-    handle('upload-user-avatar', (payload) => pocketService.uploadUserAvatar(payload));
-    handle('upload-private-message-image', (payload) => pocketService.uploadPrivateMessageImage(payload));
-    handle('fetch-user-rename-count', (payload) => pocketService.fetchUserRenameCount(payload));
-    handle('fetch-user-picture-frames', (payload) => pocketService.fetchUserPictureFrames(payload));
-    handle('fetch-client-group-team-star-update', (payload) => pocketService.fetchClientGroupTeamStarUpdate(payload));
-    handle('fetch-star-server-map', (payload) => pocketService.fetchStarServerMap(payload));
-    handle('fetch-media-collection-total-count', (payload) => pocketService.fetchMediaCollectionTotalCount(payload));
-    handle('send-live-gift', (payload) => pocketService.sendLiveGift(payload));
-    handle('fetch-gift-list', (payload) => pocketService.fetchGiftList(payload));
-    handle('get-nim-login-info', (payload) => pocketService.getNimLoginInfo(payload));
-    handle('fetch-room-album', (payload) => pocketService.fetchRoomAlbum(payload));
-    handle('fetch-room-radio', (payload) => pocketService.fetchRoomRadio(payload));
-    handle('fetch-seine-server-detail', (payload) => pocketService.fetchSeineServerDetail(payload));
-    handle('fetch-live-rank', (payload) => pocketService.fetchLiveRank(payload));
-    handle('fetch-friends-ids', (payload) => pocketService.fetchFriendsIds(payload));
-    handle('fetch-last-messages', (payload) => pocketService.fetchLastMessages(payload));
-    handle('follow-member', (payload) => pocketService.followMember(payload));
-    handle('unfollow-member', (payload) => pocketService.unfollowMember(payload));
-    handle('fetch-live-list', (payload) => pocketService.fetchLiveList(payload));
-    handle('fetch-live-one', (payload) => pocketService.fetchLiveOne(payload));
-    handle('fetch-live-result', (payload) => pocketService.fetchLiveResult(payload));
-    handle('fetch-trip-list', (payload) => pocketService.fetchTripList(payload));
-    handle('fetch-album-list', (payload) => pocketService.fetchAlbumList(payload));
-    handle('fetch-melee-week-rank', (payload) => pocketService.fetchMeleeWeekRank(payload));
-    handle('fetch-melee-rank-page', (payload) => pocketService.fetchMeleeRankPage(payload));
-    handle('fetch-melee-year-rank-page', (payload) => pocketService.fetchMeleeYearRankPage(payload));
-    handle('fetch-person-melee-rank-page', (payload) => pocketService.fetchPersonMeleeRankPage(payload));
-    handle('fetch-post-image-list', (payload) => pocketService.fetchPostImageList(payload));
-    handle('fetch-post-video-list', (payload) => pocketService.fetchPostVideoList(payload));
-    handle('fetch-post-timeline-home', (payload) => pocketService.fetchPostTimelineHome(payload));
-    handle('fetch-post-timeline-home-new', (payload) => pocketService.fetchPostTimelineHomeNew(payload));
-    handle('fetch-chatroom-homeowner-messages', (payload) => pocketService.fetchChatroomHomeownerMessages(payload));
-    handle('fetch-member-weibo', (payload) => pocketService.fetchMemberWeiboMessages(payload));
-    handle('fetch-member-dynamic', (payload) => pocketService.fetchMemberDynamicMessages(payload));
-    handle('fetch-conversation-page', (payload) => pocketService.fetchConversationPage(payload));
-    handle('fetch-user-home-info', (payload) => pocketService.fetchUserHomeInfo(payload));
-    handle('fetch-flip-custom-index-v1', (payload) => pocketService.fetchFlipCustomIndexV1(payload));
-    handle('fetch-area48-newest', (payload) => pocketService.fetchArea48Newest(payload));
-    handle('fetch-area48-recommend', (payload) => pocketService.fetchArea48Recommend(payload));
-    handle('fetch-area48-topic-info', (payload) => pocketService.fetchArea48TopicInfo(payload));
-    handle('fetch-area48-topic-hot-posts', (payload) => pocketService.fetchArea48TopicHotPosts(payload));
-    handle('fetch-area48-topic-newest-posts', (payload) => pocketService.fetchArea48TopicNewestPosts(payload));
-    handle('fetch-area48-comments', (payload) => pocketService.fetchArea48Comments(payload));
-    handle('fetch-area48-post-details', (payload) => pocketService.fetchArea48PostDetails(payload));
-    handle('add-area48-comment', (payload) => pocketService.addArea48Comment(payload));
-    handle('delete-area48-comment', (payload) => pocketService.deleteArea48Comment(payload));
-    handle('create-area48-post', (payload) => pocketService.createArea48Post(payload));
-    handle('fetch-pocket-mask-words', (payload) => pocketService.fetchPocketMaskWords(payload));
-    handle('score-vote-login', (payload) => pocketService.loginElectionVote(payload));
-    handle('score-vote-status', (payload) => pocketService.fetchElectionVoteStatus(payload));
-    handle('score-act-status', (payload) => pocketService.fetchElectionActStatus(payload));
-    handle('score-userinfo', (payload) => pocketService.fetchElectionUserInfo(payload));
-    handle('score-vote-history', (payload) => pocketService.fetchElectionVoteHistory(payload));
-    handle('score-code-act-history', (payload) => pocketService.fetchElectionCodeActHistory(payload));
-    handle('score-check-sg-bind', (payload) => pocketService.fetchElectionSgBindStatus(payload));
-    handle('score-bind-sg', (payload) => pocketService.bindElectionSg(payload));
-    handle('score-rare-treasure-list', (payload) => pocketService.fetchPageantryRareTreasures(payload));
-    handle('score-buy-star-list', (payload) => pocketService.fetchPageantryBuyStarList(payload));
-    handle('fetch-pageantry-honor-card-info', (payload) => pocketService.fetchPageantryHonorCardInfo(payload));
-    handle('fetch-score-official-bundle', (payload) => pocketService.fetchScoreOfficialBundle(payload));
-    handle('score-official-action', (payload) => pocketService.runScoreOfficialAction(payload));
+    Object.keys(POCKET_CHANNEL_METHODS).forEach(handle);
 }
 
 module.exports = {

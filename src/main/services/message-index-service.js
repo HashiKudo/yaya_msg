@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 const { ensureStoragePaths } = require('../../common/storage-paths');
+const { reportIgnoredError } = require('../../common/error-utils');
 
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 200;
@@ -249,8 +250,7 @@ async function syncMessageIndexInternal() {
             if (!trimmed) continue;
             try {
                 records.push(JSON.parse(trimmed));
-            } catch (error) {
-            }
+            } catch (error) { reportIgnoredError(error, 'src/main/services/message-index-service.js'); }
         }
 
         db.exec('BEGIN IMMEDIATE');

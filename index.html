@@ -5,26 +5,26 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self' file: https: data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net https://unpkg.com https://cdn.tailwindcss.com https://esm.sh https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https:; img-src 'self' file: https: data: blob:; media-src 'self' file: https: http: data: blob:; connect-src 'self' file: https: http: ws: wss: data: blob:; font-src 'self' https: data:;">
-    <title>牙牙消息 v2.9</title>
+        content="default-src 'self' file: https: data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' file: https: data: blob:; media-src 'self' file: https: http: data: blob:; connect-src 'self' file: https: http: ws: wss: data: blob:; font-src 'self' data:;">
+    <title>牙牙消息</title>
     <link rel="icon" href="./icon.png" type="image/x-icon">
-    <link rel="stylesheet"
-        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20,400,0,0&icon_names=notifications_active,notifications_off">
-
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="./src/web/web-overrides.css?v=__YAYA_BUILD_VERSION__">
 
-    <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/artplayer/dist/artplayer.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/artplayer-plugin-danmuku/dist/artplayer-plugin-danmuku.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dplayer/dist/DPlayer.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/pinyin-pro@3.24.2/dist/index.js"></script>
+    <script src="./src/renderer/renderer-utils.js?v=__YAYA_BUILD_VERSION__"></script>
+    <script src="./src/renderer/vendor/media-vendors.js?v=__YAYA_BUILD_VERSION__"></script>
+    <script src="./src/web/browser-shim.js?v=__YAYA_BUILD_VERSION__"></script>
+    <script src="./src/web/web-shell.js?v=__YAYA_BUILD_VERSION__"></script>
 
-    <script src="./src/renderer/theme-init.js"></script>
+    <script src="./src/renderer/theme-init.js?v=__YAYA_BUILD_VERSION__"></script>
 
 </head>
 
 <body class="topbar-page-title-enabled">
+    <img id="web-background-layer" class="web-background-layer"
+        src="https://data.gnz.hk/assets/default-background.jpg?v=20260815" alt="" aria-hidden="true"
+        style="display: none;"
+        onerror="window.__recoverYayaWebBackground && window.__recoverYayaWebBackground(this)">
     <script>
         (function () {
             const platform = (window.desktop && window.desktop.platform) || '';
@@ -32,6 +32,10 @@
             root.dataset.platform = platform;
             if (platform !== 'web') return;
 
+            const backgroundLayer = document.getElementById('web-background-layer');
+            if (backgroundLayer && window.__yayaCurrentBackgroundUrl) {
+                backgroundLayer.src = window.__yayaCurrentBackgroundUrl;
+            }
         })();
     </script>
     <div id="loading-shield" style="display: none;">
@@ -51,7 +55,7 @@
                 </svg>
             </div>
             <img src="./icon.png" class="title-logo">
-            <span>牙牙消息 v2.9</span>
+            <span>牙牙消息 v2.10</span>
         </div>
         <div id="topbar-page-title" class="title-bar-center-title" aria-live="polite"></div>
         <div class="window-controls">
@@ -144,8 +148,8 @@
 
                 <div style="display: flex; gap: 10px;">
                     <button id="btn-sb-open-live" class="btn btn-secondary btn-full" style="flex: 1; padding: 0;"
-                        onclick="switchView('openlive')">
-                        公演记录
+                        onclick="switchView('performance')">
+                        公演列表
                     </button>
                     <button id="btn-sb-profile" class="btn btn-secondary btn-full" style="flex: 1; padding: 0;"
                         onclick="switchView('profile')">
@@ -393,7 +397,7 @@
 
                         <div class="home-panel home-panel-pocket">
                             <div class="home-panel-title">口袋</div>
-                            <div class="home-panel-subtitle">口袋房间、私信列表、房间相册、成员动态、成员微博</div>
+                            <div class="home-panel-subtitle">口袋房间、私信列表、房间相册、公演记录、成员微博</div>
                             <div class="home-panel-actions home-card-grid">
                                 <button class="home-card home-card-primary" onclick="switchView('followed-rooms')">
                                     <span class="home-card-title">房间</span>
@@ -407,9 +411,9 @@
                                     <span class="home-card-title">相册</span>
                                     <span class="home-card-desc">按房间查看图片</span>
                                 </button>
-                                <button class="home-card" onclick="switchView('member-dynamic')">
-                                    <span class="home-card-title">动态</span>
-                                    <span class="home-card-desc">查看成员口袋动态</span>
+                                <button class="home-card" onclick="switchView('performance')">
+                                    <span class="home-card-title">公演</span>
+                                    <span class="home-card-desc">查看公演与成员记录</span>
                                 </button>
                                 <button class="home-card" onclick="switchView('member-weibo')">
                                     <span class="home-card-title">微博</span>
@@ -420,7 +424,7 @@
 
                         <div class="home-panel home-panel-data">
                             <div class="home-panel-title">数据</div>
-                            <div class="home-panel-subtitle">成员档案、成员行程、公演记录、鸡腿榜、48区</div>
+                            <div class="home-panel-subtitle">成员档案、成员行程、成员动态、鸡腿榜、48区</div>
                             <div class="home-panel-actions home-card-grid">
                                 <button class="home-card" onclick="switchView('profile')">
                                     <span class="home-card-title">档案</span>
@@ -430,9 +434,9 @@
                                     <span class="home-card-title">行程</span>
                                     <span class="home-card-desc">查看公演与活动安排</span>
                                 </button>
-                                <button class="home-card" onclick="switchView('openlive')">
-                                    <span class="home-card-title">公演</span>
-                                    <span class="home-card-desc">查看公演与活动记录</span>
+                                <button class="home-card" onclick="switchView('member-dynamic')">
+                                    <span class="home-card-title">动态</span>
+                                    <span class="home-card-desc">查看成员口袋动态</span>
                                 </button>
                                 <button class="home-card" onclick="switchView('community')">
                                     <span class="home-card-title">社区</span>
@@ -529,9 +533,19 @@
                         style="width: 280px; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--input-bg); flex-shrink: 0;">
                         <div
                             style="padding: 15px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: var(--sidebar-bg);">
-                            <h2 style="margin: 0; color: var(--primary); font-size: 16px;">聚聚</h2>
+                            <h2 style="margin: 0; color: var(--primary); font-size: 16px; line-height: 26px; transform: translateY(-1px);">聚聚</h2>
                             <div style="display: flex; gap: 8px;">
-                                <div id="followed-sort-wrapper" style="position: relative; width: 135px;">
+                                <button id="btn-toggle-all-followed-notifications" type="button"
+                                    class="followed-notification-all-toggle is-initializing"
+                                    onclick="toggleAllFollowedRoomNotifications()" title="一键开启所有通知"
+                                    aria-label="一键开启所有通知" aria-pressed="false">
+                                    <svg class="followed-notification-all-icon" aria-hidden="true" viewBox="0 0 24 24">
+                                        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+                                        <path class="followed-notification-all-slash" d="M4 4l16 16" />
+                                    </svg>
+                                    <span class="followed-notification-all-label">全开</span>
+                                </button>
+                                <div id="followed-sort-wrapper" style="position: relative; width: 105px;">
                                     <input type="hidden" id="followed-sort-value" value="default">
                                     <input type="text" id="followed-sort-display" class="input-control" value="自定义排序"
                                         readonly onclick="toggleFollowedSortDropdown()"
@@ -612,10 +626,34 @@
                             </div>
 
                             <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+                                <button id="btn-open-followed-flip-question" type="button"
+                                    class="followed-notification-toggle followed-flip-question-button"
+                                    onclick="openActiveFollowedFlipQuestion()" title="向当前成员翻牌提问"
+                                    aria-label="向当前成员翻牌提问">
+                                    <svg class="followed-flip-question-icon" aria-hidden="true" viewBox="0 0 24 24">
+                                        <path d="M20 7.4A9 9 0 1 0 20 16.6L12 12Z" />
+                                        <circle cx="11" cy="7.5" r="1" />
+                                    </svg>
+                                </button>
+
+                                <button id="btn-open-followed-room-album" type="button"
+                                    class="followed-notification-toggle followed-room-album-button"
+                                    onclick="openActiveFollowedRoomAlbum()" title="打开当前房间相册"
+                                    aria-label="打开当前房间相册">
+                                    <svg class="followed-room-album-icon" aria-hidden="true" viewBox="0 0 24 24">
+                                        <rect x="3" y="5" width="18" height="14" rx="2" />
+                                        <circle cx="8.5" cy="10" r="1.5" />
+                                        <path d="M3 16l5-5 4 4 3-3 6 6" />
+                                    </svg>
+                                </button>
+
                                 <button id="btn-toggle-followed-notification" type="button"
                                     class="followed-notification-toggle" onclick="toggleActiveFollowedRoomNotification()"
                                     title="开启通知" aria-label="开启通知" aria-pressed="false">
-                                    <span class="material-symbols-rounded" aria-hidden="true">notifications_off</span>
+                                    <svg class="followed-notification-icon" aria-hidden="true" viewBox="0 0 24 24">
+                                        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+                                        <path class="followed-notification-slash" d="M4 4l16 16" />
+                                    </svg>
                                 </button>
 
                                 <button id="btn-toggle-room-type" class="btn btn-secondary"
@@ -634,7 +672,7 @@
 
                         <button id="followed-chat-new-messages"
                             onclick="flushFollowedPendingMessages()"
-                            style="display: none; position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 8; min-width: 148px; max-width: calc(100% - 40px); height: 34px; padding: 0 14px; border: 1px solid rgba(255,255,255,0.16); border-radius: 999px; background: rgba(28, 34, 44, 0.92); color: #fff; font-size: 12px; font-weight: 600; box-shadow: 0 10px 24px rgba(0,0,0,0.22); backdrop-filter: blur(10px); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            style="display: none; position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 8; min-width: 148px; max-width: calc(100% - 40px); height: 34px; padding: 0 14px; border-radius: 999px; font-size: 12px; font-weight: 600; backdrop-filter: blur(10px); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                             有新消息，点击查看
                         </button>
 
@@ -719,7 +757,13 @@
                             placeholder="成员名 / 拼音 / 房间标题" oninput="handleLiveFilter()">
                     </div>
 
-                    <button class="btn btn-secondary" onclick="fetchLiveList()"
+                    <button id="btn-auto-live-record" class="btn btn-secondary web-hidden"
+                        onclick="openAutoLiveRecordModal()"
+                        style="white-space: nowrap; padding: 0 15px; height: 38px;">
+                        自动录制
+                    </button>
+
+                    <button id="btn-live-refresh" class="btn btn-secondary" onclick="fetchLiveList()"
                         style="white-space: nowrap; padding: 0 15px; height: 38px;">
                         刷新列表
                     </button>
@@ -776,7 +820,8 @@
                         style="display: flex; flex-direction: column; justify-content: flex-start;">
                     <div id="vod-loading"
                         style="text-align: center; padding: 20px; color: var(--text-sub); display: none;"></div>
-                        <div class="live-card-grid" id="vod-list-container"></div>
+                        <div class="live-card-grid" id="live-list-container" hidden></div>
+                        <div class="vod-list-mode" id="vod-list-container"></div>
                 </div>
 
                 <div id="live-player-view" style="display: none; height: 100%; flex-direction: column; padding: 0;">
@@ -809,16 +854,12 @@
                                 style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
                                 <button id="btn-player-rank" class="btn btn-secondary" onclick="openLiveRankPanel()"
                                     style="display: none; height: 36px; min-width: 74px; padding: 0 14px; font-size: 14px; flex-shrink: 0;">贡献榜</button>
+                                <button id="btn-player-participants" class="btn btn-secondary"
+                                    onclick="openOpenLiveParticipantsModal()"
+                                    style="display: none; height: 36px; min-width: 94px; padding: 0 14px; font-size: 14px; flex-shrink: 0;">参与成员</button>
                                 <button class="btn btn-secondary" onclick="backToLiveList()"
-                                    style="height: 36px; min-width: 86px; padding: 0 14px; font-size: 14px; flex-shrink: 0;">返回列表</button>
+                                    style="height: 36px; min-width: 74px; padding: 0 14px; font-size: 14px; flex-shrink: 0;">返回</button>
                             </div>
-                        </div>
-
-                        <div id="current-openlive-members-wrap"
-                            style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);">
-                            <div style="font-size: 11px; color: var(--text-sub); margin-bottom: 6px;">参与成员</div>
-                            <div id="current-openlive-members"
-                                style="font-size: 13px; line-height: 1.7; color: var(--text); word-break: break-word;"></div>
                         </div>
                     </div>
 
@@ -877,7 +918,7 @@
                                     <div class="gift-control-bar" onclick="toggleGiftPanel()"
                                         style="padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; background: var(--input-bg); user-select: none;">
                                         <div style="display: flex; align-items: center;">
-                                            <span style="font-weight: bold; margin-right: 10px;">🎁 赠送礼物</span>
+                                            <span style="font-weight: bold; margin-right: 10px;">赠送礼物</span>
                                             <span style="font-size: 12px; color: var(--text-sub);">余额: <span
                                                     id="live-gift-balance"
                                                     style="color: var(--primary); font-weight: bold; margin: 0 4px;">--</span>
@@ -1685,13 +1726,15 @@
                                         <span class="auto-fetch-dropdown-arrow">▼</span>
                                         <div id="auto-fetch-interval-dropdown" class="suggestion-box auto-fetch-option-dropdown">
                                             <div class="suggestion-item"
+                                                onclick="selectAutoMessageFetchOption('intervalMinutes', 1, '1 分钟')">1 分钟</div>
+                                            <div class="suggestion-item"
                                                 onclick="selectAutoMessageFetchOption('intervalMinutes', 5, '5 分钟')">5 分钟</div>
                                             <div class="suggestion-item"
                                                 onclick="selectAutoMessageFetchOption('intervalMinutes', 10, '10 分钟')">10 分钟</div>
                                             <div class="suggestion-item"
                                                 onclick="selectAutoMessageFetchOption('intervalMinutes', 30, '30 分钟')">30 分钟</div>
                                             <div class="suggestion-item"
-                                                onclick="selectAutoMessageFetchOption('intervalMinutes', 60, '1 小时')">1 小时</div>
+                                                onclick="selectAutoMessageFetchOption('intervalMinutes', 60, '60 分钟')">60 分钟</div>
                                         </div>
                                     </div>
                                 </div>
@@ -2475,9 +2518,15 @@
                             <div id="flip-config-area" style="display:none;">
 
                                 <div class="Box-row" style="z-index: 15;">
-                                    <h3
-                                        style="margin-top: 0; font-size: 16px; margin-bottom: 15px; border-left: 4px solid var(--primary); padding-left: 10px; color: var(--text);">
-                                        设置类型</h3>
+                                    <div class="flip-config-heading">
+                                        <h3
+                                            style="margin: 0; font-size: 16px; border-left: 4px solid var(--primary); padding-left: 10px; color: var(--text);">
+                                            设置类型</h3>
+                                        <button type="button" class="btn btn-secondary flip-default-settings-button"
+                                            onclick="openFlipDefaultSettings()" title="设置默认翻牌类型和公开设置">
+                                            默认设置
+                                        </button>
+                                    </div>
 
                                     <div style="display: flex; gap: 20px;">
                                         <div style="flex: 1;">
@@ -2780,6 +2829,50 @@
                             <div id="profile-result-container" style="margin-top: 20px;"></div>
                         </div>
                     </div>
+                    <div id="view-performance" class="performance-view"
+                        style="height: 100%; overflow-y: auto; display: none; padding: 20px 40px; box-sizing: border-box;">
+                        <div class="list-container performance-shell">
+                            <div class="performance-toolbar" aria-label="公演筛选与搜索">
+                                <div class="performance-filter-row performance-group-filter-row">
+                                    <button type="button" class="performance-filter is-active" data-performance-group="all"
+                                        aria-pressed="true" onclick="selectPerformanceGroup('all')">全部</button>
+                                    <button type="button" class="performance-filter" data-performance-group="snh"
+                                        aria-pressed="false" onclick="selectPerformanceGroup('snh')">SNH48</button>
+                                    <button type="button" class="performance-filter" data-performance-group="gnz"
+                                        aria-pressed="false" onclick="selectPerformanceGroup('gnz')">GNZ48</button>
+                                    <button type="button" class="performance-filter" data-performance-group="bej"
+                                        aria-pressed="false" onclick="selectPerformanceGroup('bej')">BEJ48</button>
+                                    <button type="button" class="performance-filter" data-performance-group="ckg"
+                                        aria-pressed="false" onclick="selectPerformanceGroup('ckg')">CKG48</button>
+                                    <button type="button" class="performance-filter" data-performance-group="cgt"
+                                        aria-pressed="false" onclick="selectPerformanceGroup('cgt')">CGT48</button>
+                                    <button type="button" class="performance-filter" data-performance-group="other"
+                                        aria-pressed="false" onclick="selectPerformanceGroup('other')">其它</button>
+                                    <div class="performance-member-search">
+                                        <input type="text" id="performance-member-input" class="performance-search-input"
+                                            placeholder="搜索成员" aria-label="搜索成员" autocomplete="off"
+                                            oninput="handlePerformanceMemberSearch(this.value)"
+                                            onfocus="handlePerformanceMemberSearch(this.value)">
+                                        <div id="performance-member-results" class="suggestion-box"></div>
+                                    </div>
+                                    <label class="performance-search" for="performance-search-input">
+                                        <input type="search" id="performance-search-input" class="performance-search-input"
+                                            placeholder="搜索公演或日期" aria-label="搜索公演或日期" autocomplete="off"
+                                            oninput="searchPerformanceList(this.value)">
+                                    </label>
+                                </div>
+                                <div id="performance-team-filters" class="performance-filter-row performance-team-filter-row"
+                                    aria-label="按队伍筛选公演" hidden></div>
+                            </div>
+
+                            <div id="performance-list" class="performance-list" aria-live="polite"></div>
+                            <div id="performance-load-sentinel" class="performance-load-sentinel" role="status"
+                                aria-live="polite"></div>
+                            <button type="button" id="performance-load-more" class="btn btn-secondary performance-load-more"
+                                onclick="loadMorePerformanceList()" hidden>重新加载</button>
+                        </div>
+                    </div>
+
                     <div id="view-open-live"
                         style="height: 100%; overflow-y: auto; display: none; padding: 20px 40px; box-sizing: border-box;">
                         <div class="list-container">
@@ -2816,43 +2909,56 @@
                     <div id="view-room-radio"
                         style="height: 100%; overflow-y: auto; display: none; padding: 20px 40px; box-sizing: border-box;">
                         <div class="list-container">
-                            <div class="page-header">
-                                <h2 class="page-title">房间电台</h2>
-                                <span id="room-radio-status" style="font-size: 13px; color: var(--text-sub);"></span>
-                            </div>
-
-                            <div class="Box-row" style="z-index: 100; position: relative;">
-                                <div style="display: flex; gap: 15px; margin-bottom: 15px;">
-
-                                    <div class="search-wrapper" style="flex: 1;">
-                                        <label
-                                            style="font-size: 12px; color: var(--text-sub); display:block; margin-bottom:5px;">搜索成员</label>
-                                        <input type="text" id="room-radio-member-input" class="input-control"
-                                            placeholder="请输入成员名" oninput="handleRoomRadioSearch(this.value)"
-                                            onfocus="handleRoomRadioSearch(this.value)">
-                                        <div id="room-radio-search-results" class="suggestion-box"></div>
-                                    </div>
-
-                                    <div style="flex: 1.25;">
-                                        <label id="room-radio-channel-label"
-                                            style="font-size: 12px; color: var(--text-sub); display:block; margin-bottom:5px;">大房间
-                                            Channel ID</label>
-                                        <div style="display:flex; gap:10px; align-items:stretch;">
-                                            <input type="text" id="room-radio-channel-id" class="input-control"
-                                                placeholder="大房间 Channel ID">
-                                            <button type="button" id="btn-toggle-room-radio-room-type"
-                                                class="btn btn-secondary"
-                                                style="width: 104px; flex-shrink: 0;"
-                                                onclick="toggleRoomRadioRoomType()">大房间</button>
+                            <div class="Box-row room-radio-scan-panel">
+                                <div class="room-radio-scan-head">
+                                    <div class="room-radio-scan-heading">
+                                        <h3>上麦列表</h3>
+                                        <div id="room-radio-scan-progress-copy" class="room-radio-scan-progress-copy" hidden>
+                                            <span id="room-radio-scan-progress-text">准备扫描...</span>
+                                            <span id="room-radio-scan-summary"></span>
                                         </div>
                                     </div>
-
-                                    <input type="hidden" id="room-radio-server-id">
+                                    <div class="room-radio-scan-actions">
+                                        <button type="button" id="btn-auto-room-radio-record" class="btn btn-secondary"
+                                            onclick="openAutoRoomRadioRecordModal()">自动录制</button>
+                                        <button type="button" id="btn-room-radio-scan" class="btn btn-secondary"
+                                            onclick="toggleAllMemberRoomRadioScan()">刷新列表</button>
+                                    </div>
                                 </div>
 
-                                <button class="btn btn-primary" style="width: 100%;"
-                                    onclick="connectRoomRadio()">连接电台</button>
+                                <div id="room-radio-scan-results" class="room-radio-scan-results" hidden></div>
                             </div>
+
+                            <details class="Box-row room-radio-manual-panel">
+                                <summary>手动连接</summary>
+                                <div class="room-radio-manual-content">
+                                    <div class="room-radio-manual-fields">
+                                        <div class="search-wrapper" style="flex: 1;">
+                                            <label>搜索成员</label>
+                                            <input type="text" id="room-radio-member-input" class="input-control"
+                                                placeholder="请输入成员名" oninput="handleRoomRadioSearch(this.value)"
+                                                onfocus="handleRoomRadioSearch(this.value)">
+                                            <div id="room-radio-search-results" class="suggestion-box"></div>
+                                        </div>
+
+                                        <div style="flex: 1.25;">
+                                            <label id="room-radio-channel-label">大房间 Channel ID</label>
+                                            <div class="room-radio-manual-channel-row">
+                                                <input type="text" id="room-radio-channel-id" class="input-control"
+                                                    placeholder="大房间 Channel ID">
+                                                <button type="button" id="btn-toggle-room-radio-room-type"
+                                                    class="btn btn-secondary"
+                                                    onclick="toggleRoomRadioRoomType()">大房间</button>
+                                            </div>
+                                        </div>
+
+                                        <input type="hidden" id="room-radio-server-id">
+                                    </div>
+
+                                    <button class="btn btn-primary room-radio-manual-connect"
+                                        onclick="connectRoomRadio()">连接电台</button>
+                                </div>
+                            </details>
 
                             <div id="room-radio-result-container" style="margin-top: 20px;"></div>
                         </div>
@@ -2899,23 +3005,34 @@
 
                                 <div style="margin-bottom: 20px;">
                                     <label
-                                        style="display:block; font-weight:bold; margin-bottom:8px; color:var(--text);">录播弹幕</label>
+                                        style="display:block; font-weight:bold; margin-bottom:8px; color:var(--text);">直播</label>
                                     <div style="display: flex; gap: 10px;">
-                                        <input type="text" id="path-danmu" class="input-control"
+                                        <input type="text" id="path-live" class="input-control"
                                             placeholder="默认路径 (未设置)" onchange="saveCustomPaths()">
                                         <button class="btn btn-secondary"
-                                            onclick="triggerSelectPath('path-danmu')">选择文件夹</button>
+                                            onclick="triggerSelectPath('path-live')">选择文件夹</button>
                                     </div>
                                 </div>
 
                                 <div style="margin-bottom: 20px;">
                                     <label
-                                        style="display:block; font-weight:bold; margin-bottom:8px; color:var(--text);">录播回放</label>
+                                        style="display:block; font-weight:bold; margin-bottom:8px; color:var(--text);">回放</label>
                                     <div style="display: flex; gap: 10px;">
                                         <input type="text" id="path-video" class="input-control"
                                             placeholder="默认路径 (未设置)" onchange="saveCustomPaths()">
                                         <button class="btn btn-secondary"
                                             onclick="triggerSelectPath('path-video')">选择文件夹</button>
+                                    </div>
+                                </div>
+
+                                <div style="margin-bottom: 20px;">
+                                    <label
+                                        style="display:block; font-weight:bold; margin-bottom:8px; color:var(--text);">上麦</label>
+                                    <div style="display: flex; gap: 10px;">
+                                        <input type="text" id="path-room-radio" class="input-control" placeholder="默认路径 (未设置)"
+                                            onchange="saveCustomPaths()">
+                                        <button class="btn btn-secondary"
+                                            onclick="triggerSelectPath('path-room-radio')">选择文件夹</button>
                                     </div>
                                 </div>
 
@@ -2927,6 +3044,17 @@
                                             onchange="saveCustomPaths()">
                                         <button class="btn btn-secondary"
                                             onclick="triggerSelectPath('path-clip')">选择文件夹</button>
+                                    </div>
+                                </div>
+
+                                <div style="margin-bottom: 20px;">
+                                    <label
+                                        style="display:block; font-weight:bold; margin-bottom:8px; color:var(--text);">弹幕</label>
+                                    <div style="display: flex; gap: 10px;">
+                                        <input type="text" id="path-danmu" class="input-control"
+                                            placeholder="默认路径 (未设置)" onchange="saveCustomPaths()">
+                                        <button class="btn btn-secondary"
+                                            onclick="triggerSelectPath('path-danmu')">选择文件夹</button>
                                     </div>
                                 </div>
 
@@ -2951,17 +3079,6 @@
                                             onclick="triggerSelectPath('path-flip')">选择文件夹</button>
                                     </div>
                                 </div>
-
-                                <div style="margin-bottom: 20px;">
-                                    <label
-                                        style="display:block; font-weight:bold; margin-bottom:8px; color:var(--text);">上麦</label>
-                                    <div style="display: flex; gap: 10px;">
-                                        <input type="text" id="path-room-radio" class="input-control" placeholder="默认路径 (未设置)"
-                                            onchange="saveCustomPaths()">
-                                        <button class="btn btn-secondary"
-                                            onclick="triggerSelectPath('path-room-radio')">选择文件夹</button>
-                                    </div>
-                                </div>
                             </div>
                             <div class="Box-row maskword-settings-card">
                                 <div class="maskword-settings-head">
@@ -2976,22 +3093,6 @@
                                     oninput="hideMaskwordResultIfEmpty()"
                                     placeholder="请输入要检测的内容"></textarea>
                                 <div id="maskword-result" class="maskword-result" hidden></div>
-                            </div>
-                            <div class="Box-row" style="margin-bottom: 30px;">
-                                <h3 style="margin-top: 0; color: var(--text);">代理设置</h3>
-
-                                <div
-                                    style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
-                                    <div>
-                                        <label
-                                            style="display:block; font-weight:bold; color:var(--text);">代理请求</label>
-                                        <span style="font-size: 12px; color: var(--text-sub);">海外网络无法直连口袋48接口时，通过 api.gnz.hk 代为请求</span>
-                                    </div>
-                                    <label style="display: inline-flex; align-items: center; gap: 10px; color: var(--text); white-space: nowrap; font-size: 16px; line-height: 1;">
-                                        <input type="checkbox" id="use-yaya-api-proxy" onchange="saveYayaApiProxySetting()" style="width: 16px; height: 16px; margin: 0; transform: translateY(1px);">
-                                        <span>使用 yaya-api 代理</span>
-                                    </label>
-                                </div>
                             </div>
                             <div class="Box-row">
                                 <div
@@ -3026,9 +3127,110 @@
                                     </div>
                                 </div>
                             </div>
+                            <div class="Box-row" style="margin-bottom: 30px;">
+                                <h3 style="margin-top: 0; color: var(--text);">代理设置</h3>
+
+                                <div
+                                    style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                                    <div>
+                                        <label
+                                            style="display:block; font-weight:bold; color:var(--text);">代理请求</label>
+                                        <span style="font-size: 12px; color: var(--text-sub);">海外网络无法直连口袋48接口时，通过 api.gnz.hk 代为请求</span>
+                                    </div>
+                                    <label style="display: inline-flex; align-items: center; gap: 10px; color: var(--text); white-space: nowrap; font-size: 16px; line-height: 1;">
+                                        <input type="checkbox" id="use-yaya-api-proxy" onchange="saveYayaApiProxySetting()" style="width: 16px; height: 16px; margin: 0; transform: translateY(1px);">
+                                        <span>使用 yaya-api 代理</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div id="window-close-settings-card" class="Box-row window-close-settings-card">
+                                <div class="window-close-settings-row">
+                                    <h3 class="window-close-settings-label">关闭软件</h3>
+                                    <div id="window-close-behavior" class="window-close-behavior-options">
+                                        <label class="window-close-behavior-option">
+                                            <input type="radio" name="window-close-behavior" value="minimize-to-tray"
+                                                onchange="saveWindowCloseBehaviorSetting()">
+                                            <span>最小化到托盘</span>
+                                        </label>
+                                        <label class="window-close-behavior-option">
+                                            <input type="radio" name="window-close-behavior" value="quit"
+                                                onchange="saveWindowCloseBehaviorSetting()">
+                                            <span>退出软件</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
         </main>
     </div>
+    <div class="modal-overlay" id="openLiveParticipantsModal"
+        onclick="if(event.target===this) closeOpenLiveParticipantsModal()">
+        <div class="modal-content openlive-participants-modal" role="dialog" aria-modal="true"
+            aria-labelledby="openlive-participants-modal-title">
+            <div class="modal-header">
+                <span class="modal-title" id="openlive-participants-modal-title">参与成员</span>
+                <button type="button" class="close-btn openlive-participants-modal-close"
+                    onclick="closeOpenLiveParticipantsModal()" aria-label="关闭">×</button>
+            </div>
+            <div class="modal-body openlive-participants-modal-body">
+                <div id="openlive-participants-modal-status" class="openlive-participants-modal-status">正在读取参与成员...</div>
+                <div id="openlive-participants-modal-list" class="openlive-participants-modal-list"></div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-overlay" id="flipDefaultSettingsModal"
+        onclick="if(event.target===this) closeFlipDefaultSettings()">
+        <div class="modal-content flip-default-settings-modal" role="dialog" aria-modal="true"
+            aria-labelledby="flip-default-settings-title">
+            <div class="modal-header">
+                <span class="modal-title" id="flip-default-settings-title">默认设置</span>
+                <span class="close-btn" onclick="closeFlipDefaultSettings()">×</span>
+            </div>
+            <div class="modal-body flip-default-settings-body">
+                <div class="flip-default-settings-field">
+                    <span>翻牌类型</span>
+                    <div class="flip-default-dropdown-wrapper">
+                        <input type="hidden" id="flip-default-answer-type" value="1">
+                        <input type="text" id="flip-default-answer-display" class="input-control"
+                            value="文字翻牌" readonly
+                            onclick="toggleFlipDefaultSettingsDropdown('answer')">
+                        <span class="flip-default-dropdown-arrow">▼</span>
+                        <div id="flip-default-answer-dropdown" class="suggestion-box">
+                            <div class="suggestion-item"
+                                onclick="selectFlipDefaultSetting('answer', '1', '文字翻牌')">文字翻牌</div>
+                            <div class="suggestion-item"
+                                onclick="selectFlipDefaultSetting('answer', '2', '语音翻牌')">语音翻牌</div>
+                            <div class="suggestion-item"
+                                onclick="selectFlipDefaultSetting('answer', '3', '视频翻牌')">视频翻牌</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="flip-default-settings-field">
+                    <span>公开设置</span>
+                    <div class="flip-default-dropdown-wrapper">
+                        <input type="hidden" id="flip-default-privacy-type" value="1">
+                        <input type="text" id="flip-default-privacy-display" class="input-control"
+                            value="公开（所有人可见）" readonly
+                            onclick="toggleFlipDefaultSettingsDropdown('privacy')">
+                        <span class="flip-default-dropdown-arrow">▼</span>
+                        <div id="flip-default-privacy-dropdown" class="suggestion-box">
+                            <div class="suggestion-item"
+                                onclick="selectFlipDefaultSetting('privacy', '1', '公开（所有人可见）')">公开（所有人可见）</div>
+                            <div class="suggestion-item"
+                                onclick="selectFlipDefaultSetting('privacy', '3', '匿名（所有人可见，隐藏 ID）')">匿名（所有人可见，隐藏 ID）</div>
+                            <div class="suggestion-item"
+                                onclick="selectFlipDefaultSetting('privacy', '2', '私密（仅自己和成员可见）')">私密（仅自己和成员可见）</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="flip-default-settings-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeFlipDefaultSettings()">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveFlipDefaultSettings()">保存</button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal-overlay" id="userModal">
         <div class="modal-content">
             <div class="modal-header">
@@ -3128,6 +3330,71 @@
             </div>
         </div>
     </div>
+    <div class="modal-overlay web-hidden" id="autoLiveRecordModal"
+        onclick="if(event.target===this) closeAutoLiveRecordModal()">
+        <div class="modal-content auto-live-record-modal">
+            <div class="modal-header">
+                <span class="modal-title">直播自动录制</span>
+                <span class="close-btn" onclick="closeAutoLiveRecordModal()">×</span>
+            </div>
+            <div class="modal-body auto-live-record-body">
+                <label class="auto-live-record-switch-row">
+                    <span>
+                        <b>启用自动录制</b>
+                        <small id="auto-live-record-status">尚未启用</small>
+                    </span>
+                    <input type="checkbox" id="auto-live-record-enabled"
+                        onchange="toggleAutoLiveRecording(this.checked)">
+                </label>
+
+                <div class="auto-live-record-search-wrap">
+                    <label for="auto-live-record-member-search">添加成员</label>
+                    <input type="text" id="auto-live-record-member-search" class="input-control"
+                        placeholder="成员名 / 拼音" autocomplete="off"
+                        oninput="searchAutoLiveRecordMembers(this.value)">
+                    <div id="auto-live-record-member-results" class="suggestion-box"></div>
+                </div>
+
+                <div class="auto-live-record-list-head">
+                    <b>自动录制名单</b>
+                </div>
+                <div id="auto-live-record-member-list" class="auto-live-record-member-list"></div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-overlay web-hidden" id="autoRoomRadioRecordModal"
+        onclick="if(event.target===this) closeAutoRoomRadioRecordModal()">
+        <div class="modal-content auto-live-record-modal">
+            <div class="modal-header">
+                <span class="modal-title">上麦自动录制</span>
+                <span class="close-btn" onclick="closeAutoRoomRadioRecordModal()">×</span>
+            </div>
+            <div class="modal-body auto-live-record-body">
+                <label class="auto-live-record-switch-row">
+                    <span>
+                        <b>启用自动录制</b>
+                        <small id="auto-room-radio-record-status">尚未启用</small>
+                    </span>
+                    <input type="checkbox" id="auto-room-radio-record-enabled"
+                        onchange="toggleAutoRoomRadioRecording(this.checked)">
+                </label>
+
+                <div class="auto-live-record-search-wrap">
+                    <label>添加成员</label>
+                    <input type="text" id="auto-room-radio-record-member-search" class="input-control"
+                        placeholder="成员名 / 拼音" autocomplete="off"
+                        oninput="searchAutoRoomRadioRecordMembers(this.value)"
+                        onfocus="searchAutoRoomRadioRecordMembers(this.value)">
+                    <div id="auto-room-radio-record-member-results" class="suggestion-box"></div>
+                </div>
+
+                <div class="auto-live-record-list-head">
+                    <b>自动录制名单</b>
+                </div>
+                <div id="auto-room-radio-record-member-list" class="auto-live-record-member-list"></div>
+            </div>
+        </div>
+    </div>
     <div class="modal-overlay" id="speechAnalysisModal">
         <div class="modal-content">
             <div class="modal-header">
@@ -3148,6 +3415,7 @@
     <script src="./src/renderer/official-media-feature.js"></script>
     <script src="./src/renderer/official-site-music-feature.js"></script>
     <script src="./src/renderer/openlive-feature.js"></script>
+    <script src="./src/renderer/performance-feature.js"></script>
     <script src="./src/renderer/media-utils-feature.js"></script>
     <script src="./src/renderer/community-feature.js"></script>
     <script src="./src/renderer/member-lookup-feature.js"></script>
@@ -3176,6 +3444,7 @@
     <script src="./src/renderer/private-message-formatters-feature.js"></script>
     <script src="./src/renderer/private-messages-feature.js"></script>
     <script src="./src/renderer/app-legacy.js"></script>
+    <script src="./src/web/web-navigation.js?v=__YAYA_BUILD_VERSION__"></script>
     <script src="./src/renderer/invoice-feature.js"></script>
     <script type="module" src="./src/renderer/sdk-init.js"></script>
     <script src="./src/renderer/fetch-legacy.js"></script>

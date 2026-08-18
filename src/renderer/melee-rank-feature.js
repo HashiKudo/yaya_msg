@@ -1,4 +1,5 @@
 (function () {
+    const { escapeHtml } = window.YayaRendererUtils;
     const MEMBER_DATA_URL = 'https://data.gnz.hk/members.json';
     const EARLIEST_KNOWN_WEEK_RANK_ID = 17;
     const WEEK_QUERY_CONCURRENCY = 6;
@@ -14,16 +15,6 @@
 
     function getEl(id) {
         return document.getElementById(id);
-    }
-
-    function escapeHtml(value) {
-        return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#39;'
-        }[char]));
     }
 
     function normalize(value) {

@@ -10,6 +10,27 @@ scripts/
 tools/
 .agents/
 .npmrc
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated app assets
+/src/renderer/database/runtime.js
+/src/renderer/database/tailwind.css
+/src/renderer/vendor/
+
+# Local QA artifacts
+/design-qa.md
+/message-layout-*.png
+/screenshots/
+/playwright-report/
+/test-results/
+*.har
+*.trace.zip
 
 *.log
 wrangler-*.log

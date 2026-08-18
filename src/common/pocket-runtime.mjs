@@ -1,963 +1,35 @@
+import pocketChannelConfig from './pocket-channel-config.js';
+import errorUtils from './error-utils.js';
+
+const { POCKET_CHANNEL_METHODS } = pocketChannelConfig;
+const { reportIgnoredError } = errorUtils;
+
 const APP_VERSION = '7.0.41';
 const APP_BUILD = '24011601';
-const DEFAULT_API_BACKEND = 'https://api.gnz.hk';
-const DESKTOP_DOWNLOAD_FILE = 'yaya_msg-v2.9-win.zip';
 const MEET48_APP_VERSION = '2.0.3';
 const MEET48_APP_BUILD = '2602062';
 const MEET48_BUNDLE_ID = 'com.dapp.meet48';
 const MEET48_APP_ID = '2e63a31eac9d056755b0f83b89ef6674';
-const R2_MUSIC_LIST_CACHE_TTL_SECONDS = 6 * 60 * 60;
-const R2_MUSIC_LIST_CACHE_TTL_MS = R2_MUSIC_LIST_CACHE_TTL_SECONDS * 1000;
+
 let deviceId = '';
-let r2MusicListCache = null;
 const live48QrLoginSessions = new Map();
-
-const pocketChannels = {
-    'login-send-sms': loginSendSms,
-    'login-by-code': loginByCode,
-    'login-check-token': loginCheckToken,
-    'login-create-qr': loginCreateQr,
-    'login-poll-qr': loginPollQr,
-    'login-cancel-qr': loginCancelQr,
-    'login-qr-status': loginQrStatus,
-    'pocket-checkin': checkIn,
-    'switch-big-small': switchBigSmall,
-    'fetch-room-messages': fetchRoomMessages,
-    'fetch-private-message-list': fetchPrivateMessageList,
-    'fetch-private-message-info': fetchPrivateMessageInfo,
-    'send-private-message-reply': sendPrivateMessageReply,
-    'fetch-flip-list': fetchFlipList,
-    'fetch-star-archives': fetchStarArchives,
-    'fetch-star-history': fetchStarHistory,
-    'fetch-open-live': fetchOpenLive,
-    'fetch-open-live-one': fetchOpenLiveOne,
-    'fetch-open-live-public-list': fetchOpenLivePublicList,
-    'fetch-meet48-live-list': fetchMeet48LiveList,
-    'fetch-meet48-live-one': fetchMeet48LiveOne,
-    'fetch-open-live-participants': fetchOpenLiveParticipants,
-    'fetch-flip-prices': fetchFlipPrices,
-    'send-flip-question': sendFlipQuestion,
-    'operate-flip-question': operateFlipQuestion,
-    'fetch-member-photos': fetchMemberPhotos,
-    'fetch-user-money': fetchUserMoney,
-    'fetch-invoice-tips': fetchInvoiceTips,
-    'fetch-invoice-config': fetchInvoiceConfig,
-    'fetch-invoice-order-list': fetchInvoiceOrderList,
-    'apply-electronic-invoice': applyElectronicInvoice,
-    'fetch-checkin-today': fetchCheckinToday,
-    'fetch-unread-message-count': fetchUnreadMessageCount,
-    'edit-user-info': editUserInfo,
-    'upload-user-avatar': uploadUserAvatar,
-    'upload-private-message-image': uploadPrivateMessageImage,
-    'fetch-user-rename-count': fetchUserRenameCount,
-    'fetch-user-picture-frames': fetchUserPictureFrames,
-    'fetch-client-group-team-star-update': fetchClientGroupTeamStarUpdate,
-    'fetch-star-server-map': fetchStarServerMap,
-    'fetch-media-collection-total-count': fetchMediaCollectionTotalCount,
-    'send-live-gift': sendLiveGift,
-    'fetch-gift-list': fetchGiftList,
-    'get-nim-login-info': getNimLoginInfo,
-    'fetch-room-album': fetchRoomAlbum,
-    'fetch-room-radio': fetchRoomRadio,
-    'fetch-seine-server-detail': fetchSeineServerDetail,
-    'fetch-live-rank': fetchLiveRank,
-    'fetch-friends-ids': fetchFriendsIds,
-    'fetch-last-messages': fetchLastMessages,
-    'follow-member': followMember,
-    'unfollow-member': unfollowMember,
-    'fetch-live-list': fetchLiveList,
-    'fetch-live-one': fetchLiveOne,
-    'fetch-live-result': fetchLiveResult,
-    'fetch-trip-list': fetchTripList,
-    'fetch-album-list': fetchAlbumList,
-    'fetch-melee-week-rank': fetchMeleeWeekRank,
-    'fetch-melee-rank-page': fetchMeleeRankPage,
-    'fetch-melee-year-rank-page': fetchMeleeYearRankPage,
-    'fetch-person-melee-rank-page': fetchPersonMeleeRankPage,
-    'fetch-post-image-list': fetchPostImageList,
-    'fetch-post-video-list': fetchPostVideoList,
-    'fetch-post-timeline-home': fetchPostTimelineHome,
-    'fetch-post-timeline-home-new': fetchPostTimelineHomeNew,
-    'fetch-chatroom-homeowner-messages': fetchChatroomHomeownerMessages,
-    'fetch-member-weibo': fetchMemberWeiboMessages,
-    'fetch-member-dynamic': fetchMemberDynamicMessages,
-    'fetch-conversation-page': fetchConversationPage,
-    'fetch-user-home-info': fetchUserHomeInfo,
-    'fetch-flip-custom-index-v1': fetchFlipCustomIndexV1,
-    'fetch-area48-newest': fetchArea48Newest,
-    'fetch-area48-recommend': fetchArea48Recommend,
-    'fetch-area48-topic-info': fetchArea48TopicInfo,
-    'fetch-area48-topic-hot-posts': fetchArea48TopicHotPosts,
-    'fetch-area48-topic-newest-posts': fetchArea48TopicNewestPosts,
-    'fetch-area48-comments': fetchArea48Comments,
-    'fetch-area48-post-details': fetchArea48PostDetails,
-    'add-area48-comment': addArea48Comment,
-    'delete-area48-comment': deleteArea48Comment,
-    'create-area48-post': createArea48Post,
-    'fetch-pocket-mask-words': fetchPocketMaskWords,
-    'score-vote-login': loginElectionVote,
-    'score-vote-status': fetchElectionVoteStatus,
-    'score-act-status': fetchElectionActStatus,
-    'score-userinfo': fetchElectionUserInfo,
-    'score-vote-history': fetchElectionVoteHistory,
-    'score-code-act-history': fetchElectionCodeActHistory,
-    'score-check-sg-bind': fetchElectionSgBindStatus,
-    'score-bind-sg': bindElectionSg,
-    'score-rare-treasure-list': fetchPageantryRareTreasures,
-    'score-buy-star-list': fetchPageantryBuyStarList,
-    'fetch-pageantry-honor-card-info': fetchPageantryHonorCardInfo,
-    'fetch-score-official-bundle': fetchScoreOfficialBundle,
-    'score-official-action': runScoreOfficialAction
+const runtimeHooks = {
+    saveLive48Login: null,
+    getLive48LoginStatus: null
 };
 
-const invoiceChannels = new Set([
-    'fetch-invoice-tips',
-    'fetch-invoice-config',
-    'fetch-invoice-order-list',
-    'apply-electronic-invoice'
-]);
-
-export default {
-    async fetch(request, env) {
-        const url = new URL(request.url);
-        if (url.protocol === 'http:' && !url.pathname.startsWith('/api/')) {
-            url.protocol = 'https:';
-            return Response.redirect(url.toString(), 301);
-        }
-        if (url.pathname.length > 1 && url.pathname.endsWith('/')) {
-            url.pathname = url.pathname.replace(/\/+$/, '');
-            return Response.redirect(url.toString(), 301);
-        }
-
-        if (url.pathname === '/api/r2-music') {
-            return handleR2MusicListRequest(request, env, url);
-        }
-
-        if (url.pathname === '/r2-music' || url.pathname.startsWith('/r2-music/')) {
-            return handleR2MusicObjectRequest(request, env, url);
-        }
-
-        if (url.pathname === '/api/ipc') {
-            const apiBackend = getApiBackend(env);
-            if (apiBackend && await shouldProxyIpcToBackend(request)) {
-                return proxyIpcRequest(request, env, apiBackend);
-            }
-            return handleIpc(request, env);
-        }
-
-        const apiBackend = getApiBackend(env);
-        if (apiBackend && isPocketBackendApiPath(url.pathname)) {
-            return proxyApiRequest(request, apiBackend);
-        }
-
-        if (apiBackend && url.pathname.startsWith('/api/')) {
-            return proxyApiRequest(request, apiBackend);
-        }
-
-        if (url.pathname === '/web-media-proxy') {
-            return handleMediaProxy(request);
-        }
-
-        if (url.pathname === '/report' || url.pathname.startsWith('/report/')) {
-            return handleReportRequest(request, env, url);
-        }
-
-        if (url.pathname === '/downloads' || url.pathname.startsWith('/downloads/')) {
-            return handleDownloadRequest(request, env, url);
-        }
-
-        if (url.pathname === '/api/health') {
-            return json({ success: true, runtime: 'cloudflare-workers' });
-        }
-
-        if (url.pathname === '/api/pocket') {
-            return handlePocketProxy(request);
-        }
-
-        if (url.pathname === '/api/text-proxy') {
-            return handleTextProxy(request);
-        }
-
-        return withWebRuntimeHeaders(await fetchWebAsset(request, env, url), url);
-    }
-};
-
-async function fetchWebAsset(request, env, url) {
-    const nestedAssetResponse = await fetchNestedRouteAsset(request, env, url);
-    if (nestedAssetResponse) return nestedAssetResponse;
-
-    const assetResponse = await env.ASSETS.fetch(request);
-    if (assetResponse.status !== 404) return assetResponse;
-
-    const path = url.pathname || '/';
-    const looksLikeFile = /\/[^/]+\.[^/]+$/.test(path);
-    if (looksLikeFile) return assetResponse;
-
-    if (isWebAppRoute(url.pathname)) {
-        return fetchIndexAsset(request, env);
-    }
-
-    return fetchIndexAsset(request, env);
-}
-
-async function handleReportRequest(request, env, url) {
-    if (request.method !== 'GET' && request.method !== 'HEAD') {
-        return textResponse('Method Not Allowed', 405);
-    }
-    if (!env.YAYA_DOWNLOADS) {
-        return textResponse('Report storage is not configured', 500);
-    }
-
-    const requestedName = decodeURIComponent(url.pathname.replace(/^\/report\/?/, '') || '')
-        .replace(/^\/+/, '');
-    if (!requestedName) {
-        return textResponse('Report not found', 404);
-    }
-    if (requestedName.includes('..') || requestedName.includes('\\')) {
-        return textResponse('Invalid report path', 400);
-    }
-
-    const fileName = requestedName.endsWith('.html') ? requestedName : `${requestedName}.html`;
-    const object = await env.YAYA_DOWNLOADS.get(`reports/${fileName}`);
-    if (!object) {
-        return textResponse('Report not found', 404);
-    }
-
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set('etag', object.httpEtag);
-    headers.set('Content-Type', 'text/html;charset=utf-8');
-    headers.set('Content-Disposition', `inline; filename="${encodeURIComponent(fileName.split('/').pop() || 'report.html')}"`);
-    headers.set('Cache-Control', 'no-cache');
-    headers.set('X-Content-Type-Options', 'nosniff');
-
-    return new Response(request.method === 'HEAD' ? null : object.body, { headers });
-}
-
-function fetchIndexAsset(request, env) {
-    const indexUrl = new URL(request.url);
-    indexUrl.pathname = '/';
-    indexUrl.search = '';
-    return env.ASSETS.fetch(new Request(indexUrl, request));
-}
-
-function isWebAppRoute(pathname) {
-    const slug = decodeURIComponent(String(pathname || '/'))
-        .replace(/^\/+|\/+$/g, '')
-        .split('/')[0];
-    if (!slug || slug === 'index.html') return true;
-
-    return getWebAppRouteSlugs().has(slug);
-}
-
-function getWebAppRouteSlugs() {
-    return new Set([
-        'home',
-        'messages',
-        'fetch',
-        'live',
-        'vod',
-        'meet48-live',
-        'meet48-vod',
-        'replay',
-        'room',
-        'followed-rooms',
-        'message',
-        'img',
-        'dynamic',
-        'weibo',
-        'openlive',
-        'send-flip',
-        'flip',
-        'nft',
-        'video',
-        'music',
-        'official-site-music',
-        'audio',
-        'profile',
-        'database',
-        'invoice',
-        'melee',
-        'trip',
-        'login',
-        'settings',
-        'voice'
-    ]);
-}
-
-async function fetchNestedRouteAsset(request, env, url) {
-    const parts = decodeURIComponent(String(url.pathname || '/'))
-        .replace(/^\/+|\/+$/g, '')
-        .split('/')
-        .filter(Boolean);
-    if (parts.length < 2 || !getWebAppRouteSlugs().has(parts[0])) return null;
-
-    const nestedAssetPath = `/${parts.slice(1).join('/')}`;
-    const looksLikeFile = /\/[^/]+\.[^/]+$/.test(nestedAssetPath);
-    const looksLikeSourceAsset = nestedAssetPath.startsWith('/src/');
-    if (!looksLikeFile && !looksLikeSourceAsset) return null;
-
-    const assetUrl = new URL(request.url);
-    assetUrl.pathname = nestedAssetPath;
-    const response = await env.ASSETS.fetch(new Request(assetUrl, request));
-    return response.status === 404 ? null : response;
-}
-
-function getApiBackend(env) {
-    if (env && Object.prototype.hasOwnProperty.call(env, 'YAYA_API_BACKEND')) {
-        const configured = String(env.YAYA_API_BACKEND || '').trim();
-        if (!configured || configured === 'local') return '';
-        return configured.replace(/\/+$/, '');
-    }
-    const value = String(DEFAULT_API_BACKEND || '').trim().replace(/\/+$/, '');
-    return value || '';
-}
-
-function isPocketBackendApiPath(pathname) {
-    return pathname === '/api/pocket'
-        || pathname === '/api/text-proxy';
-}
-
-async function shouldProxyIpcToBackend(request) {
-    if (request.method !== 'POST') return false;
-    try {
-        const body = await request.clone().json();
-        return new Set([
-            'login-send-sms',
-            'login-by-code',
-            'login-check-token',
-            'fetch-trip-list',
-            'fetch-invoice-tips',
-            'fetch-invoice-config',
-            'fetch-invoice-order-list',
-            'apply-electronic-invoice'
-        ]).has(String(body?.channel || ''));
-    } catch (error) {
-        return false;
-    }
-}
-
-async function proxyIpcRequest(request, env, apiBackend) {
-    let channel = '';
-    try {
-        const body = await request.clone().json();
-        channel = String(body?.channel || '');
-    } catch (error) {
-    }
-
-    const response = await proxyApiRequest(request.clone(), apiBackend);
-    if (!invoiceChannels.has(channel)) {
-        return response;
-    }
-
-    const text = await response.clone().text();
-    let data = null;
-    try {
-        data = text ? JSON.parse(text) : null;
-    } catch (error) {
-        return response;
-    }
-
-    const msg = String(data?.msg || data?.message || '');
-    if (!data?.success && msg.includes(`网页版暂不支持: ${channel}`)) {
-        return json({
-            success: false,
-            msg: 'api.gnz.hk 后端还是旧版本，暂不支持发票接口。请更新并重启后端 server/yaya-api.mjs。'
-        }, 502);
-    }
-    return response;
-}
-
-function proxyApiRequest(request, apiBackend) {
-    const sourceUrl = new URL(request.url);
-    const targetUrl = new URL(sourceUrl.pathname + sourceUrl.search, apiBackend);
-    const headers = new Headers(request.headers);
-    headers.delete('host');
-
-    const init = {
-        method: request.method,
-        headers,
-        redirect: 'manual'
-    };
-    if (request.method !== 'GET' && request.method !== 'HEAD') {
-        init.body = request.body;
-    }
-    return fetch(targetUrl.toString(), init).then(async (response) => {
-        const contentType = response.headers.get('content-type') || '';
-        if (!contentType.includes('text/html')) {
-            return response;
-        }
-
-        const text = await response.text();
-        if (!/^\s*</.test(text || '')) {
-            return new Response(text, {
-                status: response.status,
-                statusText: response.statusText,
-                headers: response.headers
-            });
-        }
-
-        return json({
-            success: false,
-            msg: 'API 后端被 Cloudflare 浏览器校验拦截，请放行 api.gnz.hk/api/* 或配置不受校验的 YAYA_API_BACKEND。'
-        }, 502);
-    });
-}
-
-async function handleDownloadRequest(request, env, url) {
-    if (request.method !== 'GET' && request.method !== 'HEAD') {
-        return json({ success: false, msg: 'Method Not Allowed' }, 405);
-    }
-    if (!env.YAYA_DOWNLOADS) {
-        return new Response('Download storage is not configured', { status: 500 });
-    }
-
-    const requestedKey = decodeURIComponent(url.pathname.replace(/^\/downloads\/?/, '') || DESKTOP_DOWNLOAD_FILE)
-        .replace(/^\/+/, '');
-    if (!requestedKey || requestedKey.includes('..') || requestedKey.includes('\\')) {
-        return new Response('Invalid download path', { status: 400 });
-    }
-
-    const resolvedKey = requestedKey;
-    const rangeHeader = request.headers.get('range');
-    const getOptions = rangeHeader ? { range: request.headers } : undefined;
-    const object = await env.YAYA_DOWNLOADS.get(resolvedKey, getOptions);
-    if (!object) {
-        return new Response('File not found', { status: 404 });
-    }
-
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set('etag', object.httpEtag);
-    headers.set('Accept-Ranges', 'bytes');
-    headers.set('Cache-Control', 'public, max-age=3600');
-    headers.set('Content-Type', headers.get('Content-Type') || getDownloadContentType(resolvedKey));
-    headers.set('Content-Disposition', `attachment; filename="${encodeURIComponent(resolvedKey.split('/').pop() || DESKTOP_DOWNLOAD_FILE)}"`);
-    const isRangeResponse = Boolean(rangeHeader && object.range);
-    if (isRangeResponse) {
-        headers.set('Content-Range', `bytes ${object.range.offset}-${object.range.end ?? object.size - 1}/${object.size}`);
-        headers.set('Content-Length', String((object.range.end ?? object.size - 1) - object.range.offset + 1));
-    } else {
-        headers.set('Content-Length', String(object.size));
-    }
-
-    return new Response(request.method === 'HEAD' ? null : object.body, {
-        status: isRangeResponse ? 206 : 200,
-        headers
-    });
-}
-
-function getDownloadContentType(key) {
-    const lowered = String(key || '').toLowerCase();
-    if (lowered.endsWith('.tar.gz') || lowered.endsWith('.tgz')) return 'application/gzip';
-    if (lowered.endsWith('.zip')) return 'application/zip';
-    if (lowered.endsWith('.exe')) return 'application/vnd.microsoft.portable-executable';
-    return 'application/octet-stream';
-}
-
-const R2_MUSIC_PREFIXES = ['SNH48/', 'GNZ48/', 'BEJ48/', 'CKG48/', 'CGT48/', 'SHY48/', 'TSH48/'];
-const R2_AUDIO_EXTENSIONS = new Set(['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'opus']);
-const R2_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp']);
-const R2_MUSIC_IMAGE_CACHE_SECONDS = 30 * 24 * 60 * 60;
-const R2_MUSIC_AUDIO_CACHE_SECONDS = 7 * 24 * 60 * 60;
-
-function getR2MusicCorsHeaders(extraHeaders = {}) {
-    const headers = new Headers(extraHeaders);
-    headers.set('Access-Control-Allow-Origin', '*');
-    headers.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-    headers.set('Access-Control-Allow-Headers', 'Range, Cache-Control, Content-Type');
-    headers.set('Access-Control-Expose-Headers', 'X-Yaya-Cache, Content-Length, Content-Range, Accept-Ranges, ETag, Content-Type');
-    return headers;
-}
-
-function r2MusicOptionsResponse() {
-    return new Response(null, {
-        status: 204,
-        headers: getR2MusicCorsHeaders({ 'Cache-Control': 'no-store' })
-    });
-}
-
-function getR2ObjectExtension(key) {
-    const file = String(key || '').split('/').pop() || '';
-    const match = file.match(/\.([a-z0-9]+)$/i);
-    return match ? match[1].toLowerCase() : '';
-}
-
-function isAllowedR2MusicKey(key) {
-    const normalizedKey = String(key || '').replace(/^\/+/, '');
-    return normalizedKey
-        && !normalizedKey.includes('..')
-        && !normalizedKey.includes('\\')
-        && R2_MUSIC_PREFIXES.some((prefix) => normalizedKey.startsWith(prefix));
-}
-
-function getR2MusicContentType(key, fallback = '') {
-    const ext = getR2ObjectExtension(key);
-    if (fallback) return fallback;
-    if (ext === 'mp3') return 'audio/mpeg';
-    if (ext === 'm4a' || ext === 'aac') return 'audio/mp4';
-    if (ext === 'wav') return 'audio/wav';
-    if (ext === 'flac') return 'audio/flac';
-    if (ext === 'ogg' || ext === 'opus') return 'audio/ogg';
-    if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
-    if (ext === 'png') return 'image/png';
-    if (ext === 'webp') return 'image/webp';
-    return 'application/octet-stream';
-}
-
-function encodeR2MusicPath(key) {
-    return String(key || '').split('/').map(encodeURIComponent).join('/');
-}
-
-function parseR2MusicTitle(key) {
-    const file = String(key || '').split('/').pop() || '';
-    return file
-        .replace(/\.[a-z0-9]+$/i, '')
-        .replace(/^\s*\d{1,3}\s*[._\-、\]\)]\s*/u, '')
-        .replace(/^\s*[\[\(（]\s*\d{1,3}\s*[\]\)）]\s*/u, '')
-        .replace(/_\d{1,3}$/u, '')
-        .trim() || file;
-}
-
-function getR2MusicAlbum(key) {
-    const parts = String(key || '').split('/').filter(Boolean);
-    if (parts.length <= 2) return '';
-    return parts.slice(1, -1).join(' / ');
-}
-
-function getR2MusicGroupInfo(key) {
-    const folder = String(key || '').split('/').filter(Boolean)[0] || '';
-    const label = folder || '公演';
-    return {
-        groupLabel: label,
-        groupKey: label.replace(/48$/i, '').toUpperCase() || label.toUpperCase()
-    };
-}
-
-async function listR2MusicObjects(env) {
-    const objects = [];
-    for (const prefix of R2_MUSIC_PREFIXES) {
-        let cursor = undefined;
-        do {
-            const listed = await env.YAYA_DOWNLOADS.list({ prefix, cursor, limit: 1000 });
-            objects.push(...(listed.objects || []));
-            cursor = listed.truncated ? listed.cursor : undefined;
-        } while (cursor);
-    }
-    return objects;
-}
-
-async function handleR2MusicListRequest(request, env) {
-    if (request.method === 'OPTIONS') {
-        return r2MusicOptionsResponse();
-    }
-    if (request.method !== 'GET' && request.method !== 'HEAD') {
-        return new Response(JSON.stringify({ success: false, msg: 'Method Not Allowed', tracks: [] }), {
-            status: 405,
-            headers: getR2MusicCorsHeaders({
-                'Content-Type': 'application/json;charset=utf-8',
-                'Cache-Control': 'no-store'
-            })
-        });
-    }
-    if (!env.YAYA_DOWNLOADS || typeof env.YAYA_DOWNLOADS.list !== 'function') {
-        return new Response(JSON.stringify({ success: false, msg: 'Music storage is not configured', tracks: [] }), {
-            status: 500,
-            headers: getR2MusicCorsHeaders({
-                'Content-Type': 'application/json;charset=utf-8',
-                'Cache-Control': 'no-store'
-            })
-        });
-    }
-
-    const bypassCache = /\bno-cache\b/i.test(request.headers.get('Cache-Control') || '');
-    const now = Date.now();
-    if (!bypassCache && r2MusicListCache && r2MusicListCache.expiresAt > now) {
-        return new Response(r2MusicListCache.body, {
-            headers: getR2MusicCorsHeaders({
-                'Content-Type': 'application/json;charset=utf-8',
-                'Cache-Control': `public, max-age=${R2_MUSIC_LIST_CACHE_TTL_SECONDS}`,
-                'X-Yaya-Cache': 'HIT'
-            })
-        });
-    }
-    const edgeCache = typeof caches !== 'undefined' ? caches.default : null;
-    const edgeCacheKey = new Request(new URL('/api/r2-music-cache-v1', request.url).toString(), { method: 'GET' });
-    if (!bypassCache && edgeCache) {
-        const cached = await edgeCache.match(edgeCacheKey);
-        if (cached) {
-            const body = await cached.text();
-            r2MusicListCache = {
-                body,
-                expiresAt: now + R2_MUSIC_LIST_CACHE_TTL_MS
-            };
-            return new Response(body, {
-                headers: getR2MusicCorsHeaders({
-                    'Content-Type': 'application/json;charset=utf-8',
-                    'Cache-Control': `public, max-age=${R2_MUSIC_LIST_CACHE_TTL_SECONDS}`,
-                    'X-Yaya-Cache': 'HIT'
-                })
-            });
-        }
-    }
-
-    const objects = await listR2MusicObjects(env);
-    const imageByFolder = new Map();
-    objects.forEach((object) => {
-        const key = object.key || '';
-        const ext = getR2ObjectExtension(key);
-        if (!R2_IMAGE_EXTENSIONS.has(ext)) return;
-        const folder = key.split('/').slice(0, -1).join('/');
-        const current = imageByFolder.get(folder);
-        const file = key.split('/').pop() || '';
-        const isPreferred = /^(cover|folder|front|封面)\./i.test(file);
-        if (!current || isPreferred) imageByFolder.set(folder, key);
-    });
-
-    const tracks = objects
-        .filter((object) => R2_AUDIO_EXTENSIONS.has(getR2ObjectExtension(object.key || '')))
-        .map((object, index) => {
-            const key = object.key || '';
-            const folder = key.split('/').slice(0, -1).join('/');
-            const group = getR2MusicGroupInfo(key);
-            const coverKey = imageByFolder.get(folder) || imageByFolder.get(key.split('/')[0]) || '';
-            return {
-                id: `R2-${key}`,
-                key,
-                title: parseR2MusicTitle(key),
-                album: getR2MusicAlbum(key),
-                groupKey: group.groupKey,
-                groupLabel: group.groupLabel,
-                mp3: `/r2-music/${encodeR2MusicPath(key)}`,
-                coverUrl: coverKey ? `/r2-music/${encodeR2MusicPath(coverKey)}` : '',
-                size: object.size || 0,
-                uploaded: object.uploaded ? object.uploaded.toISOString() : '',
-                sourceIndex: 100000 + index,
-                source: 'r2-performance'
-            };
-        });
-
-    const body = JSON.stringify({ success: true, tracks });
-    r2MusicListCache = {
-        body,
-        expiresAt: now + R2_MUSIC_LIST_CACHE_TTL_MS
-    };
-    const response = new Response(body, {
-        headers: getR2MusicCorsHeaders({
-            'Content-Type': 'application/json;charset=utf-8',
-            'Cache-Control': `public, max-age=${R2_MUSIC_LIST_CACHE_TTL_SECONDS}`,
-            'X-Yaya-Cache': 'MISS'
-        })
-    });
-    if (edgeCache) {
-        await edgeCache.put(edgeCacheKey, response.clone());
-    }
-    return response;
-}
-
-async function handleR2MusicObjectRequest(request, env, url) {
-    if (request.method === 'OPTIONS') {
-        return r2MusicOptionsResponse();
-    }
-    if (request.method !== 'GET' && request.method !== 'HEAD') {
-        return new Response('Method Not Allowed', {
-            status: 405,
-            headers: getR2MusicCorsHeaders({
-                'Content-Type': 'text/plain;charset=utf-8',
-                'Cache-Control': 'no-store'
-            })
-        });
-    }
-    if (!env.YAYA_DOWNLOADS) {
-        return new Response('Music storage is not configured', {
-            status: 500,
-            headers: getR2MusicCorsHeaders({
-                'Content-Type': 'text/plain;charset=utf-8',
-                'Cache-Control': 'no-store'
-            })
-        });
-    }
-
-    const key = decodeURIComponent(url.pathname.replace(/^\/r2-music\/?/, '')).replace(/^\/+/, '');
-    const ext = getR2ObjectExtension(key);
-    if (!isAllowedR2MusicKey(key) || (!R2_AUDIO_EXTENSIONS.has(ext) && !R2_IMAGE_EXTENSIONS.has(ext))) {
-        return new Response('Invalid music path', {
-            status: 400,
-            headers: getR2MusicCorsHeaders({
-                'Content-Type': 'text/plain;charset=utf-8',
-                'Cache-Control': 'no-store'
-            })
-        });
-    }
-
-    const object = await env.YAYA_DOWNLOADS.get(key, { range: request.headers });
-    if (!object) {
-        return new Response('File not found', {
-            status: 404,
-            headers: getR2MusicCorsHeaders({
-                'Content-Type': 'text/plain;charset=utf-8',
-                'Cache-Control': 'no-store'
-            })
-        });
-    }
-
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set('etag', object.httpEtag);
-    headers.set('Accept-Ranges', 'bytes');
-    headers.set('Cache-Control', R2_IMAGE_EXTENSIONS.has(ext)
-        ? `public, max-age=${R2_MUSIC_IMAGE_CACHE_SECONDS}, immutable`
-        : `public, max-age=${R2_MUSIC_AUDIO_CACHE_SECONDS}`);
-    headers.set('Content-Type', getR2MusicContentType(key, headers.get('Content-Type') || ''));
-    headers.set('Content-Disposition', `inline; filename="${encodeURIComponent(key.split('/').pop() || 'music')}"`);
-    if (object.range) {
-        const offset = Number(object.range.offset) || 0;
-        const length = Number(object.range.length);
-        const end = Number.isFinite(Number(object.range.end))
-            ? Number(object.range.end)
-            : (Number.isFinite(length) && length > 0 ? offset + length - 1 : object.size - 1);
-        headers.set('Content-Range', `bytes ${offset}-${Math.min(end, object.size - 1)}/${object.size}`);
-    }
-
-    return new Response(request.method === 'HEAD' ? null : object.body, {
-        status: object.range ? 206 : 200,
-        headers: getR2MusicCorsHeaders(headers)
-    });
-}
-
-function withWebRuntimeHeaders(response, url = null) {
-    const headers = new Headers(response.headers);
-    headers.set('Cross-Origin-Opener-Policy', 'same-origin');
-    headers.set('Cross-Origin-Embedder-Policy', 'credentialless');
-    headers.set('Cross-Origin-Resource-Policy', 'cross-origin');
-    if (url) {
-        const contentType = headers.get('content-type') || '';
-        if (url.searchParams.has('v')) {
-            headers.set('Cache-Control', 'public, max-age=31536000, immutable');
-        } else if (contentType.includes('text/html')) {
-            headers.set('Cache-Control', 'no-cache');
-        } else if (/\.(?:png|ico|svg|webp|wasm)$/i.test(url.pathname)) {
-            headers.set('Cache-Control', 'public, max-age=86400');
-        }
-    }
-    return new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers
-    });
-}
-
-async function handleIpc(request, env) {
-    if (request.method !== 'POST') {
-        return json({ success: false, msg: 'Method Not Allowed' }, 405);
-    }
-
-    try {
-        const body = await request.json();
-        const channel = String(body?.channel || '');
-        const handler = pocketChannels[channel];
-        if (!handler) {
-            return json({ success: false, msg: `网页版暂不支持: ${channel}` }, 404);
-        }
-
-        const result = await handler(body?.payload || {}, env);
-        return json(result);
-    } catch (error) {
-        return json({ success: false, msg: error?.message || 'API 错误' }, 500);
-    }
-}
-
-async function handlePocketProxy(request) {
-    if (request.method !== 'POST') {
-        return json({ status: 405, message: 'Method Not Allowed', content: {} }, 405);
-    }
-
-    try {
-        const body = await request.json();
-        const apiPath = normalizePocketPath(body?.path);
-        const postData = normalizePostData(body?.postData);
-        const response = await fetch(`https://pocketapi.48.cn${apiPath}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json;charset=utf-8',
-                'User-Agent': 'PocketFans201807/7.1.35 (iPhone; iOS 16.3; Scale/3.00)',
-                'Accept-Language': 'zh-Hans-CN;q=1',
-                appInfo: JSON.stringify({
-                    vendor: 'apple',
-                    deviceId: createDeviceId(),
-                    appVersion: '7.1.35',
-                    appBuild: '25101021',
-                    osVersion: '16.3.0',
-                    osType: 'ios',
-                    deviceName: 'iPhone 14 Pro',
-                    os: 'ios'
-                })
-            },
-            body: JSON.stringify(postData)
-        });
-
-        const text = await response.text();
-        return new Response(text || '{"status":500,"content":{}}', {
-            status: response.ok ? 200 : response.status,
-            headers: {
-                'Content-Type': 'application/json;charset=utf-8',
-                'Cache-Control': 'no-store'
-            }
-        });
-    } catch (error) {
-        return json({ status: 500, message: error?.message || 'Pocket API 请求失败', content: {} }, 500);
-    }
-}
-
-async function handleTextProxy(request) {
-    if (request.method !== 'GET') {
-        return textResponse('Method Not Allowed', 405);
-    }
-
-    const requestUrl = new URL(request.url);
-    const targetValue = requestUrl.searchParams.get('url') || '';
-
-    let targetUrl;
-    try {
-        targetUrl = new URL(targetValue);
-    } catch (error) {
-        return textResponse('Bad Request', 400);
-    }
-
-    const allowedHosts = new Set([
-        'source.48.cn',
-        'source2.48.cn'
-    ]);
-
-    if (targetUrl.protocol !== 'https:' || !allowedHosts.has(targetUrl.hostname)) {
-        return textResponse('Forbidden', 403);
-    }
-
-    try {
-        const response = await fetch(targetUrl.toString(), {
-            headers: {
-                'User-Agent': 'PocketFans201807/7.1.35 (iPhone; iOS 16.3; Scale/3.00)',
-                'Accept': 'text/plain,*/*'
-            }
-        });
-
-        const text = await response.text();
-        return new Response(text, {
-            status: response.status,
-            headers: {
-                'Content-Type': 'text/plain;charset=utf-8',
-                'Cache-Control': 'no-store'
-            }
-        });
-    } catch (error) {
-        return textResponse(error?.message || 'Proxy Error', 502);
-    }
-}
-
-async function handleMediaProxy(request) {
-    if (request.method !== 'GET') {
-        return textResponse('Method Not Allowed', 405);
-    }
-
-    const requestUrl = new URL(request.url);
-    const targetValue = requestUrl.searchParams.get('url') || '';
-    let targetUrl;
-    try {
-        targetUrl = new URL(targetValue);
-    } catch (error) {
-        return textResponse('Bad Request', 400);
-    }
-
-    const hostname = targetUrl.hostname.toLowerCase();
-    const isAllowedHost = hostname === 'source.48.cn'
-        || hostname === 'source2.48.cn'
-        || hostname.endsWith('.48.cn');
-    if (!['http:', 'https:'].includes(targetUrl.protocol) || !isAllowedHost) {
-        return textResponse('Forbidden', 403);
-    }
-
-    const headers = {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_3 like Mac OS X) AppleWebKit/605.1.15 PocketFans201807/7.1.35',
-        'Accept': '*/*',
-        'Referer': 'https://h5.48.cn/'
-    };
-    const range = request.headers.get('range');
-    if (range) headers.Range = range;
-
-    try {
-        const response = await fetch(targetUrl.toString(), { headers });
-        const responseHeaders = new Headers();
-        const passthroughHeaders = [
-            'content-type',
-            'content-length',
-            'content-range',
-            'accept-ranges',
-            'last-modified',
-            'etag'
-        ];
-        for (const key of passthroughHeaders) {
-            const value = response.headers.get(key);
-            if (value) responseHeaders.set(key, value);
-        }
-        if (!responseHeaders.has('content-type')) {
-            responseHeaders.set('content-type', 'application/octet-stream');
-        }
-        responseHeaders.set('Access-Control-Allow-Origin', '*');
-        responseHeaders.set('Cache-Control', 'no-store');
-        return new Response(response.body, {
-            status: response.status,
-            headers: responseHeaders
-        });
-    } catch (error) {
-        return textResponse(error?.message || 'Proxy Error', 502);
-    }
-}
-
-function normalizePocketPath(value) {
-    const apiPath = String(value || '').trim();
-    if (!apiPath.startsWith('/') || apiPath.includes('://') || apiPath.includes('..')) {
-        throw new Error('无效的 Pocket API 路径');
-    }
-    return apiPath;
-}
-
-function normalizePostData(value) {
-    if (value && typeof value === 'object') {
-        return value;
-    }
-    try {
-        const parsed = JSON.parse(String(value || '{}'));
-        return parsed && typeof parsed === 'object' ? parsed : {};
-    } catch (error) {
-        return {};
-    }
-}
-
-function json(data, status = 200) {
-    return new Response(JSON.stringify(data), {
-        status,
-        headers: {
-            'Content-Type': 'application/json;charset=utf-8',
-            'Cache-Control': 'no-store'
-        }
-    });
-}
-
-function textResponse(text, status = 200) {
-    return new Response(text, {
-        status,
-        headers: {
-            'Content-Type': 'text/plain;charset=utf-8',
-            'Cache-Control': 'no-store'
-        }
-    });
+export function configurePocketRuntime(hooks = {}) {
+    runtimeHooks.saveLive48Login = typeof hooks.saveLive48Login === 'function' ? hooks.saveLive48Login : null;
+    runtimeHooks.getLive48LoginStatus = typeof hooks.getLive48LoginStatus === 'function' ? hooks.getLive48LoginStatus : null;
 }
 
 function createDeviceId() {
     if (globalThis.crypto?.randomUUID) {
-        return crypto.randomUUID().toUpperCase();
+        return globalThis.crypto.randomUUID().toUpperCase();
     }
-    return 'WEB-' + Math.random().toString(36).slice(2).toUpperCase();
+    const bytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(bytes);
+    return `WEB-${Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 }
 
 function getDeviceId() {
@@ -969,9 +41,11 @@ function getDeviceId() {
 
 function createLive48BrowserId() {
     const chars = 'ABCDEFGHJKMNPQRSTWXYZabcdefhijkmnprstwxyz012345678_@';
+    const randomBytes = new Uint8Array(8);
+    globalThis.crypto.getRandomValues(randomBytes);
     let value = 'liveweb';
     for (let i = 0; i < 8; i += 1) {
-        value += chars[Math.floor(Math.random() * chars.length)];
+        value += chars[randomBytes[i] % chars.length];
     }
     return value;
 }
@@ -1132,6 +206,22 @@ function createSeineHeaders(token, pa) {
     headers['X-Custom-Device-Type'] = 'ANDROID';
     headers['User-Agent'] = 'PocketFans201807/1.0.0_26061101 (SM-G9730:Android 12;Samsung V417IR release-keys)';
     headers['Content-Type'] = 'application/json; charset=UTF-8';
+    return headers;
+}
+
+function createSeineIosHeaders(token, pa) {
+    const headers = createHeaders(token, pa);
+    headers.appInfo = JSON.stringify({
+        deviceId: getDeviceId(),
+        appVersion: '1.2.0',
+        deviceName: 'iPhone 16 Pro',
+        osType: 'ios',
+        appBuild: '26072902',
+        osVersion: '27.0',
+        appName: 'seine48',
+        vendor: 'apple'
+    });
+    headers['User-Agent'] = 'Seina/1.2.0 (com.seine48.app; build:26072902; iOS 27.0.0) Alamofire/5.8.0';
     return headers;
 }
 
@@ -1379,12 +469,22 @@ function parseJsonPreservingLargeNumbers(text) {
 }
 
 async function postJson(url, payload, headers, options = {}) {
-    const response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload || {})
-    });
-    const text = await response.text();
+    const timeoutMs = Math.max(0, Number(options.timeoutMs) || 0);
+    const controller = timeoutMs > 0 ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    let response;
+    let text;
+    try {
+        response = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload || {}),
+            ...(controller ? { signal: controller.signal } : {})
+        });
+        text = await response.text();
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+    }
     let data = null;
     if (text) {
         try {
@@ -1463,8 +563,7 @@ async function resolveServerId(channelId, headers) {
             headers
         );
         if (response.data?.success) return response.data.content.serverId;
-    } catch (error) {
-    }
+    } catch (error) { reportIgnoredError(error, 'src/common/pocket-runtime.mjs'); }
     return null;
 }
 
@@ -1475,18 +574,17 @@ function getLoginRequestPa(pa) {
         if (typeof globalThis.__yayaGeneratePa === 'function') {
             return String(globalThis.__yayaGeneratePa() || '').trim();
         }
-    } catch (error) {
-    }
+    } catch (error) { reportIgnoredError(error, 'src/common/pocket-runtime.mjs'); }
     return '';
 }
 
-async function loginSendSms({ mobile, area, answer }) {
+async function loginSendSms({ mobile, area, answer, pa }) {
     const payload = { mobile, area: area || '86' };
     if (answer) payload.answer = answer;
     const response = await postJson(
         'https://pocketapi.48.cn/user/api/v1/sms/send2',
         payload,
-        createHeaders()
+        createHeaders(null, getLoginRequestPa(pa))
     );
     if (response.status === 200 && response.data?.status === 200) return { success: true };
     if (response.data?.status === 2001) {
@@ -1591,13 +689,20 @@ async function loginPollQr({ code } = {}) {
         const accountInfo = await fetchLive48AccountInfo(session.cookie)
             .catch(() => null)
             || parseLive48AccountInfoFromHtml(data.desc);
+        const cookieSaved = runtimeHooks.saveLive48Login
+            ? await runtimeHooks.saveLive48Login({
+                cookie: session.cookie,
+                accountInfo,
+                loginAt: new Date().toISOString()
+            }) !== false
+            : false;
         live48QrLoginSessions.delete(normalizedCode);
         return {
             success: true,
             loggedIn: true,
             msg: stripHtml(data.desc) || '扫码登录成功',
             accountInfo,
-            cookieSaved: false
+            cookieSaved
         };
     }
 
@@ -1616,6 +721,9 @@ async function loginCancelQr({ code } = {}) {
 }
 
 async function loginQrStatus() {
+    if (runtimeHooks.getLive48LoginStatus) {
+        return runtimeHooks.getLive48LoginStatus({ fetchLive48AccountInfo });
+    }
     return { success: true, loggedIn: false };
 }
 
@@ -1679,6 +787,23 @@ async function fetchPrivateMessageInfo({ token, pa, targetUserId, lastTime = 0 }
     );
     if (response.status === 200 && response.data?.status === 200) return { success: true, content: response.data.content };
     return apiError(response, '获取私信详情失败');
+}
+
+async function deletePrivateMessage({ token, pa, msgId }) {
+    if (!token) return missingToken();
+    const normalizedMsgId = String(msgId || '').trim();
+    if (!normalizedMsgId) return { success: false, msg: '缺少消息 ID' };
+
+    return postPocketContent(
+        'https://pocketapi.48.cn/message/api/v1/user/message/delete/msg',
+        { msgId: normalizedMsgId },
+        {
+            token,
+            pa,
+            headersFactory: createPocketAndroidHeaders,
+            errorMessage: '删除私信失败'
+        }
+    );
 }
 
 async function sendPrivateMessageReply({ token, pa, targetUserId, text, messageType = 'TEXT', image = null }) {
@@ -1778,6 +903,26 @@ async function fetchOpenLivePublicList({ token, pa, groupId = 0, next = 0, recor
     return apiError(response);
 }
 
+async function fetchSeinePerformanceList({ token, pa, groupId = 0, next = 0 } = {}) {
+    if (!token) return missingToken();
+
+    return postPocketContent(
+        'https://snhapi-v1.ckg48.cn/home/api/seine/home/interaction/list',
+        {
+            type: 2,
+            groupId: String(groupId || 0),
+            next: String(next || 0)
+        },
+        {
+            token,
+            pa,
+            headersFactory: createSeineIosHeaders,
+            errorMessage: '获取公演列表失败',
+            largeNumbers: true
+        }
+    );
+}
+
 async function fetchMeet48LiveList({ next = 0, record = false, meet48Auth = null } = {}, env = {}) {
     const response = await postJson(
         'https://meetapi-v2.meet48.xyz/meet48-api/live/api/v1/live/getLiveList',
@@ -1818,19 +963,395 @@ function extractParticipantNames(html) {
     return names;
 }
 
-async function fetchOpenLiveParticipants({ liveId }) {
+async function fetchOpenLivePageHtml(url, headers) {
+    return getText(url, headers);
+}
+
+function normalizeOpenLiveTitleForMatch(value) {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/&nbsp;|&#160;/gi, '')
+        .replace(/&amp;/gi, '&')
+        .replace(/&quot;|&#34;/gi, '"')
+        .replace(/&#39;|&apos;/gi, "'")
+        .replace(/[《》“”"'‘’·•…\s\-_:：,.，。!！?？()（）[\]【】]/g, '')
+        .trim();
+}
+
+function formatReplayDateHint(value) {
+    if (!value && value !== 0) return '';
+    const raw = String(value || '').trim();
+    const explicitDate = raw.match(/(\d{4})[-/.年]?(\d{1,2})[-/.月]?(\d{1,2})(?:日)?/);
+    if (explicitDate && (/[\-/.年月日]/.test(raw) || /^\d{8}$/.test(raw))) {
+        return `${explicitDate[1]}.${String(explicitDate[2]).padStart(2, '0')}.${String(explicitDate[3]).padStart(2, '0')}`;
+    }
+
+    if (typeof value === 'number' || /^\d+$/.test(raw)) {
+        let numeric = Number(value);
+        if (Number.isFinite(numeric) && numeric > 0) {
+            if (numeric < 1e12) numeric *= 1000;
+            const date = new Date(numeric);
+            if (!Number.isNaN(date.getTime())) {
+                const parts = new Intl.DateTimeFormat('en-CA', {
+                    timeZone: 'Asia/Shanghai',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit'
+                }).formatToParts(date);
+                const part = type => parts.find(item => item.type === type)?.value || '';
+                return `${part('year')}.${part('month')}.${part('day')}`;
+            }
+        }
+    }
+    return '';
+}
+
+function extractReplayCardsFromHtml(html) {
+    return [...String(html || '').matchAll(/<li class="videos">([\s\S]*?)<\/li>/gi)].map(match => {
+        const block = match[1] || '';
+        const hrefMatch = block.match(/href="\/Index\/invideo\/club\/(\d+)\/id\/(\d+)"/i);
+        const titleMatch = block.match(/<h4>([^<]+)<\/h4>/i);
+        const dateMatch = block.match(/(\d{4}\.\d{2}\.\d{2})/);
+        return {
+            clubId: hrefMatch?.[1] || '',
+            replayId: hrefMatch?.[2] || '',
+            title: String(titleMatch?.[1] || '').trim(),
+            date: dateMatch?.[1] || ''
+        };
+    }).filter(item => item.replayId && item.title);
+}
+
+const REPLAY_CLUB_IDS = Object.freeze(['1', '2', '3', '5', '6']);
+const REPLAY_GROUP_CLUB_IDS = Object.freeze({
+    snh: '1',
+    snh48: '1',
+    bej: '2',
+    bej48: '2',
+    gnz: '3',
+    gnz48: '3',
+    ckg: '5',
+    ckg48: '5',
+    cgt: '6',
+    cgt48: '6'
+});
+const MAX_REPLAY_SEARCH_PAGE = 512;
+
+function getReplayClubSearchOrder(groupHint, title) {
+    const source = `${groupHint || ''} ${title || ''}`.toLowerCase();
+    let preferred = '';
+    for (const [group, clubId] of Object.entries(REPLAY_GROUP_CLUB_IDS)) {
+        if (source.includes(group)) {
+            preferred = clubId;
+            break;
+        }
+    }
+    const numericHint = String(groupHint || '').trim();
+    if (!preferred && REPLAY_CLUB_IDS.includes(numericHint)) preferred = numericHint;
+    return preferred
+        ? [preferred, ...REPLAY_CLUB_IDS.filter(clubId => clubId !== preferred)]
+        : REPLAY_CLUB_IDS.slice();
+}
+
+function replayDateKey(value) {
+    const match = String(value || '').match(/(\d{4})\.(\d{2})\.(\d{2})/);
+    return match ? Number(`${match[1]}${match[2]}${match[3]}`) : 0;
+}
+
+function getReplayPageDateBounds(cards) {
+    const dates = cards.map(card => replayDateKey(card.date)).filter(Boolean);
+    if (!dates.length) return null;
+    return { newest: Math.max(...dates), oldest: Math.min(...dates) };
+}
+
+function getTitleBigrams(value) {
+    const result = new Set();
+    for (let index = 0; index < value.length - 1; index += 1) {
+        result.add(value.slice(index, index + 2));
+    }
+    return result;
+}
+
+function scoreReplayTitleMatch(target, candidate) {
+    if (!target || !candidate) return 0;
+    if (target === candidate) return 1;
+    const shorter = target.length <= candidate.length ? target : candidate;
+    const longer = shorter === target ? candidate : target;
+    if (shorter.length >= 4 && longer.includes(shorter)) {
+        return 0.6 + (0.4 * shorter.length / longer.length);
+    }
+
+    let prefixLength = 0;
+    while (prefixLength < shorter.length && target[prefixLength] === candidate[prefixLength]) {
+        prefixLength += 1;
+    }
+    const targetBigrams = getTitleBigrams(target);
+    const candidateBigrams = getTitleBigrams(candidate);
+    let sharedBigrams = 0;
+    targetBigrams.forEach(value => {
+        if (candidateBigrams.has(value)) sharedBigrams += 1;
+    });
+    const dice = targetBigrams.size + candidateBigrams.size
+        ? (2 * sharedBigrams) / (targetBigrams.size + candidateBigrams.size)
+        : 0;
+    return Math.max(dice, prefixLength / Math.max(shorter.length, 1));
+}
+
+function findBestReplayCard(cards, normalizedTargetTitle, normalizedTargetDate) {
+    const candidates = cards
+        .filter(card => card.date === normalizedTargetDate)
+        .map(card => ({
+            card,
+            score: scoreReplayTitleMatch(
+                normalizedTargetTitle,
+                normalizeOpenLiveTitleForMatch(card.title)
+            )
+        }))
+        .sort((left, right) => right.score - left.score);
+    return candidates[0]?.score >= 0.38 ? candidates[0].card : null;
+}
+
+async function findReplayMatchInClub({ clubId, normalizedTargetTitle, normalizedTargetDate, headers }) {
+    const targetDateKey = replayDateKey(normalizedTargetDate);
+    const pageCache = new Map();
+    const loadPage = async page => {
+        if (!pageCache.has(page)) {
+            const pageUrl = page === 1
+                ? `https://live.48.cn/Index/main/club/${clubId}`
+                : `https://live.48.cn/Index/main/club/${clubId}/p/${page}.html`;
+            pageCache.set(page, fetchOpenLivePageHtml(pageUrl, headers)
+                .then(extractReplayCardsFromHtml)
+                .catch(() => []));
+        }
+        return pageCache.get(page);
+    };
+    const inspectPage = async page => {
+        const cards = await loadPage(page);
+        return {
+            cards,
+            match: findBestReplayCard(cards, normalizedTargetTitle, normalizedTargetDate),
+            bounds: getReplayPageDateBounds(cards)
+        };
+    };
+
+    const first = await inspectPage(1);
+    if (first.match) return first.match;
+    if (!first.cards.length || !first.bounds || targetDateKey > first.bounds.newest) return null;
+    if (targetDateKey >= first.bounds.oldest) {
+        const second = await inspectPage(2);
+        return second.match;
+    }
+
+    let newerPage = 1;
+    let olderPage = 2;
+    while (olderPage <= MAX_REPLAY_SEARCH_PAGE) {
+        const inspected = await inspectPage(olderPage);
+        if (inspected.match) return inspected.match;
+        if (!inspected.cards.length || !inspected.bounds || targetDateKey >= inspected.bounds.oldest) break;
+        newerPage = olderPage;
+        olderPage *= 2;
+    }
+    olderPage = Math.min(olderPage, MAX_REPLAY_SEARCH_PAGE);
+
+    let low = newerPage + 1;
+    let high = olderPage - 1;
+    while (low <= high) {
+        const page = Math.floor((low + high) / 2);
+        const inspected = await inspectPage(page);
+        if (inspected.match) return inspected.match;
+        if (!inspected.cards.length || !inspected.bounds) {
+            high = page - 1;
+            continue;
+        }
+        if (targetDateKey < inspected.bounds.oldest) {
+            low = page + 1;
+        } else if (targetDateKey > inspected.bounds.newest) {
+            high = page - 1;
+        } else {
+            for (const adjacentPage of [page - 1, page + 1]) {
+                if (adjacentPage < 1) continue;
+                const adjacent = await inspectPage(adjacentPage);
+                if (adjacent.match) return adjacent.match;
+            }
+            return null;
+        }
+    }
+
+    for (const boundaryPage of [low - 1, low, low + 1]) {
+        if (boundaryPage < 1 || boundaryPage > MAX_REPLAY_SEARCH_PAGE) continue;
+        const inspected = await inspectPage(boundaryPage);
+        if (inspected.match) return inspected.match;
+    }
+    return null;
+}
+
+async function findReplayPageMatchByTitleDate({ title, dateHint, groupHint = '', headers }) {
+    const normalizedTargetTitle = normalizeOpenLiveTitleForMatch(title);
+    const normalizedTargetDate = formatReplayDateHint(dateHint);
+    if (!normalizedTargetTitle || !normalizedTargetDate) return null;
+
+    for (const clubId of getReplayClubSearchOrder(groupHint, title)) {
+        const matched = await findReplayMatchInClub({
+            clubId,
+            normalizedTargetTitle,
+            normalizedTargetDate,
+            headers
+        });
+        if (matched) return matched;
+    }
+    return null;
+}
+
+function toParticipantList(names) {
+    return names.map(name => ({ name, memberId: '', avatar: '', hot: '' }));
+}
+
+const openLiveParticipantsCache = new Map();
+const openLiveParticipantsPending = new Map();
+const OPEN_LIVE_PARTICIPANTS_CACHE_TTL = 30 * 60 * 1000;
+const OPEN_LIVE_PARTICIPANTS_CACHE_LIMIT = 200;
+
+function cacheOpenLiveParticipants(liveId, result) {
+    openLiveParticipantsCache.delete(liveId);
+    openLiveParticipantsCache.set(liveId, {
+        expiresAt: Date.now() + OPEN_LIVE_PARTICIPANTS_CACHE_TTL,
+        result
+    });
+    while (openLiveParticipantsCache.size > OPEN_LIVE_PARTICIPANTS_CACHE_LIMIT) {
+        const oldestKey = openLiveParticipantsCache.keys().next().value;
+        openLiveParticipantsCache.delete(oldestKey);
+    }
+}
+
+async function fetchOpenLiveParticipantsUncached({ liveId, title = '', dateHint = '', groupHint = '' }) {
     const normalizedLiveId = String(liveId || '').trim();
     if (!normalizedLiveId) return { success: false, msg: '缺少 liveId' };
-    const headers = {
+    const pageHeaders = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/135.0.0.0 Safari/537.36',
         Referer: 'https://live.48.cn/'
     };
-    const html = await getText(`https://live.48.cn/Index/inlive/id/${encodeURIComponent(normalizedLiveId)}`, headers);
-    const videoId = extractInputValue(html, 'vedio_id');
-    const clubId = extractInputValue(html, 'club_id');
-    const param = extractInputValue(html, 'param');
-    const names = extractParticipantNames(html);
-    return { success: true, content: { videoId, clubId, param, names } };
+
+    try {
+        const livePageUrl = `https://live.48.cn/Index/inlive/id/${encodeURIComponent(normalizedLiveId)}`;
+        try {
+            const html = await fetchOpenLivePageHtml(livePageUrl, pageHeaders);
+            const videoId = extractInputValue(html, 'vedio_id');
+            const clubId = extractInputValue(html, 'club_id');
+            const pageToken = extractInputValue(html, 'param');
+            if (videoId && clubId && pageToken) {
+                try {
+                    const memberResponse = await fetch('https://live.48.cn/Index/ajax_getmemberhot/', {
+                        method: 'POST',
+                        headers: {
+                            ...pageHeaders,
+                            Origin: 'https://live.48.cn',
+                            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                            'X-Requested-With': 'XMLHttpRequest'
+                        },
+                        body: new URLSearchParams({
+                            act: 'default',
+                            video_id: videoId,
+                            token: pageToken,
+                            club_id: clubId
+                        }).toString()
+                    });
+                    const memberData = await memberResponse.json().catch(() => null);
+                    const participants = (Array.isArray(memberData?.desc) ? memberData.desc : [])
+                        .map(item => ({
+                            name: String(item?.memberName || '').trim(),
+                            memberId: String(item?.memberId || '').trim(),
+                            avatar: String(item?.avatar || '').trim(),
+                            hot: item?.hot ?? ''
+                        }))
+                        .filter(item => item.name);
+                    if (participants.length) {
+                        return { success: true, content: { participants, source: 'memberhot' } };
+                    }
+                } catch (error) {
+                    // Fall back to parsing the page HTML.
+                }
+            }
+
+            const participants = toParticipantList(extractParticipantNames(html));
+            if (participants.length) {
+                return { success: true, content: { participants, source: 'html-live' } };
+            }
+        } catch (error) {
+            // Fall back to replay pages.
+        }
+
+        for (const clubId of getReplayClubSearchOrder(groupHint, title)) {
+            try {
+                const replayUrl = `https://live.48.cn/Index/invideo/club/${clubId}/id/${encodeURIComponent(normalizedLiveId)}`;
+                const participants = toParticipantList(extractParticipantNames(
+                    await fetchOpenLivePageHtml(replayUrl, pageHeaders)
+                ));
+                if (participants.length) {
+                    return { success: true, content: { participants, source: `html-replay-club-${clubId}` } };
+                }
+            } catch (error) {
+                // Try the next club.
+            }
+        }
+
+        const matchedReplay = await findReplayPageMatchByTitleDate({
+            title,
+            dateHint,
+            groupHint,
+            headers: pageHeaders
+        });
+        if (matchedReplay?.replayId && matchedReplay?.clubId) {
+            const replayUrl = `https://live.48.cn/Index/invideo/club/${matchedReplay.clubId}/id/${matchedReplay.replayId}`;
+            const participants = toParticipantList(extractParticipantNames(
+                await fetchOpenLivePageHtml(replayUrl, pageHeaders)
+            ));
+            if (participants.length) {
+                return {
+                    success: true,
+                    content: {
+                        participants,
+                        source: `replay-match-club-${matchedReplay.clubId}`,
+                        matchedReplayId: matchedReplay.replayId
+                    }
+                };
+            }
+        }
+
+        return { success: false, msg: '未找到参与成员' };
+    } catch (error) {
+        return { success: false, msg: error?.message || '获取参与成员失败' };
+    }
+}
+
+async function fetchOpenLiveParticipants({ liveId, title = '', dateHint = '', groupHint = '' }) {
+    const normalizedLiveId = String(liveId || '').trim();
+    if (!normalizedLiveId) return { success: false, msg: '缺少 liveId' };
+
+    const cached = openLiveParticipantsCache.get(normalizedLiveId);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.result;
+    }
+    if (cached) openLiveParticipantsCache.delete(normalizedLiveId);
+
+    const pending = openLiveParticipantsPending.get(normalizedLiveId);
+    if (pending) return pending;
+
+    const request = fetchOpenLiveParticipantsUncached({
+        liveId: normalizedLiveId,
+        title,
+        dateHint,
+        groupHint
+    }).then(result => {
+        const participants = result?.content?.participants;
+        if (result?.success && Array.isArray(participants) && participants.length > 0) {
+            cacheOpenLiveParticipants(normalizedLiveId, result);
+        }
+        return result;
+    }).finally(() => {
+        openLiveParticipantsPending.delete(normalizedLiveId);
+    });
+
+    openLiveParticipantsPending.set(normalizedLiveId, request);
+    return request;
 }
 
 async function fetchFlipPrices({ token, pa, memberId }) {
@@ -2043,7 +1564,7 @@ async function sendLiveGift({ token, pa, giftId, liveId, acceptUserId, giftNum }
             isCombo: 0,
             ruleId: 0,
             giftType: 1,
-            crm: crypto.randomUUID ? crypto.randomUUID() : String(Date.now())
+            crm: globalThis.crypto.randomUUID ? globalThis.crypto.randomUUID() : String(Date.now())
         },
         createModernHeaders(token, pa)
     );
@@ -2095,7 +1616,8 @@ async function fetchRoomRadio({ token, pa, channelId, serverId }) {
     const response = await postJson(
         'https://pocketapi.48.cn/im/api/v1/team/voice/operate',
         { channelId: parseInt(channelId, 10), serverId: parseInt(finalServerId, 10), operateCode: 2 },
-        headers
+        headers,
+        { timeoutMs: 12000 }
     );
     if (response.status === 200 && response.data?.status === 200) return { success: true, content: response.data.content };
     return { success: false, msg: response.data?.message || '电台未开启或获取失败' };
@@ -2827,4 +2349,122 @@ async function runScoreOfficialAction(payload = {}) {
     const handler = handlers[action];
     if (!handler) return { success: false, msg: `未知计分动作: ${action || '-'}` };
     return handler(actionPayload);
+}
+
+const pocketMethods = Object.freeze({
+    loginSendSms,
+    loginByCode,
+    loginCheckToken,
+    loginCreateQr,
+    loginPollQr,
+    loginCancelQr,
+    loginQrStatus,
+    checkIn,
+    switchBigSmall,
+    fetchRoomMessages,
+    fetchPrivateMessageList,
+    fetchPrivateMessageInfo,
+    deletePrivateMessage,
+    sendPrivateMessageReply,
+    fetchFlipList,
+    fetchStarArchives,
+    fetchStarHistory,
+    fetchOpenLive,
+    fetchOpenLiveOne,
+    fetchOpenLivePublicList,
+    fetchSeinePerformanceList,
+    fetchMeet48LiveList,
+    fetchMeet48LiveOne,
+    fetchOpenLiveParticipants,
+    fetchFlipPrices,
+    sendFlipQuestion,
+    operateFlipQuestion,
+    fetchMemberPhotos,
+    fetchUserMoney,
+    fetchInvoiceTips,
+    fetchInvoiceConfig,
+    fetchInvoiceOrderList,
+    applyElectronicInvoice,
+    fetchCheckinToday,
+    fetchUnreadMessageCount,
+    editUserInfo,
+    uploadUserAvatar,
+    uploadPrivateMessageImage,
+    fetchUserRenameCount,
+    fetchUserPictureFrames,
+    fetchClientGroupTeamStarUpdate,
+    fetchStarServerMap,
+    fetchMediaCollectionTotalCount,
+    sendLiveGift,
+    fetchGiftList,
+    getNimLoginInfo,
+    fetchRoomAlbum,
+    fetchRoomRadio,
+    fetchSeineServerDetail,
+    fetchLiveRank,
+    fetchFriendsIds,
+    fetchLastMessages,
+    followMember,
+    unfollowMember,
+    fetchLiveList,
+    fetchLiveOne,
+    fetchLiveResult,
+    fetchTripList,
+    fetchAlbumList,
+    fetchMeleeWeekRank,
+    fetchMeleeRankPage,
+    fetchMeleeYearRankPage,
+    fetchPersonMeleeRankPage,
+    fetchPostImageList,
+    fetchPostVideoList,
+    fetchPostTimelineHome,
+    fetchPostTimelineHomeNew,
+    fetchChatroomHomeownerMessages,
+    fetchMemberWeiboMessages,
+    fetchMemberDynamicMessages,
+    fetchConversationPage,
+    fetchUserHomeInfo,
+    fetchFlipCustomIndexV1,
+    fetchArea48Newest,
+    fetchArea48Recommend,
+    fetchArea48TopicInfo,
+    fetchArea48TopicHotPosts,
+    fetchArea48TopicNewestPosts,
+    fetchArea48Comments,
+    fetchArea48PostDetails,
+    addArea48Comment,
+    deleteArea48Comment,
+    createArea48Post,
+    fetchPocketMaskWords,
+    loginElectionVote,
+    fetchElectionVoteStatus,
+    fetchElectionActStatus,
+    fetchElectionUserInfo,
+    fetchElectionVoteHistory,
+    fetchElectionCodeActHistory,
+    fetchElectionSgBindStatus,
+    bindElectionSg,
+    fetchPageantryRareTreasures,
+    fetchPageantryBuyStarList,
+    fetchPageantryHonorCardInfo,
+    fetchScoreOfficialBundle,
+    runScoreOfficialAction
+});
+
+export const pocketChannelMethods = POCKET_CHANNEL_METHODS;
+
+export const pocketChannels = Object.freeze(Object.fromEntries(
+    Object.entries(pocketChannelMethods).map(([channel, method]) => [channel, pocketMethods[method]])
+));
+
+export function hasPocketChannel(channel) {
+    return Object.prototype.hasOwnProperty.call(pocketChannels, channel);
+}
+
+export async function invokePocketChannel(channel, payload = {}, env = {}) {
+    const handler = pocketChannels[channel];
+    if (!handler) {
+        throw new Error(`不支持的 Pocket 通道: ${channel || '-'}`);
+    }
+    return handler(payload || {}, env || {});
 }

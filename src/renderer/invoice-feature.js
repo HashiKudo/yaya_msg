@@ -1,4 +1,5 @@
 (function () {
+    const { escapeHtml } = window.YayaRendererUtils;
     const INVOICE_FORM_KEY = 'yaya_invoice_form_v1';
     const INVOICE_HISTORY_START_MONTH = '2021-01';
 
@@ -14,40 +15,74 @@
         monthPickerYear: new Date().getFullYear(),
         statusMessage: '',
         statusType: 'muted',
-        statusTimer: null
+        statusTimer: null,
+        requestGeneration: 0,
+        accountGeneration: 0
     };
 
     function $(id) {
         return document.getElementById(id);
     }
 
-    function escapeHtml(value) {
-        return String(value == null ? '' : value)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
     function readStoredJson(key, fallbackValue = {}) {
         try {
+            const storageKey = key === INVOICE_FORM_KEY ? getInvoiceFormStorageKey() : key;
+            if (key === INVOICE_FORM_KEY && storageKey === '') return fallbackValue;
             if (typeof window.readStoredJsonSetting === 'function') {
-                return window.readStoredJsonSetting(key, fallbackValue);
+                const storedValue = window.readStoredJsonSetting(storageKey, null);
+                if (storedValue !== null) return storedValue;
+                return migrateLegacyInvoiceForm(storageKey, fallbackValue);
             }
-            const parsed = JSON.parse(localStorage.getItem(key) || 'null');
-            return parsed && typeof parsed === 'object' ? parsed : fallbackValue;
+            const parsed = JSON.parse(localStorage.getItem(storageKey) || 'null');
+            if (parsed && typeof parsed === 'object') return parsed;
+            return migrateLegacyInvoiceForm(storageKey, fallbackValue);
         } catch (_) {
             return fallbackValue;
         }
     }
 
     function writeStoredJson(key, value) {
+        const storageKey = key === INVOICE_FORM_KEY ? getInvoiceFormStorageKey() : key;
+        if (key === INVOICE_FORM_KEY && storageKey === '') return value;
         if (typeof window.writeStoredJsonSetting === 'function') {
-            return window.writeStoredJsonSetting(key, value);
+            return window.writeStoredJsonSetting(storageKey, value);
         }
-        localStorage.setItem(key, JSON.stringify(value || {}));
+        localStorage.setItem(storageKey, JSON.stringify(value || {}));
         return value;
+    }
+
+    function getInvoiceAccountScope() {
+        const scope = typeof window.getPocketAccountScopeKey === 'function'
+            ? String(window.getPocketAccountScopeKey() || '').trim()
+            : '';
+        return scope && scope !== 'signed-out' ? scope : '';
+    }
+
+    function getInvoiceFormStorageKey() {
+        const scope = getInvoiceAccountScope();
+        return scope ? `${INVOICE_FORM_KEY}_${scope}` : '';
+    }
+
+    function migrateLegacyInvoiceForm(storageKey, fallbackValue) {
+        if (!storageKey || storageKey === INVOICE_FORM_KEY) return fallbackValue;
+        let legacyValue = null;
+        if (typeof window.readStoredJsonSetting === 'function') {
+            legacyValue = window.readStoredJsonSetting(INVOICE_FORM_KEY, null);
+        } else {
+            try {
+                legacyValue = JSON.parse(localStorage.getItem(INVOICE_FORM_KEY) || 'null');
+            } catch (_) {
+                legacyValue = null;
+            }
+        }
+        if (!legacyValue || typeof legacyValue !== 'object') return fallbackValue;
+        writeStoredJson(INVOICE_FORM_KEY, legacyValue);
+        if (typeof window.removeStoredSetting === 'function') {
+            window.removeStoredSetting(INVOICE_FORM_KEY);
+        } else {
+            localStorage.removeItem(INVOICE_FORM_KEY);
+        }
+        return legacyValue;
     }
 
     function getDefaultYearMonth() {
@@ -464,11 +499,33 @@
         }
     }
 
-    async function invoiceInvoke(channel, payload = {}) {
+    function captureInvoiceRequest() {
+        return {
+            token: getInvoiceToken(),
+            accountScope: getInvoiceAccountScope(),
+            accountGeneration: state.accountGeneration,
+            sessionGeneration: typeof window.getPocketAccountSessionGeneration === 'function'
+                ? window.getPocketAccountSessionGeneration()
+                : 0,
+            requestGeneration: ++state.requestGeneration
+        };
+    }
+
+    function isInvoiceRequestCurrent(request) {
+        if (!request) return false;
+        return request.requestGeneration === state.requestGeneration
+            && request.accountGeneration === state.accountGeneration
+            && request.token === getInvoiceToken()
+            && request.accountScope === getInvoiceAccountScope()
+            && (typeof window.getPocketAccountSessionGeneration !== 'function'
+                || request.sessionGeneration === window.getPocketAccountSessionGeneration());
+    }
+
+    async function invoiceInvoke(channel, payload = {}, token = getInvoiceToken()) {
         if (!window.ipcRenderer || typeof window.ipcRenderer.invoke !== 'function') {
             return { success: false, msg: '当前环境不支持请求接口' };
         }
-        return window.ipcRenderer.invoke(channel, getInvoicePayload(payload));
+        return window.ipcRenderer.invoke(channel, getInvoicePayload({ ...payload, token }));
     }
 
     function mergeInvoiceOrders(nextOrders, reset = false) {
@@ -491,7 +548,7 @@
         });
     }
 
-    async function fetchAllInvoiceOrders(yearMonth, nextTime = '0', options = {}) {
+    async function fetchAllInvoiceOrders(yearMonth, nextTime = '0', options = {}, request) {
         let page = 0;
         let cursor = String(nextTime || '0');
         const seenCursors = new Set();
@@ -502,7 +559,12 @@
             seenCursors.add(cursor);
             setInvoiceStatus(`正在加载${label}第 ${page} 页...`, 'muted');
 
-            const orderResult = await invoiceInvoke('fetch-invoice-order-list', { yearMonth, nextTime: cursor });
+            const orderResult = await invoiceInvoke(
+                'fetch-invoice-order-list',
+                { yearMonth, nextTime: cursor },
+                request.token
+            );
+            if (!isInvoiceRequestCurrent(request)) return false;
             if (!orderResult?.success) throw new Error(orderResult?.msg || '订单加载失败');
 
             const nextOrders = Array.isArray(orderResult.content?.data)
@@ -526,20 +588,23 @@
         if (!options.skipFinalStatus) {
             setInvoiceStatus(`已加载全部 ${state.orders.length} 笔订单`, 'success');
         }
+        return true;
     }
 
-    async function fetchAllInvoiceHistoryOrders() {
+    async function fetchAllInvoiceHistoryOrders(request) {
         const months = getInvoiceHistoryMonths();
         for (let index = 0; index < months.length; index += 1) {
             const month = months[index];
             setInvoiceStatus(`正在加载全部历史 ${index + 1}/${months.length}：${month}`, 'muted');
-            await fetchAllInvoiceOrders(month, '0', {
+            const completed = await fetchAllInvoiceOrders(month, '0', {
                 label: `${month}`,
                 skipFinalStatus: true
-            });
+            }, request);
+            if (!completed || !isInvoiceRequestCurrent(request)) return false;
         }
         state.nextTime = '';
         setInvoiceStatus(`已加载全部历史 ${state.orders.length} 笔订单`, 'success');
+        return true;
     }
 
     async function refreshInvoicePage(reset = false, allHistory = false) {
@@ -549,6 +614,7 @@
             if (typeof window.switchView === 'function') window.switchView('login');
             return;
         }
+        const request = captureInvoiceRequest();
 
         const yearMonth = $('invoice-year-month')?.value || getDefaultYearMonth();
         state.loading = true;
@@ -561,19 +627,23 @@
         setInvoiceStatus('正在加载...', 'muted');
         try {
             const [configResult] = await Promise.all([
-                invoiceInvoke('fetch-invoice-config')
+                invoiceInvoke('fetch-invoice-config', {}, request.token)
             ]);
+            if (!isInvoiceRequestCurrent(request)) return;
             if (configResult?.success && Array.isArray(configResult.content)) state.configs = configResult.content;
             if (allHistory) {
-                await fetchAllInvoiceHistoryOrders();
+                await fetchAllInvoiceHistoryOrders(request);
             } else {
-                await fetchAllInvoiceOrders(yearMonth, reset ? '0' : state.nextTime || '0');
+                await fetchAllInvoiceOrders(yearMonth, reset ? '0' : state.nextTime || '0', {}, request);
             }
         } catch (error) {
+            if (!isInvoiceRequestCurrent(request)) return;
             setInvoiceStatus(error.message || '加载失败', 'error');
         } finally {
-            state.loading = false;
-            renderInvoicePage();
+            if (isInvoiceRequestCurrent(request)) {
+                state.loading = false;
+                renderInvoicePage();
+            }
         }
     }
 
@@ -769,6 +839,10 @@
 
     async function submitElectronicInvoice() {
         if (state.applying) return;
+        if (state.loading) {
+            setInvoiceStatus('订单仍在加载，请稍后再提交', 'error');
+            return;
+        }
         const selectedIds = Array.from(state.selectedIds);
         if (!selectedIds.length) {
             setInvoiceStatus('请选择要开票的订单', 'error');
@@ -809,6 +883,11 @@
                 return;
             }
         }
+        const request = captureInvoiceRequest();
+        if (!request.token || !request.accountScope) {
+            setInvoiceStatus('账号状态已变化，请重新进入开票页面', 'error');
+            return;
+        }
         writeStoredJson(INVOICE_FORM_KEY, {
             version: 2,
             buyerType: payload.buyerType,
@@ -831,7 +910,8 @@
         renderInvoicePage();
         setInvoiceStatus('正在提交...', 'muted');
         try {
-            const result = await invoiceInvoke('apply-electronic-invoice', payload);
+            const result = await invoiceInvoke('apply-electronic-invoice', payload, request.token);
+            if (!isInvoiceRequestCurrent(request)) return;
             if (!result?.success) throw new Error(result?.msg || '提交失败');
             markInvoiceOrdersApplying(selectedIds);
             state.selectedIds.clear();
@@ -839,14 +919,36 @@
             if (typeof window.showToast === 'function') window.showToast('开票申请已提交');
             renderInvoicePage();
             setTimeout(() => {
-                refreshInvoicePage(false);
+                if (isInvoiceRequestCurrent(request)) refreshInvoicePage(false);
             }, 800);
         } catch (error) {
+            if (!isInvoiceRequestCurrent(request)) return;
             setInvoiceStatus(error.message || '提交失败', 'error');
         } finally {
-            state.applying = false;
-            renderInvoicePage();
+            if (isInvoiceRequestCurrent(request)) {
+                state.applying = false;
+                renderInvoicePage();
+            }
         }
+    }
+
+    function resetInvoiceAccountState() {
+        state.accountGeneration += 1;
+        state.requestGeneration += 1;
+        state.initialized = false;
+        state.loading = false;
+        state.applying = false;
+        state.orders = [];
+        state.nextTime = '';
+        state.selectedIds.clear();
+        state.tips = '';
+        state.configs = [];
+        state.statusMessage = '';
+        state.statusType = 'muted';
+        if (state.statusTimer) clearTimeout(state.statusTimer);
+        state.statusTimer = null;
+        const view = $('view-invoice');
+        if (view && view.style.display !== 'none') renderInvoicePage();
     }
 
     function enterInvoiceView() {
@@ -860,6 +962,7 @@
     }
 
     window.enterInvoiceView = enterInvoiceView;
+    window.resetInvoiceAccountState = resetInvoiceAccountState;
     window.renderInvoicePage = renderInvoicePage;
     window.refreshInvoicePage = refreshInvoicePage;
     window.loadMoreInvoiceOrders = loadMoreInvoiceOrders;

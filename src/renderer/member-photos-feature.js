@@ -184,7 +184,7 @@
 
                 const list = normalizePhotoList(result.content);
                 if (!isLoadMore) {
-                    container.innerHTML = '';
+                    container.replaceChildren();
                 }
 
                 if (!list || !list.length) {

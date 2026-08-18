@@ -31,7 +31,16 @@
             return legacyValue === null ? fallbackValue : String(legacyValue);
         }
 
-        function fetchDanmuNative(url) {
+        async function fetchDanmuNative(url) {
+            if (window.desktop?.platform === 'web') {
+                const apiUrl = window.yayaWebApiUrl ? window.yayaWebApiUrl('/api/text-proxy') : '/api/text-proxy';
+                const response = await fetch(`${apiUrl}?url=${encodeURIComponent(url)}`);
+                if (!response.ok) {
+                    throw new Error(`弹幕文件读取失败: ${response.status}`);
+                }
+                return response.text();
+            }
+
             return new Promise((resolve, reject) => {
                 https.get(url, (res) => {
                     let data = '';
@@ -322,7 +331,7 @@
             const taskId = `task_${Date.now()}`;
             const downloadList = document.getElementById('downloadList');
             if (downloadList && downloadList.innerText.includes('暂无下载任务')) {
-                downloadList.innerHTML = '';
+                downloadList.replaceChildren();
             }
 
             if (downloadList) {
@@ -387,23 +396,32 @@
                 const taskEl = document.getElementById(data.taskId);
                 if (!taskEl) return;
 
-                const percent = data.percent ? Math.floor(data.percent) : 0;
+                const rawPercent = Number(data.percent);
+                const percent = Number.isFinite(rawPercent)
+                    ? Math.max(0, Math.min(100, Math.floor(rawPercent)))
+                    : 0;
                 const fillEl = taskEl.querySelector('.progress-fill');
                 const textEl = taskEl.querySelector('.download-percent');
                 const statusTextEl = taskEl.querySelector('.download-status-text');
 
                 if (percent > 0) {
-                    textEl.textContent = `${percent}%`;
-                    fillEl.style.width = `${percent}%`;
-                    if (statusTextEl.textContent.includes('已下载时长')) {
+                    if (textEl) textEl.textContent = `${percent}%`;
+                    if (fillEl) fillEl.style.width = `${percent}%`;
+                    if (statusTextEl && data.msg) {
+                        statusTextEl.textContent = data.msg;
+                    } else if (statusTextEl && statusTextEl.textContent.includes('已下载时长')) {
                         statusTextEl.textContent = '正在下载...';
                     }
                 } else if (data.timemark) {
-                    fillEl.style.width = '100%';
-                    fillEl.style.opacity = '0.3';
-                    textEl.textContent = '';
+                    if (fillEl) {
+                        fillEl.style.width = '100%';
+                        fillEl.style.opacity = '0.3';
+                    }
+                    if (textEl) textEl.textContent = '';
                     const cleanTime = data.timemark.split('.')[0];
-                    statusTextEl.textContent = `已下载时长: ${cleanTime}`;
+                    if (statusTextEl) statusTextEl.textContent = `已下载时长: ${cleanTime}`;
+                } else if (statusTextEl && data.msg) {
+                    statusTextEl.textContent = data.msg;
                 }
             });
 
@@ -413,19 +431,38 @@
 
                 const liveId = taskEl.getAttribute('data-liveid');
                 const statusText = taskEl.querySelector('.download-status-text');
+                const isTerminal = data.status === 'success'
+                    || data.status === 'error'
+                    || data.status === 'canceled';
 
-                if (data.status === 'success') {
+                if (!isTerminal) {
+                    if (statusText && data.msg) {
+                        statusText.textContent = data.msg;
+                        statusText.style.color = '';
+                    }
+                    return;
+                }
+
+                if (liveId && data.status === 'success') {
                     setDownloadStatus(liveId, 'success');
-                } else if (data.status === 'error' || data.status === 'canceled') {
+                } else if (liveId && (data.status === 'error' || data.status === 'canceled')) {
                     setDownloadStatus(liveId, 'error');
                 }
 
-                const listBtn = document.querySelector(`.vod-btn-${liveId}`);
+                const listBtn = liveId ? document.querySelector(`.vod-btn-${liveId}`) : null;
 
                 if (data.status === 'success') {
-                    statusText.textContent = '完成';
-                    statusText.style.color = '#28a745';
-                    taskEl.querySelector('.progress-fill').style.background = '#28a745';
+                    if (statusText) {
+                        statusText.textContent = data.msg || '完成';
+                        statusText.style.color = '#28a745';
+                    }
+                    const fillEl = taskEl.querySelector('.progress-fill');
+                    const percentEl = taskEl.querySelector('.download-percent');
+                    if (fillEl) {
+                        fillEl.style.width = '100%';
+                        fillEl.style.background = '#28a745';
+                    }
+                    if (percentEl) percentEl.textContent = '100%';
 
                     if (listBtn) {
                         listBtn.textContent = '已完成';
@@ -456,11 +493,13 @@
                     if (data.status === 'canceled') {
                         taskEl.remove();
                     } else {
-                        statusText.textContent = data.msg || '下载失败';
-                        statusText.style.color = '#e81123';
+                        if (statusText) {
+                            statusText.textContent = data.msg || '下载失败';
+                            statusText.style.color = '#e81123';
+                        }
                     }
 
-                    deleteDownloadStatus(liveId);
+                    if (liveId) deleteDownloadStatus(liveId);
                 }
             });
         }

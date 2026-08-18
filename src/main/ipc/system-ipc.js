@@ -1,4 +1,4 @@
-const { ipcMain } = require('electron');
+const { app, ipcMain } = require('electron');
 const systemService = require('../services/system-service');
 const settingsService = require('../services/settings-service');
 const { getMainWindow } = require('../window');
@@ -18,8 +18,8 @@ function registerSystemIpc() {
         }
     });
     ipcMain.handle('save-export-jsonl', (event, payload) => systemService.saveExportJsonl(payload));
-    ipcMain.handle('save-export-html', (event, payload) => systemService.saveExportJsonl(payload));
     ipcMain.handle('dialog-open-directory', () => systemService.openDirectoryDialog(getMainWindow()));
+    ipcMain.handle('get-default-download-path', () => app.getPath('downloads'));
     ipcMain.handle('open-message-data-folder', () => systemService.openMessageDataFolder());
     ipcMain.handle('fetch-remote-image-data-url', (event, payload) => systemService.fetchRemoteImageDataUrl(payload));
     ipcMain.handle('cache-image-thumbnail', (event, payload) => systemService.createCachedImageThumbnail(payload));

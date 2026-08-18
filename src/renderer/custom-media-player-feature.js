@@ -326,7 +326,7 @@
                     if (overlay) overlay.style.opacity = '0';
 
                     cleanupStagingHost();
-                    wrapper.innerHTML = '';
+                    wrapper.replaceChildren();
                     wrapper.appendChild(inlineVideo);
                     placeholder.style.cursor = 'default';
                     requestAnimationFrame(() => {

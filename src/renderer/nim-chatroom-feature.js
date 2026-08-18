@@ -10,10 +10,7 @@
             showToast
         } = deps;
 
-        const NIM_CHATROOM_SDK_URLS = [
-            'https://cdn.jsdelivr.net/npm/@yxim/nim-web-sdk@9.21.12/dist/SDK/NIM_Web_Chatroom.js',
-            'https://unpkg.com/@yxim/nim-web-sdk@9.21.12/dist/SDK/NIM_Web_Chatroom.js'
-        ];
+        const NIM_CHATROOM_SDK_URL = './src/renderer/vendor/NIM_Web_Chatroom.js';
         const CHATROOM_ADDRESSES = ['chatweblink01.netease.im:443'];
         const CHATROOM_APP_KEY = '632feff1f4c838541ab75195d1ceb3fa';
 
@@ -59,17 +56,10 @@
 
             if (!nimSdkLoadPromise) {
                 nimSdkLoadPromise = (async () => {
-                    let lastError = null;
-                    for (const url of NIM_CHATROOM_SDK_URLS) {
-                        try {
-                            await loadNimChatroomScript(url);
-                            const sdk = normalizeNimChatroomGlobal();
-                            if (sdk && sdk.Chatroom) return sdk;
-                        } catch (error) {
-                            lastError = error;
-                        }
-                    }
-                    throw lastError || new Error('云信聊天室 SDK 加载失败');
+                    await loadNimChatroomScript(NIM_CHATROOM_SDK_URL);
+                    const sdk = normalizeNimChatroomGlobal();
+                    if (sdk && sdk.Chatroom) return sdk;
+                    throw new Error('本地云信聊天室 SDK 无效');
                 })().catch(error => {
                     nimSdkLoadPromise = null;
                     throw error;
@@ -97,7 +87,7 @@
                     const custom = JSON.parse(msg.custom);
                     return custom.text || '';
                 }
-            } catch (error) { }
+            } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/nim-chatroom-feature.js'); }
             return '';
         }
 

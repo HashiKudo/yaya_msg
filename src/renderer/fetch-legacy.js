@@ -1,35 +1,40 @@
-let appToken = '';
-let lastNextTime = 0;
-let isAutoFetching = false;
-let currentFetchStopKey = '';
-let currentFetchStoppedAtPrevious = false;
-let currentFetchedServerId = '';
-let currentFetchedChannelId = '';
-let currentFetchedFetchAllMode = false;
-let pocketGiftCacheSaveTimer = null;
-const AUTO_CHECKIN_ENABLED_KEY = 'yaya_auto_checkin_enabled';
-const AUTO_CHECKIN_LAST_DATE_KEY = 'yaya_auto_checkin_last_date';
-const AUTO_CHECKIN_LAST_USER_KEY = 'yaya_auto_checkin_last_user';
-const AUTO_MESSAGE_FETCH_SETTING_KEY = 'autoMessageFetch';
-const AUTO_MESSAGE_FETCH_DEFAULT_INTERVAL = 10;
-const AUTO_MESSAGE_FETCH_MAX_PAGES = 200;
-let autoMessageFetchTimer = null;
-let autoMessageFetchStartupTimer = null;
-let autoMessageFetchInFlight = false;
-let autoMessageFetchInitialized = false;
-let autoMessageFetchStartupArmed = false;
-let autoMessageFetchStartupCompleted = false;
-let autoMessageFetchDraftConfig = null;
-let autoMessageFetchDraftDirty = false;
-let currentPocketUserId = '';
-let currentPocketProfile = { nickname: '', avatar: '', avatarUrl: '' };
-let selectedAccountAvatarFile = null;
-let selectedAccountAvatarDataUrl = '';
-let accountProfileStatusTimer = null;
-let autoCheckinInFlight = false;
-let autoCheckinSettingsMigrated = false;
-const WEB_ACCOUNT_PROFILE_CACHE_KEY = 'yaya_web_account_profile_v1';
-let maskwordLibrary = [];
+        let appToken = '';
+        let lastNextTime = 0;
+        let isAutoFetching = false;
+        let currentFetchStopKey = '';
+        let currentFetchStoppedAtPrevious = false;
+        let currentFetchedServerId = '';
+        let currentFetchedChannelId = '';
+        let currentFetchedFetchAllMode = false;
+        let pocketGiftCacheSaveTimer = null;
+        const AUTO_CHECKIN_ENABLED_KEY = 'yaya_auto_checkin_enabled';
+        const AUTO_CHECKIN_LAST_DATE_KEY = 'yaya_auto_checkin_last_date';
+        const AUTO_CHECKIN_LAST_USER_KEY = 'yaya_auto_checkin_last_user';
+        const AUTO_MESSAGE_FETCH_SETTING_KEY = 'autoMessageFetch';
+        const AUTO_MESSAGE_FETCH_DEFAULT_INTERVAL = 10;
+        const AUTO_MESSAGE_FETCH_MAX_PAGES = 200;
+        const AUTO_MESSAGE_FETCH_MEMBER_CONCURRENCY = 6;
+        let autoMessageFetchTimer = null;
+        let autoMessageFetchStartupTimer = null;
+        let autoMessageFetchInFlight = false;
+        let autoMessageFetchInitialized = false;
+        let autoMessageFetchStartupArmed = false;
+        let autoMessageFetchStartupCompleted = false;
+        let autoMessageFetchDraftConfig = null;
+        let autoMessageFetchDraftDirty = false;
+        let autoMessageFetchAccountGeneration = 0;
+        let currentPocketUserId = '';
+        let currentPocketProfile = { nickname: '', avatar: '', avatarUrl: '' };
+        let accountValidationGeneration = 0;
+        let accountSwitchGeneration = 0;
+        let selectedAccountAvatarFile = null;
+        let selectedAccountAvatarDataUrl = '';
+        let accountProfileStatusTimer = null;
+        let autoCheckinInFlight = false;
+        let autoCheckinGeneration = 0;
+        let autoCheckinSettingsMigrated = false;
+        const WEB_ACCOUNT_PROFILE_CACHE_KEY = 'yaya_web_account_profile_v1';
+        let maskwordLibrary = [];
 
 function getAppSettingsApi() {
     return window.desktop && window.desktop.appSettings ? window.desktop.appSettings : null;
@@ -269,36 +274,97 @@ function normalizeAccountAvatarUrl(avatarPath) {
     return raw.startsWith('/') ? `https://source.48.cn${raw}` : `https://source.48.cn/${raw}`;
 }
 
-function isWebRuntimeForAccountUi() {
-    return !!(window.desktop && window.desktop.platform === 'web');
-}
+        function isWebRuntimeForAccountUi() {
+            return !!(window.desktop && window.desktop.platform === 'web');
+        }
 
-function readWebAccountProfileCache() {
-    if (!isWebRuntimeForAccountUi() || !readStoredToken()) return null;
-    try {
-        const cached = JSON.parse(localStorage.getItem(WEB_ACCOUNT_PROFILE_CACHE_KEY) || 'null');
-        return cached && typeof cached === 'object' && !Array.isArray(cached) ? cached : null;
-    } catch (error) {
-        return null;
-    }
-}
+        function getWebAccountProfileCacheKey() {
+            const token = String(readStoredToken() || '').trim();
+            if (!token) return '';
+            let hash = 2166136261;
+            for (let index = 0; index < token.length; index += 1) {
+                hash ^= token.charCodeAt(index);
+                hash = Math.imul(hash, 16777619);
+            }
+            return `${WEB_ACCOUNT_PROFILE_CACHE_KEY}_token-${(hash >>> 0).toString(36)}`;
+        }
 
-function writeWebAccountProfileCache(profile = currentPocketProfile) {
-    if (!isWebRuntimeForAccountUi()) return;
-    const normalized = {
-        nickname: String(profile?.nickname || '').trim(),
-        avatar: String(profile?.avatar || '').trim(),
-        avatarUrl: String(profile?.avatarUrl || normalizeAccountAvatarUrl(profile?.avatar) || '').trim(),
-        updatedAt: Date.now()
-    };
-    if (!normalized.avatarUrl && !normalized.avatar) return;
-    localStorage.setItem(WEB_ACCOUNT_PROFILE_CACHE_KEY, JSON.stringify(normalized));
-}
+        function readWebAccountProfileCache() {
+            if (!isWebRuntimeForAccountUi() || !readStoredToken()) return null;
+            try {
+                const storageKey = getWebAccountProfileCacheKey();
+                let cached = JSON.parse(localStorage.getItem(storageKey) || 'null');
+                if (!cached) {
+                    cached = JSON.parse(localStorage.getItem(WEB_ACCOUNT_PROFILE_CACHE_KEY) || 'null');
+                    if (cached && storageKey) {
+                        localStorage.setItem(storageKey, JSON.stringify(cached));
+                        localStorage.removeItem(WEB_ACCOUNT_PROFILE_CACHE_KEY);
+                    }
+                }
+                return cached && typeof cached === 'object' && !Array.isArray(cached) ? cached : null;
+            } catch (error) {
+                return null;
+            }
+        }
 
-function clearWebAccountProfileCache() {
-    if (!isWebRuntimeForAccountUi()) return;
-    localStorage.removeItem(WEB_ACCOUNT_PROFILE_CACHE_KEY);
-}
+        function writeWebAccountProfileCache(profile = currentPocketProfile) {
+            if (!isWebRuntimeForAccountUi()) return;
+            const storageKey = getWebAccountProfileCacheKey();
+            if (!storageKey) return;
+            const normalized = {
+                nickname: String(profile?.nickname || '').trim(),
+                avatar: String(profile?.avatar || '').trim(),
+                avatarUrl: String(profile?.avatarUrl || normalizeAccountAvatarUrl(profile?.avatar) || '').trim(),
+                updatedAt: Date.now()
+            };
+            if (!normalized.avatarUrl && !normalized.avatar) return;
+            localStorage.setItem(storageKey, JSON.stringify(normalized));
+        }
+
+        function clearWebAccountProfileCache() {
+            if (!isWebRuntimeForAccountUi()) return;
+            localStorage.removeItem(WEB_ACCOUNT_PROFILE_CACHE_KEY);
+            for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+                const key = localStorage.key(index);
+                if (key && key.startsWith(`${WEB_ACCOUNT_PROFILE_CACHE_KEY}_`)) {
+                    localStorage.removeItem(key);
+                }
+            }
+        }
+
+        function capturePocketAccountContext(token = appToken || readStoredToken()) {
+            return {
+                token: String(token || '').trim(),
+                userId: String(currentPocketUserId || '').trim(),
+                sessionGeneration: typeof window.getPocketAccountSessionGeneration === 'function'
+                    ? window.getPocketAccountSessionGeneration()
+                    : 0
+            };
+        }
+
+        function isPocketAccountContextCurrent(context) {
+            if (!context) return false;
+            return context.token === String(appToken || readStoredToken() || '').trim()
+                && context.userId === String(currentPocketUserId || '').trim()
+                && (typeof window.getPocketAccountSessionGeneration !== 'function'
+                    || context.sessionGeneration === window.getPocketAccountSessionGeneration());
+        }
+
+        function invalidatePocketAccountRequestState() {
+            autoCheckinGeneration += 1;
+            autoCheckinInFlight = false;
+            selectedAccountAvatarFile = null;
+            selectedAccountAvatarDataUrl = '';
+            const avatarInput = document.getElementById('account-avatar-file');
+            if (avatarInput) avatarInput.value = '';
+            const nicknameButton = document.getElementById('btn-save-account-nickname');
+            const avatarButton = document.querySelector('.account-avatar-edit-actions .btn');
+            if (nicknameButton) nicknameButton.disabled = false;
+            if (avatarButton) avatarButton.disabled = false;
+            setCheckinButtonBusy(false);
+        }
+
+        window.invalidatePocketAccountRequestState = invalidatePocketAccountRequestState;
 
 function syncWebAccountButton(profile = currentPocketProfile, loggedIn = !!currentPocketUserId) {
     if (!isWebRuntimeForAccountUi()) return;
@@ -393,27 +459,30 @@ function renderAccountRenameCount(content) {
     setRenameCountDisplay(normalized, '--');
 }
 
-async function refreshAccountRenameCount() {
-    const countEl = document.getElementById('account-rename-count');
-    const token = appToken || readStoredToken();
-    if (!countEl) return;
-    if (!token) {
-        countEl.innerText = '改名次数：--';
-        return;
-    }
+        async function refreshAccountRenameCount() {
+            const countEl = document.getElementById('account-rename-count');
+            const token = appToken || readStoredToken();
+            if (!countEl) return;
+            if (!token) {
+                countEl.innerText = '改名次数：--';
+                return;
+            }
+            const accountContext = capturePocketAccountContext(token);
 
-    setRenameCountDisplay('读取中...', '读取中...');
-    try {
-        const pa = window.getPA ? window.getPA() : null;
-        const res = await ipcRenderer.invoke('fetch-user-rename-count', { token, pa });
-        if (!res?.success) {
-            throw new Error(res?.msg || '读取失败');
+            setRenameCountDisplay('读取中...', '读取中...');
+            try {
+                const pa = window.getPA ? window.getPA() : null;
+                const res = await ipcRenderer.invoke('fetch-user-rename-count', { token, pa });
+                if (!isPocketAccountContextCurrent(accountContext)) return;
+                if (!res?.success) {
+                    throw new Error(res?.msg || '读取失败');
+                }
+                renderAccountRenameCount(res.content);
+            } catch (error) {
+                if (!isPocketAccountContextCurrent(accountContext)) return;
+                setRenameCountDisplay('读取失败', '读取失败');
+            }
         }
-        renderAccountRenameCount(res.content);
-    } catch (error) {
-        setRenameCountDisplay('读取失败', '读取失败');
-    }
-}
 
 function renderAccountChickenBalance(content) {
     const balanceEl = document.getElementById('account-chicken-balance');
@@ -422,38 +491,46 @@ function renderAccountChickenBalance(content) {
     balanceEl.innerText = total === undefined || total === null || total === '' ? '--' : String(total);
 }
 
-async function refreshAccountChickenBalance() {
-    const balanceEl = document.getElementById('account-chicken-balance');
-    const token = appToken || readStoredToken();
-    if (!balanceEl) return;
-    if (!token) {
-        balanceEl.innerText = '--';
-        return;
-    }
+        async function refreshAccountChickenBalance() {
+            const balanceEl = document.getElementById('account-chicken-balance');
+            const token = appToken || readStoredToken();
+            if (!balanceEl) return;
+            if (!token) {
+                balanceEl.innerText = '--';
+                return;
+            }
+            const accountContext = capturePocketAccountContext(token);
 
-    balanceEl.innerText = '读取中...';
-    try {
-        const pa = window.getPA ? window.getPA() : null;
-        const res = await ipcRenderer.invoke('fetch-user-money', { token, pa });
-        if (!res?.success) {
-            throw new Error(res?.msg || '读取失败');
+            balanceEl.innerText = '读取中...';
+            try {
+                const pa = window.getPA ? window.getPA() : null;
+                const res = await ipcRenderer.invoke('fetch-user-money', { token, pa });
+                if (!isPocketAccountContextCurrent(accountContext)) return;
+                if (!res?.success) {
+                    throw new Error(res?.msg || '读取失败');
+                }
+                renderAccountChickenBalance(res.content);
+            } catch (error) {
+                if (!isPocketAccountContextCurrent(accountContext)) return;
+                balanceEl.innerText = '读取失败';
+            }
         }
-        renderAccountChickenBalance(res.content);
-    } catch (error) {
-        balanceEl.innerText = '读取失败';
-    }
-}
 
-async function refreshAccountProfileMeta() {
-    setAccountProfileMetaVisible(false);
-    await Promise.all([refreshAccountRenameCount(), refreshAccountChickenBalance()]);
-    setAccountProfileMetaVisible(true);
-}
+        async function refreshAccountProfileMeta() {
+            const accountContext = capturePocketAccountContext();
+            setAccountProfileMetaVisible(false);
+            await Promise.all([
+                refreshAccountRenameCount(),
+                refreshAccountChickenBalance()
+            ]);
+            if (isPocketAccountContextCurrent(accountContext)) setAccountProfileMetaVisible(true);
+        }
 
-function handleAccountAvatarSelected(file) {
-    selectedAccountAvatarFile = file || null;
-    selectedAccountAvatarDataUrl = '';
-    const fileInput = document.getElementById('account-avatar-file');
+        function handleAccountAvatarSelected(file) {
+            const accountContext = capturePocketAccountContext();
+            selectedAccountAvatarFile = file || null;
+            selectedAccountAvatarDataUrl = '';
+            const fileInput = document.getElementById('account-avatar-file');
 
     if (!file) return;
 
@@ -471,21 +548,23 @@ function handleAccountAvatarSelected(file) {
         return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-        selectedAccountAvatarDataUrl = String(reader.result || '');
-        const preview = document.getElementById('account-avatar-preview');
-        if (preview && selectedAccountAvatarDataUrl) preview.src = selectedAccountAvatarDataUrl;
-        setAccountProfileEditStatus('');
-        uploadAccountAvatar();
-    };
-    reader.onerror = () => {
-        selectedAccountAvatarFile = null;
-        selectedAccountAvatarDataUrl = '';
-        setAccountProfileEditStatus('读取头像图片失败', 'error');
-    };
-    reader.readAsDataURL(file);
-}
+            const reader = new FileReader();
+            reader.onload = () => {
+                if (!isPocketAccountContextCurrent(accountContext)) return;
+                selectedAccountAvatarDataUrl = String(reader.result || '');
+                const preview = document.getElementById('account-avatar-preview');
+                if (preview && selectedAccountAvatarDataUrl) preview.src = selectedAccountAvatarDataUrl;
+                setAccountProfileEditStatus('');
+                uploadAccountAvatar();
+            };
+            reader.onerror = () => {
+                if (!isPocketAccountContextCurrent(accountContext)) return;
+                selectedAccountAvatarFile = null;
+                selectedAccountAvatarDataUrl = '';
+                setAccountProfileEditStatus('读取头像图片失败', 'error');
+            };
+            reader.readAsDataURL(file);
+        }
 
 async function saveAccountNickname() {
     const nicknameInput = document.getElementById('account-nickname-input');
@@ -498,38 +577,41 @@ async function saveAccountNickname() {
         return;
     }
 
-    if (!nickname) {
-        setAccountProfileEditStatus('昵称不能为空', 'error');
-        return;
-    }
+            if (!nickname) {
+                setAccountProfileEditStatus('昵称不能为空', 'error');
+                return;
+            }
+            const accountContext = capturePocketAccountContext(token);
 
-    try {
-        if (button) button.disabled = true;
-        setAccountProfileEditStatus('');
-        const pa = window.getPA ? window.getPA() : null;
-        const res = await ipcRenderer.invoke('edit-user-info', {
-            token,
-            pa,
-            key: 'nickname',
-            value: nickname
-        });
+            try {
+                if (button) button.disabled = true;
+                setAccountProfileEditStatus('');
+                const pa = window.getPA ? window.getPA() : null;
+                const res = await ipcRenderer.invoke('edit-user-info', {
+                    token,
+                    pa,
+                    key: 'nickname',
+                    value: nickname
+                });
+                if (!isPocketAccountContextCurrent(accountContext)) return;
 
         if (!res?.success) {
             throw new Error(res?.msg || '保存昵称失败');
         }
 
-        currentPocketProfile.nickname = nickname;
-        const nameEl = document.getElementById('user-nickname');
-        if (nameEl) nameEl.innerText = nickname;
-        syncWebAccountButton(currentPocketProfile, true);
-        refreshAccountRenameCount();
-        setAccountProfileEditStatus('昵称已保存', 'success');
-    } catch (error) {
-        setAccountProfileEditStatus(error.message || '保存昵称失败', 'error');
-    } finally {
-        if (button) button.disabled = false;
-    }
-}
+                currentPocketProfile.nickname = nickname;
+                const nameEl = document.getElementById('user-nickname');
+                if (nameEl) nameEl.innerText = nickname;
+                syncWebAccountButton(currentPocketProfile, true);
+                refreshAccountRenameCount();
+                setAccountProfileEditStatus('昵称已保存', 'success');
+            } catch (error) {
+                if (!isPocketAccountContextCurrent(accountContext)) return;
+                setAccountProfileEditStatus(error.message || '保存昵称失败', 'error');
+            } finally {
+                if (isPocketAccountContextCurrent(accountContext) && button) button.disabled = false;
+            }
+        }
 
 async function uploadAccountAvatar() {
     const button = document.querySelector('.account-avatar-edit-actions .btn');
@@ -540,58 +622,62 @@ async function uploadAccountAvatar() {
         return;
     }
 
-    if (!selectedAccountAvatarFile || !selectedAccountAvatarDataUrl) {
-        setAccountProfileEditStatus('请先选择头像图片', 'error');
-        return;
-    }
+            if (!selectedAccountAvatarFile || !selectedAccountAvatarDataUrl) {
+                setAccountProfileEditStatus('请先选择头像图片', 'error');
+                return;
+            }
+            const accountContext = capturePocketAccountContext(token);
 
-    try {
-        if (button) button.disabled = true;
-        setAccountProfileEditStatus('');
-        const pa = window.getPA ? window.getPA() : null;
-        const uploadRes = await ipcRenderer.invoke('upload-user-avatar', {
-            token,
-            pa,
-            fileName: selectedAccountAvatarFile.name,
-            mimeType: selectedAccountAvatarFile.type,
-            dataBase64: selectedAccountAvatarDataUrl
-        });
+            try {
+                if (button) button.disabled = true;
+                setAccountProfileEditStatus('');
+                const pa = window.getPA ? window.getPA() : null;
+                const uploadRes = await ipcRenderer.invoke('upload-user-avatar', {
+                    token,
+                    pa,
+                    fileName: selectedAccountAvatarFile.name,
+                    mimeType: selectedAccountAvatarFile.type,
+                    dataBase64: selectedAccountAvatarDataUrl
+                });
+                if (!isPocketAccountContextCurrent(accountContext)) return;
 
         if (!uploadRes?.success || !uploadRes.path) {
             throw new Error(uploadRes?.msg || '上传头像失败');
         }
 
-        const editRes = await ipcRenderer.invoke('edit-user-info', {
-            token,
-            pa,
-            key: 'avatar',
-            value: uploadRes.path
-        });
+                const editRes = await ipcRenderer.invoke('edit-user-info', {
+                    token,
+                    pa,
+                    key: 'avatar',
+                    value: uploadRes.path
+                });
+                if (!isPocketAccountContextCurrent(accountContext)) return;
 
         if (!editRes?.success) {
             throw new Error(editRes?.msg || '头像写入失败');
         }
 
-        const avatarUrl = normalizeAccountAvatarUrl(uploadRes.path);
-        currentPocketProfile.avatar = uploadRes.path;
-        currentPocketProfile.avatarUrl = avatarUrl;
-        const currentAvatarEl = document.getElementById('current-user-avatar');
-        const preview = document.getElementById('account-avatar-preview');
-        if (currentAvatarEl) currentAvatarEl.src = avatarUrl;
-        if (preview) preview.src = avatarUrl;
-        syncWebAccountButton(currentPocketProfile, true);
-        selectedAccountAvatarFile = null;
-        selectedAccountAvatarDataUrl = '';
-        const fileInput = document.getElementById('account-avatar-file');
-        if (fileInput) fileInput.value = '';
-        setAccountProfileEditStatus('头像已更新', 'success');
-        showToast('头像已更新');
-    } catch (error) {
-        setAccountProfileEditStatus(error.message || '上传头像失败', 'error');
-    } finally {
-        if (button) button.disabled = false;
-    }
-}
+                const avatarUrl = normalizeAccountAvatarUrl(uploadRes.path);
+                currentPocketProfile.avatar = uploadRes.path;
+                currentPocketProfile.avatarUrl = avatarUrl;
+                const currentAvatarEl = document.getElementById('current-user-avatar');
+                const preview = document.getElementById('account-avatar-preview');
+                if (currentAvatarEl) currentAvatarEl.src = avatarUrl;
+                if (preview) preview.src = avatarUrl;
+                syncWebAccountButton(currentPocketProfile, true);
+                selectedAccountAvatarFile = null;
+                selectedAccountAvatarDataUrl = '';
+                const fileInput = document.getElementById('account-avatar-file');
+                if (fileInput) fileInput.value = '';
+                setAccountProfileEditStatus('头像已更新', 'success');
+                showToast('头像已更新');
+            } catch (error) {
+                if (!isPocketAccountContextCurrent(accountContext)) return;
+                setAccountProfileEditStatus(error.message || '上传头像失败', 'error');
+            } finally {
+                if (isPocketAccountContextCurrent(accountContext) && button) button.disabled = false;
+            }
+        }
 
 function readStoredSettingStringFallback(key, fallbackValue = '') {
     if (typeof window.readStoredStringSetting === 'function') {
@@ -726,14 +812,24 @@ function buildFetchMessageKey(message) {
         bodySeed = String(message.bodys || message.msgContent || '');
     }
 
-    return [
-        message.id || message.msgId || message.messageId || message.clientMsgId || '',
-        message.msgTime || '',
-        message.msgType || '',
-        message.senderUserId || message.senderId || message.uid || '',
-        bodySeed
-    ].join('|');
-}
+            return [
+                message.id || message.msgId || message.messageId || message.clientMsgId || '',
+                message.msgTime || '',
+                message.msgType || '',
+                message.senderUserId || message.senderId || message.uid || '',
+                bodySeed
+            ].join('|');
+        }
+
+        function getFetchBoundaryTimestamp(boundaryKey) {
+            const timestamp = Number(String(boundaryKey || '').split('|')[1]);
+            return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+        }
+
+        function getFetchMessageTimestamp(message) {
+            const timestamp = Number(message?.msgTime || message?.messageTime || message?.time || 0);
+            return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+        }
 
 function loadFetchBoundary(serverId, channelId, fetchAllMode) {
     try {
@@ -747,10 +843,10 @@ function saveFetchBoundary(serverId, channelId, fetchAllMode, message) {
     const boundaryKey = buildFetchMessageKey(message);
     if (!boundaryKey) return;
 
-    try {
-        writeRuntimeCacheString(getFetchBoundaryStorageKey(serverId, channelId, fetchAllMode), boundaryKey);
-    } catch (error) {}
-}
+            try {
+                writeRuntimeCacheString(getFetchBoundaryStorageKey(serverId, channelId, fetchAllMode), boundaryKey);
+            } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/fetch-legacy.js'); }
+        }
 
 function escapeFetchHtml(value) {
     return String(value == null ? '' : value)
@@ -847,9 +943,9 @@ function clearFetchBoundary() {
         return;
     }
 
-    try {
-        removeRuntimeCacheValue(getFetchBoundaryStorageKey(serverId, channelId, isFetchAllMode));
-    } catch (error) {}
+            try {
+                removeRuntimeCacheValue(getFetchBoundaryStorageKey(serverId, channelId, isFetchAllMode));
+            } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/fetch-legacy.js'); }
 
     currentFetchStopKey = '';
     currentFetchStoppedAtPrevious = false;
@@ -880,13 +976,14 @@ function normalizeAutoMessageFetchMember(member) {
     };
 }
 
-function normalizeAutoMessageFetchConfig(value) {
-    const allowedIntervals = new Set([5, 10, 30, 60]);
-    const intervalMinutes = Number(value?.intervalMinutes);
-    const hasSplitModeSetting = typeof value?.startupEnabled === 'boolean' || typeof value?.scheduledEnabled === 'boolean';
-    const legacyEnabled = value?.enabled === true;
-    const memberKeys = new Set();
-    const members = [];
+        function normalizeAutoMessageFetchConfig(value) {
+            const allowedIntervals = new Set([1, 5, 10, 30, 60]);
+            const intervalMinutes = Number(value?.intervalMinutes);
+            const hasSplitModeSetting = typeof value?.startupEnabled === 'boolean'
+                || typeof value?.scheduledEnabled === 'boolean';
+            const legacyEnabled = value?.enabled === true;
+            const memberKeys = new Set();
+            const members = [];
 
     for (const rawMember of Array.isArray(value?.members) ? value.members : []) {
         const member = normalizeAutoMessageFetchMember(rawMember);
@@ -908,24 +1005,48 @@ function normalizeAutoMessageFetchConfig(value) {
     };
 }
 
-function readAutoMessageFetchConfig() {
-    const settingsApi = getAppSettingsApi();
-    let rawValue = null;
+        function readAutoMessageFetchConfig() {
+            const settingsApi = getAppSettingsApi();
+            let rawValue = null;
+            const accountScope = typeof window.getPocketAccountScopeKey === 'function'
+                ? String(window.getPocketAccountScopeKey() || '').trim()
+                : '';
+            const scopedSettingKey = accountScope && accountScope !== 'signed-out'
+                ? `${AUTO_MESSAGE_FETCH_SETTING_KEY}_${accountScope}`
+                : '';
 
-    if (settingsApi && typeof settingsApi.getSettingValueSync === 'function') {
-        rawValue = settingsApi.getSettingValueSync(AUTO_MESSAGE_FETCH_SETTING_KEY, null);
-    }
-
-    if (!rawValue) {
-        const legacyValue = localStorage.getItem(`yaya_${AUTO_MESSAGE_FETCH_SETTING_KEY}`);
-        if (legacyValue) {
-            try {
-                rawValue = JSON.parse(legacyValue);
-            } catch (error) {
-                rawValue = null;
+            if (settingsApi && typeof settingsApi.getSettingValueSync === 'function') {
+                rawValue = settingsApi.getSettingValueSync(AUTO_MESSAGE_FETCH_SETTING_KEY, null);
+                if (!rawValue && scopedSettingKey) {
+                    rawValue = settingsApi.getSettingValueSync(scopedSettingKey, null);
+                    if (rawValue && typeof settingsApi.setSettingValueSync === 'function') {
+                        settingsApi.setSettingValueSync(AUTO_MESSAGE_FETCH_SETTING_KEY, rawValue);
+                        if (typeof settingsApi.removeSettingValueSync === 'function') {
+                            settingsApi.removeSettingValueSync(scopedSettingKey);
+                        }
+                    }
+                }
             }
-        }
-    }
+
+            if (!rawValue) {
+                const sharedLocalKey = `yaya_${AUTO_MESSAGE_FETCH_SETTING_KEY}`;
+                let legacyValue = localStorage.getItem(sharedLocalKey);
+                const scopedLocalKey = scopedSettingKey ? `yaya_${scopedSettingKey}` : '';
+                if (!legacyValue && scopedLocalKey) {
+                    legacyValue = localStorage.getItem(scopedLocalKey);
+                    if (legacyValue) {
+                        localStorage.setItem(sharedLocalKey, legacyValue);
+                        localStorage.removeItem(scopedLocalKey);
+                    }
+                }
+                if (legacyValue) {
+                    try {
+                        rawValue = JSON.parse(legacyValue);
+                    } catch (error) {
+                        rawValue = null;
+                    }
+                }
+            }
 
     return normalizeAutoMessageFetchConfig(rawValue || {});
 }
@@ -993,29 +1114,31 @@ function renderAutoMessageFetchUi(options = {}) {
     const runButton = document.getElementById('btn-auto-fetch-now');
     const list = document.getElementById('auto-fetch-member-list');
 
-    if (startupToggle) startupToggle.checked = config.startupEnabled;
-    if (scheduleToggle) scheduleToggle.checked = config.scheduledEnabled;
-    if (roomTypeDisplay) {
-        roomTypeDisplay.value = config.roomType === 'small' ? '小房间' : config.roomType === 'all' ? '所有房间' : '大房间';
-    }
-    if (messageScopeDisplay) messageScopeDisplay.value = config.messageScope === 'all' ? '全体消息' : '只看成员';
-    if (intervalDisplay) intervalDisplay.value = config.intervalMinutes === 60 ? '1 小时' : `${config.intervalMinutes} 分钟`;
-    if (intervalField) intervalField.style.display = config.scheduledEnabled ? 'block' : 'none';
-    if (controls) controls.classList.toggle('has-scheduled-interval', config.scheduledEnabled);
-    if (!config.scheduledEnabled) {
-        const intervalDropdown = document.getElementById('auto-fetch-interval-dropdown');
-        if (intervalDropdown) intervalDropdown.style.display = 'none';
-    }
-    if (runButton && !autoMessageFetchInFlight) {
-        runButton.disabled = autoMessageFetchDraftDirty;
-        runButton.title = autoMessageFetchDraftDirty ? '自动抓取设置正在保存' : '';
-    }
+            if (startupToggle) startupToggle.checked = config.startupEnabled;
+            if (scheduleToggle) scheduleToggle.checked = config.scheduledEnabled;
+            if (roomTypeDisplay) {
+                roomTypeDisplay.value = config.roomType === 'small'
+                    ? '小房间'
+                    : (config.roomType === 'all' ? '所有房间' : '大房间');
+            }
+            if (messageScopeDisplay) messageScopeDisplay.value = config.messageScope === 'all' ? '全体消息' : '只看成员';
+            if (intervalDisplay) intervalDisplay.value = `${config.intervalMinutes} 分钟`;
+            if (intervalField) intervalField.style.display = config.scheduledEnabled ? 'block' : 'none';
+            if (controls) controls.classList.toggle('has-scheduled-interval', config.scheduledEnabled);
+            if (!config.scheduledEnabled) {
+                const intervalDropdown = document.getElementById('auto-fetch-interval-dropdown');
+                if (intervalDropdown) intervalDropdown.style.display = 'none';
+            }
+            if (runButton && !autoMessageFetchInFlight) {
+                runButton.disabled = autoMessageFetchDraftDirty;
+                runButton.title = autoMessageFetchDraftDirty ? '自动抓取设置正在保存' : '';
+            }
 
-    if (list) {
-        list.innerHTML = '';
-        for (const member of config.members) {
-            const chip = document.createElement('span');
-            chip.className = 'auto-fetch-member-chip';
+            if (list) {
+                list.replaceChildren();
+                for (const member of config.members) {
+                    const chip = document.createElement('span');
+                    chip.className = 'auto-fetch-member-chip';
 
             const name = document.createElement('span');
             name.textContent = member.name;
@@ -1078,8 +1201,8 @@ function handleAutoFetchMemberSearch(keyword) {
         return name.includes(query) || pinyin.toLowerCase().includes(lowerQuery) || initials.toLowerCase().includes(lowerQuery);
     });
 
-    if (typeof memberSortLogic === 'function') matches.sort(memberSortLogic);
-    resultBox.innerHTML = '';
+            if (typeof memberSortLogic === 'function') matches.sort(memberSortLogic);
+            resultBox.replaceChildren();
 
     if (matches.length === 0) {
         resultBox.innerHTML = '<div class="suggestion-item" style="cursor:default;color:var(--text-sub)">未找到该成员</div>';
@@ -1313,71 +1436,91 @@ function scheduleAutoMessageFetch(delayMs) {
     if (autoMessageFetchTimer) clearTimeout(autoMessageFetchTimer);
     autoMessageFetchTimer = null;
 
-    const config = readAutoMessageFetchConfig();
-    if (!config.scheduledEnabled || config.members.length === 0) return;
+            const config = readAutoMessageFetchConfig();
+            if (!config.scheduledEnabled || config.members.length === 0) return;
+            const scheduleGeneration = autoMessageFetchAccountGeneration;
+            const accountScope = typeof window.getPocketAccountScopeKey === 'function'
+                ? String(window.getPocketAccountScopeKey() || '')
+                : '';
 
-    const safeDelay = Math.max(250, Number(delayMs) || config.intervalMinutes * 60 * 1000);
-    autoMessageFetchTimer = setTimeout(() => {
-        autoMessageFetchTimer = null;
-        Promise.resolve(runAutoMessageFetchNow()).catch((error) => {
-            console.warn('自动抓取任务失败:', error);
-        });
-    }, safeDelay);
-}
-
-function filterFetchedMemberMessages(list) {
-    return (Array.isArray(list) ? list : []).filter((message) => {
-        let senderId = message.senderUserId || message.senderId || message.uid;
-        if (!senderId && message.extInfo) {
-            try {
-                const ext = typeof message.extInfo === 'string' ? JSON.parse(message.extInfo) : message.extInfo;
-                if (ext?.user) senderId = ext.user.userId || ext.user.id;
-            } catch (error) {}
+            const safeDelay = Math.max(250, Number(delayMs) || config.intervalMinutes * 60 * 1000);
+            autoMessageFetchTimer = setTimeout(() => {
+                if (scheduleGeneration !== autoMessageFetchAccountGeneration
+                    || (typeof window.getPocketAccountScopeKey === 'function'
+                        && String(window.getPocketAccountScopeKey() || '') !== accountScope)) return;
+                autoMessageFetchTimer = null;
+                Promise.resolve(runAutoMessageFetchNow()).catch(error => {
+                    console.warn('自动抓取任务失败:', error);
+                });
+            }, safeDelay);
         }
-        return String(senderId || '') !== '121569667';
-    });
-}
 
-async function fetchAutoMessageMember(member, token, options = {}) {
-    const roomType = options.roomType === 'small' ? 'small' : 'big';
-    const fetchAll = options.messageScope === 'all';
-    const channelId = roomType === 'small' ? member.smallChannelId : member.channelId;
-    if (!channelId) {
-        throw new Error(`缺少${roomType === 'small' ? '小' : '大'}房间 Channel ID`);
-    }
+        function filterFetchedMemberMessages(list) {
+            return (Array.isArray(list) ? list : []).filter(message => {
+                let senderId = message.senderUserId || message.senderId || message.uid;
+                if (!senderId && message.extInfo) {
+                    try {
+                        const ext = typeof message.extInfo === 'string' ? JSON.parse(message.extInfo) : message.extInfo;
+                        if (ext?.user) senderId = ext.user.userId || ext.user.id;
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/fetch-legacy.js'); }
+                }
+                return String(senderId || '') !== '121569667';
+            });
+        }
 
-    const previousBoundary = loadFetchBoundary(member.serverId, channelId, fetchAll);
-    const collectedMessages = [];
-    const seenKeys = new Set();
-    let nextTime = 0;
-    let pageCount = 0;
-    let reachedPrevious = false;
+        async function fetchAutoMessageMember(member, token, options = {}) {
+            const roomType = options.roomType === 'small' ? 'small' : 'big';
+            const fetchAll = options.messageScope === 'all';
+            const isCurrentRun = typeof options.isCurrentRun === 'function' ? options.isCurrentRun : () => true;
+            const channelId = roomType === 'small' ? member.smallChannelId : member.channelId;
+            if (!channelId) {
+                throw new Error(`缺少${roomType === 'small' ? '小' : '大'}房间 Channel ID`);
+            }
 
-    do {
-        const pa = window.getPA ? window.getPA() : null;
-        const response = await ipcRenderer.invoke('fetch-room-messages', {
-            token,
-            serverId: member.serverId,
-            channelId,
-            pa,
-            nextTime,
-            fetchAll
-        });
+            const previousBoundary = loadFetchBoundary(member.serverId, channelId, fetchAll);
+            const previousBoundaryTimestamp = getFetchBoundaryTimestamp(previousBoundary);
+            const collectedMessages = [];
+            const seenKeys = new Set();
+            let nextTime = 0;
+            let pageCount = 0;
+            let reachedPrevious = false;
+
+            do {
+                if (!isCurrentRun()) throw new Error('account-changed');
+                const pa = window.getPA ? window.getPA() : null;
+                const response = await ipcRenderer.invoke('fetch-room-messages', {
+                    token,
+                    serverId: member.serverId,
+                    channelId,
+                    pa,
+                    nextTime,
+                    fetchAll
+                });
+                if (!isCurrentRun()) throw new Error('account-changed');
 
         if (!response?.success || !response?.data?.content) {
             throw new Error(response?.msg || '抓取接口未返回消息');
         }
 
-        const content = response.data.content;
-        const rawList = content.messageList || content.message || [];
-        let list = fetchAll ? (Array.isArray(rawList) ? rawList : []) : filterFetchedMemberMessages(rawList);
-        if (previousBoundary) {
-            const stopIndex = list.findIndex((message) => buildFetchMessageKey(message) === previousBoundary);
-            if (stopIndex >= 0) {
-                list = list.slice(0, stopIndex);
-                reachedPrevious = true;
-            }
-        }
+                const content = response.data.content;
+                const rawList = content.messageList || content.message || [];
+                let list = fetchAll ? (Array.isArray(rawList) ? rawList : []) : filterFetchedMemberMessages(rawList);
+                if (previousBoundary) {
+                    const stopIndex = list.findIndex(message => buildFetchMessageKey(message) === previousBoundary);
+                    if (stopIndex >= 0) {
+                        list = list.slice(0, stopIndex);
+                        reachedPrevious = true;
+                    } else if (previousBoundaryTimestamp > 0) {
+                        const crossedBoundaryIndex = list.findIndex(message => {
+                            const messageTimestamp = getFetchMessageTimestamp(message);
+                            return messageTimestamp > 0 && messageTimestamp <= previousBoundaryTimestamp;
+                        });
+                        if (crossedBoundaryIndex >= 0) {
+                            list = list.slice(0, crossedBoundaryIndex);
+                            reachedPrevious = true;
+                        }
+                    }
+                }
 
         for (const message of list) {
             const messageKey = buildFetchMessageKey(message);
@@ -1389,10 +1532,11 @@ async function fetchAutoMessageMember(member, token, options = {}) {
         pageCount += 1;
         nextTime = reachedPrevious ? 0 : Number(content.nextTime) || 0;
 
-        // 没有历史边界时只取最新一页，避免首次启用就抓完整个历史房间。
-        if (!previousBoundary || !Array.isArray(rawList) || rawList.length === 0) nextTime = 0;
-        if (nextTime > 0 && pageCount < AUTO_MESSAGE_FETCH_MAX_PAGES) await sleep(350);
-    } while (nextTime > 0 && pageCount < AUTO_MESSAGE_FETCH_MAX_PAGES);
+                // 没有历史边界时只取最新一页，避免首次启用就抓完整个历史房间。
+                if (!previousBoundary || !Array.isArray(rawList) || rawList.length === 0) nextTime = 0;
+                if (nextTime > 0 && pageCount < AUTO_MESSAGE_FETCH_MAX_PAGES) await sleep(350);
+            } while (nextTime > 0 && pageCount < AUTO_MESSAGE_FETCH_MAX_PAGES);
+            if (!isCurrentRun()) throw new Error('account-changed');
 
     if (pageCount >= AUTO_MESSAGE_FETCH_MAX_PAGES && nextTime > 0) {
         throw new Error(`连续抓取超过 ${AUTO_MESSAGE_FETCH_MAX_PAGES} 页，已安全停止`);
@@ -1402,14 +1546,17 @@ async function fetchAutoMessageMember(member, token, options = {}) {
         return { addedCount: 0, changed: false, initialized: !previousBoundary };
     }
 
-    const exportMeta = getFetchExportMemberMeta(member.name, channelId);
-    const exportGroupName = exportMeta.groupName === '未知分团' && member.team ? member.team : exportMeta.groupName;
-    const exportPrefix = `${exportGroupName}-${exportMeta.memberName}`;
-    const saveResult = await ipcRenderer.invoke('save-export-jsonl', {
-        memberName: exportMeta.memberName,
-        fileName: `${exportPrefix}-${exportMeta.channelId}.jsonl`,
-        entries: buildFetchExportEntries(collectedMessages)
-    });
+            const exportMeta = getFetchExportMemberMeta(member.name, channelId);
+            const exportGroupName = exportMeta.groupName === '未知分团' && member.team
+                ? member.team
+                : exportMeta.groupName;
+            const exportPrefix = `${exportGroupName}-${exportMeta.memberName}`;
+            const saveResult = await ipcRenderer.invoke('save-export-jsonl', {
+                memberName: exportMeta.memberName,
+                fileName: `${exportPrefix}-${exportMeta.channelId}.jsonl`,
+                entries: buildFetchExportEntries(collectedMessages)
+            });
+            if (!isCurrentRun()) throw new Error('account-changed');
 
     if (!saveResult?.success) {
         throw new Error(saveResult?.msg || '保存 JSONL 失败');
@@ -1427,21 +1574,25 @@ async function fetchAutoMessageMemberRooms(member, token, options = {}) {
     const roomTypes = options.roomType === 'all' ? ['big', 'small'] : [options.roomType === 'small' ? 'small' : 'big'];
     const aggregate = { addedCount: 0, changed: false, skippedRoomCount: 0 };
 
-    for (let index = 0; index < roomTypes.length; index += 1) {
-        const roomType = roomTypes[index];
-        if (roomType === 'small' && !member.smallChannelId && options.roomType === 'all') {
-            aggregate.skippedRoomCount += 1;
-            continue;
-        }
+            for (let index = 0; index < roomTypes.length; index += 1) {
+                if (typeof options.isCurrentRun === 'function' && !options.isCurrentRun()) {
+                    throw new Error('account-changed');
+                }
+                const roomType = roomTypes[index];
+                if (roomType === 'small' && !member.smallChannelId && options.roomType === 'all') {
+                    aggregate.skippedRoomCount += 1;
+                    continue;
+                }
 
-        const result = await fetchAutoMessageMember(member, token, {
-            roomType,
-            messageScope: options.messageScope
-        });
-        aggregate.addedCount += result.addedCount;
-        aggregate.changed = aggregate.changed || result.changed;
-        if (index < roomTypes.length - 1) await sleep(350);
-    }
+                const result = await fetchAutoMessageMember(member, token, {
+                    roomType,
+                    messageScope: options.messageScope,
+                    isCurrentRun: options.isCurrentRun
+                });
+                aggregate.addedCount += result.addedCount;
+                aggregate.changed = aggregate.changed || result.changed;
+                if (index < roomTypes.length - 1) await sleep(350);
+            }
 
     return aggregate;
 }
@@ -1464,13 +1615,31 @@ async function runAutoMessageFetchNow(options = {}) {
         return { success: false, skipped: true, reason: 'missing-members' };
     }
 
-    const token = String(appToken || readStoredToken() || '').trim();
-    if (!token) {
-        setAutoMessageFetchStatus('等待账号登录，登录后会继续自动抓取', 'error');
-        if (manual) showToast('请先登录账号');
-        if (shouldSchedule) scheduleAutoMessageFetch(Math.min(60000, config.intervalMinutes * 60 * 1000));
-        return { success: false, skipped: true, reason: 'missing-token' };
-    }
+            const token = String(appToken || readStoredToken() || '').trim();
+            if (!token) {
+                setAutoMessageFetchStatus('等待账号登录，登录后会继续自动抓取', 'error');
+                if (manual) showToast('请先登录账号');
+                if (shouldSchedule) scheduleAutoMessageFetch(Math.min(60000, config.intervalMinutes * 60 * 1000));
+                return { success: false, skipped: true, reason: 'missing-token' };
+            }
+            const runContext = {
+                generation: autoMessageFetchAccountGeneration,
+                token,
+                accountScope: typeof window.getPocketAccountScopeKey === 'function'
+                    ? String(window.getPocketAccountScopeKey() || '')
+                    : '',
+                sessionGeneration: typeof window.getPocketAccountSessionGeneration === 'function'
+                    ? window.getPocketAccountSessionGeneration()
+                    : 0
+            };
+            const isCurrentRun = () => (
+                runContext.generation === autoMessageFetchAccountGeneration
+                && runContext.token === String(appToken || readStoredToken() || '').trim()
+                && (typeof window.getPocketAccountScopeKey !== 'function'
+                    || runContext.accountScope === String(window.getPocketAccountScopeKey() || ''))
+                && (typeof window.getPocketAccountSessionGeneration !== 'function'
+                    || runContext.sessionGeneration === window.getPocketAccountSessionGeneration())
+            );
 
     if (isAutoFetching || document.getElementById('loading-indicator')) {
         setAutoMessageFetchStatus('手动抓取正在运行，自动任务已顺延');
@@ -1490,31 +1659,56 @@ async function runAutoMessageFetchNow(options = {}) {
     let failedCount = 0;
     let skippedRoomCount = 0;
 
-    try {
-        for (let index = 0; index < config.members.length; index += 1) {
-            const latestConfig = readAutoMessageFetchConfig();
-            if (!manual && startup && !latestConfig.startupEnabled) break;
-            if (!manual && !startup && !latestConfig.scheduledEnabled) break;
-
-            const member = config.members[index];
-            const roomLabel = config.roomType === 'small' ? '小房间' : config.roomType === 'all' ? '所有房间' : '大房间';
-            const scopeLabel = config.messageScope === 'all' ? '全体消息' : '成员消息';
-            setAutoMessageFetchStatus(`正在抓取 ${member.name} · ${roomLabel} · ${scopeLabel}（${index + 1}/${config.members.length}）...`, 'running');
             try {
-                const result = await fetchAutoMessageMemberRooms(member, token, {
-                    roomType: config.roomType,
-                    messageScope: config.messageScope
-                });
-                addedCount += result.addedCount;
-                skippedRoomCount += result.skippedRoomCount;
-                if (result.changed) changedMemberCount += 1;
-            } catch (error) {
-                failedCount += 1;
-                console.warn(`自动抓取 ${member.name} 失败:`, error);
-            }
+                let nextMemberIndex = 0;
+                let completedMemberCount = 0;
+                const roomLabel = config.roomType === 'small'
+                    ? '小房间'
+                    : (config.roomType === 'all' ? '所有房间' : '大房间');
+                const scopeLabel = config.messageScope === 'all' ? '全体消息' : '成员消息';
+                const worker = async () => {
+                    while (nextMemberIndex < config.members.length) {
+                        if (!isCurrentRun()) return;
+                        const latestConfig = readAutoMessageFetchConfig();
+                        if (!manual && startup && !latestConfig.startupEnabled) return;
+                        if (!manual && !startup && !latestConfig.scheduledEnabled) return;
 
-            if (index < config.members.length - 1) await sleep(650);
-        }
+                        const memberIndex = nextMemberIndex;
+                        nextMemberIndex += 1;
+                        const member = config.members[memberIndex];
+                        setAutoMessageFetchStatus(
+                            `正在抓取 ${member.name} · ${roomLabel} · ${scopeLabel}（已完成 ${completedMemberCount}/${config.members.length}）...`,
+                            'running'
+                        );
+                        try {
+                            const result = await fetchAutoMessageMemberRooms(member, token, {
+                                roomType: config.roomType,
+                                messageScope: config.messageScope,
+                                isCurrentRun
+                            });
+                            if (!isCurrentRun()) return;
+                            addedCount += result.addedCount;
+                            skippedRoomCount += result.skippedRoomCount;
+                            if (result.changed) changedMemberCount += 1;
+                        } catch (error) {
+                            if (!isCurrentRun()) return;
+                            failedCount += 1;
+                            console.warn(`自动抓取 ${member.name} 失败:`, error);
+                        } finally {
+                            completedMemberCount += 1;
+                            setAutoMessageFetchStatus(
+                                `正在并发抓取成员消息（${completedMemberCount}/${config.members.length}）...`,
+                                'running'
+                            );
+                        }
+                    }
+                };
+
+                await Promise.all(Array.from(
+                    { length: Math.min(AUTO_MESSAGE_FETCH_MEMBER_CONCURRENCY, config.members.length) },
+                    () => worker()
+                ));
+                if (!isCurrentRun()) return { success: false, skipped: true, reason: 'account-changed' };
 
         const latestConfig = readAutoMessageFetchConfig();
         latestConfig.lastRunAt = Date.now();
@@ -1534,21 +1728,23 @@ async function runAutoMessageFetchNow(options = {}) {
             setAutoMessageFetchStatus('检查完成，没有新消息', 'success');
         }
 
-        return { success: failedCount === 0, addedCount, changedMemberCount, failedCount, skippedRoomCount };
-    } finally {
-        autoMessageFetchInFlight = false;
-        if (runButton) {
-            runButton.disabled = autoMessageFetchDraftDirty;
-            runButton.textContent = '立即抓取';
-            runButton.title = autoMessageFetchDraftDirty ? '自动抓取设置正在保存' : '';
-        }
+                return { success: failedCount === 0, addedCount, changedMemberCount, failedCount, skippedRoomCount };
+            } finally {
+                if (isCurrentRun()) {
+                    autoMessageFetchInFlight = false;
+                    if (runButton) {
+                        runButton.disabled = autoMessageFetchDraftDirty;
+                        runButton.textContent = '立即抓取';
+                        runButton.title = autoMessageFetchDraftDirty ? '自动抓取设置正在保存' : '';
+                    }
 
-        const latestConfig = readAutoMessageFetchConfig();
-        if (latestConfig.scheduledEnabled) {
-            scheduleAutoMessageFetch(latestConfig.intervalMinutes * 60 * 1000);
+                    const latestConfig = readAutoMessageFetchConfig();
+                    if (latestConfig.scheduledEnabled) {
+                        scheduleAutoMessageFetch(latestConfig.intervalMinutes * 60 * 1000);
+                    }
+                }
+            }
         }
-    }
-}
 
 function queueStartupAutoMessageFetch(delayMs = 0) {
     if (!autoMessageFetchStartupArmed || autoMessageFetchStartupCompleted) return;
@@ -1568,14 +1764,48 @@ function queueStartupAutoMessageFetch(delayMs = 0) {
                 return;
             }
 
-            autoMessageFetchStartupCompleted = true;
-            Promise.resolve(runAutoMessageFetchNow({ startup: true })).catch((error) => {
-                console.warn('打开软件自动抓取失败:', error);
-            });
-        },
-        Math.max(0, Number(delayMs) || 0)
-    );
-}
+                autoMessageFetchStartupCompleted = true;
+                Promise.resolve(runAutoMessageFetchNow({ startup: true })).catch(error => {
+                    console.warn('打开软件自动抓取失败:', error);
+                });
+            }, Math.max(0, Number(delayMs) || 0));
+        }
+
+        function invalidateAutoMessageFetchAccountState() {
+            autoMessageFetchAccountGeneration += 1;
+            if (autoMessageFetchTimer) clearTimeout(autoMessageFetchTimer);
+            if (autoMessageFetchStartupTimer) clearTimeout(autoMessageFetchStartupTimer);
+            autoMessageFetchTimer = null;
+            autoMessageFetchStartupTimer = null;
+            autoMessageFetchInFlight = false;
+            autoMessageFetchStartupArmed = false;
+            autoMessageFetchStartupCompleted = false;
+            autoMessageFetchDraftConfig = null;
+            autoMessageFetchDraftDirty = false;
+            const runButton = document.getElementById('btn-auto-fetch-now');
+            if (runButton) {
+                runButton.disabled = false;
+                runButton.textContent = '立即抓取';
+                runButton.title = '';
+            }
+        }
+
+        function activateAutoMessageFetchForCurrentAccount() {
+            invalidateAutoMessageFetchAccountState();
+            const config = readAutoMessageFetchConfig();
+            autoMessageFetchStartupArmed = config.startupEnabled && config.members.length > 0;
+            renderAutoMessageFetchUi({ keepStatus: true });
+            if (autoMessageFetchStartupArmed) {
+                queueStartupAutoMessageFetch(1200);
+            } else if (config.scheduledEnabled && config.members.length > 0) {
+                const intervalMs = config.intervalMinutes * 60 * 1000;
+                const elapsed = config.lastRunAt ? Date.now() - config.lastRunAt : intervalMs;
+                scheduleAutoMessageFetch(elapsed >= intervalMs ? 1200 : intervalMs - elapsed);
+            }
+        }
+
+        window.invalidateAutoMessageFetchAccountState = invalidateAutoMessageFetchAccountState;
+        window.activateAutoMessageFetchForCurrentAccount = activateAutoMessageFetchForCurrentAccount;
 
 function initializeAutoMessageFetch() {
     if (autoMessageFetchInitialized) return;
@@ -1589,17 +1819,13 @@ function initializeAutoMessageFetch() {
         if (!event.target.closest?.('.auto-fetch-dropdown')) closeAutoMessageFetchDropdowns();
     });
 
-    const config = readAutoMessageFetchConfig();
-    autoMessageFetchStartupArmed = config.startupEnabled && config.members.length > 0;
-    if (autoMessageFetchStartupArmed) {
-        queueStartupAutoMessageFetch(4000);
-    }
-    if (config.scheduledEnabled && config.members.length > 0 && !autoMessageFetchStartupArmed) {
-        const intervalMs = config.intervalMinutes * 60 * 1000;
-        const elapsed = config.lastRunAt ? Date.now() - config.lastRunAt : intervalMs;
-        scheduleAutoMessageFetch(elapsed >= intervalMs ? 4000 : intervalMs - elapsed);
-    }
-}
+            if (currentPocketUserId) {
+                activateAutoMessageFetchForCurrentAccount();
+            } else {
+                invalidateAutoMessageFetchAccountState();
+                renderAutoMessageFetchUi({ keepStatus: true });
+            }
+        }
 
 window.addEventListener('load', initializeAutoMessageFetch, { once: true });
 window.addEventListener('member-data-loaded', () => renderAutoMessageFetchUi({ keepStatus: true }));
@@ -1706,58 +1932,68 @@ async function performPocketCheckin(options = {}) {
         return { success: true, skipped: true, reason: 'already-recorded' };
     }
 
-    if (autoCheckinInFlight) {
-        return { success: false, skipped: true, reason: 'busy' };
-    }
+            if (autoCheckinInFlight) {
+                return { success: false, skipped: true, reason: 'busy' };
+            }
+            const accountContext = capturePocketAccountContext(appToken);
+            const checkinGeneration = autoCheckinGeneration;
+            const isCurrentCheckin = () => (
+                checkinGeneration === autoCheckinGeneration
+                && isPocketAccountContextCurrent(accountContext)
+            );
 
     autoCheckinInFlight = true;
     setCheckinButtonBusy(true);
     updateAutoCheckinStatus('正在签到，请稍候...', 'var(--primary)');
 
-    try {
-        const pa = window.getPA ? window.getPA() : null;
-        const res = await ipcRenderer.invoke('pocket-checkin', {
-            token: appToken,
-            pa
-        });
+            try {
+                const pa = window.getPA ? window.getPA() : null;
+                const res = await ipcRenderer.invoke('pocket-checkin', {
+                    token: accountContext.token,
+                    pa
+                });
+                if (!isCurrentCheckin()) return { success: false, skipped: true, reason: 'account-changed' };
 
-        if (res && res.success) {
-            markCheckinComplete(currentPocketUserId);
-            const successMsg = formatCheckinSuccessMessage(res.content);
-            updateAutoCheckinStatus(`${successMsg}，今日无需重复签到`, '#28a745');
-            if (shouldShowCheckinToast) {
-                showToast(successMsg);
+                if (res && res.success) {
+                    markCheckinComplete(accountContext.userId);
+                    const successMsg = formatCheckinSuccessMessage(res.content);
+                    updateAutoCheckinStatus(`${successMsg}，今日无需重复签到`, '#28a745');
+                    if (shouldShowCheckinToast) {
+                        showToast(successMsg);
+                    }
+                    return { success: true, content: res.content };
+                }
+
+                const errorMessage = res?.msg || '签到失败';
+                if (/已签到|重复签到|已经签到|已领取|明天再来/.test(errorMessage)) {
+                    markCheckinComplete(accountContext.userId);
+                    updateAutoCheckinStatus('今日签到已完成，重复打开软件不会再次提交', '#28a745');
+                    if (shouldShowCheckinToast) {
+                        showToast('今天已经签到过了');
+                    }
+                    return { success: true, skipped: true, reason: 'already-signed' };
+                }
+
+                updateAutoCheckinStatus(`签到失败：${errorMessage}`, '#ff4d4f');
+                if (shouldShowCheckinToast) {
+                    showToast(`签到失败：${errorMessage}`);
+                }
+                return { success: false, msg: errorMessage };
+            } catch (error) {
+                if (!isCurrentCheckin()) return { success: false, skipped: true, reason: 'account-changed' };
+                const errorMessage = error?.message || '签到请求异常';
+                updateAutoCheckinStatus(`签到失败：${errorMessage}`, '#ff4d4f');
+                if (shouldShowCheckinToast) {
+                    showToast(`签到失败：${errorMessage}`);
+                }
+                return { success: false, msg: errorMessage };
+            } finally {
+                if (isCurrentCheckin()) {
+                    autoCheckinInFlight = false;
+                    setCheckinButtonBusy(false);
+                }
             }
-            return { success: true, content: res.content };
         }
-
-        const errorMessage = res?.msg || '签到失败';
-        if (/已签到|重复签到|已经签到|已领取|明天再来/.test(errorMessage)) {
-            markCheckinComplete(currentPocketUserId);
-            updateAutoCheckinStatus('今日签到已完成，重复打开软件不会再次提交', '#28a745');
-            if (shouldShowCheckinToast) {
-                showToast('今天已经签到过了');
-            }
-            return { success: true, skipped: true, reason: 'already-signed' };
-        }
-
-        updateAutoCheckinStatus(`签到失败：${errorMessage}`, '#ff4d4f');
-        if (shouldShowCheckinToast) {
-            showToast(`签到失败：${errorMessage}`);
-        }
-        return { success: false, msg: errorMessage };
-    } catch (error) {
-        const errorMessage = error?.message || '签到请求异常';
-        updateAutoCheckinStatus(`签到失败：${errorMessage}`, '#ff4d4f');
-        if (shouldShowCheckinToast) {
-            showToast(`签到失败：${errorMessage}`);
-        }
-        return { success: false, msg: errorMessage };
-    } finally {
-        autoCheckinInFlight = false;
-        setCheckinButtonBusy(false);
-    }
-}
 
 async function handleManualCheckIn() {
     await performPocketCheckin({
@@ -1939,18 +2175,18 @@ function renderLive48QrAccountInfo(accountInfo = null) {
     box.style.display = 'flex';
 }
 
-async function refreshLive48QrLoginStatus() {
-    try {
-        const res = await ipcRenderer.invoke('login-qr-status');
-        if (res && res.loggedIn && res.accountInfo) {
-            renderLive48QrAccountInfo(res.accountInfo);
-            setLive48QrMessage('live.48.cn 已登录', '#28a745');
-        } else if (res && res.accountInfo) {
-            renderLive48QrAccountInfo(res.accountInfo);
-            setLive48QrMessage(res.msg || 'live.48.cn 登录状态可能已失效', '#fa8c16');
+        async function refreshLive48QrLoginStatus() {
+            try {
+                const res = await ipcRenderer.invoke('login-qr-status');
+                if (res && res.loggedIn && res.accountInfo) {
+                    renderLive48QrAccountInfo(res.accountInfo);
+                    setLive48QrMessage('live.48.cn 已登录', '#28a745');
+                } else if (res && res.accountInfo) {
+                    renderLive48QrAccountInfo(res.accountInfo);
+                    setLive48QrMessage(res.msg || 'live.48.cn 登录状态可能已失效', '#fa8c16');
+                }
+            } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/fetch-legacy.js'); }
         }
-    } catch (error) {}
-}
 
 function resetLive48QrDisplay() {
     const qrImg = document.getElementById('live48-login-qr');
@@ -2085,14 +2321,14 @@ async function startLive48QrLogin() {
 
 let currentVerifyAnswer = null;
 
-async function getLoginPa() {
-    if (window.yayaWasmReadyPromise) {
-        try {
-            await window.yayaWasmReadyPromise;
-        } catch (error) {}
-    }
-    return typeof window.getPA === 'function' ? window.getPA() : null;
-}
+        async function getLoginPa() {
+            if (window.yayaWasmReadyPromise) {
+                try {
+                    await window.yayaWasmReadyPromise;
+                } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/fetch-legacy.js'); }
+            }
+            return typeof window.getPA === 'function' ? window.getPA() : null;
+        }
 
 async function handleSendSms(answer = null) {
     const mobile = document.getElementById('login-mobile').value.trim();
@@ -2143,10 +2379,10 @@ async function handleSendSms(answer = null) {
 
             msgBox.innerText = '';
 
-            if (verifyArea && verifyQuestion && verifyOptions) {
-                verifyArea.style.display = 'block';
-                verifyQuestion.innerText = res.question;
-                verifyOptions.innerHTML = '';
+                    if (verifyArea && verifyQuestion && verifyOptions) {
+                        verifyArea.style.display = 'block';
+                        verifyQuestion.innerText = res.question;
+                        verifyOptions.replaceChildren();
 
                 res.options.forEach((opt) => {
                     const optBtn = document.createElement('button');
@@ -2205,17 +2441,20 @@ async function handleLoginByCode() {
     const code = document.getElementById('login-code').value.trim();
     const msgDiv = document.getElementById('login-msg');
 
-    if (!mobile || !code) {
-        msgDiv.innerText = '请填写手机号和验证码';
-        return;
-    }
+            if (!mobile || !code) {
+                msgDiv.innerText = '请填写手机号和验证码';
+                return;
+            }
+            const loginGeneration = ++accountValidationGeneration;
 
     msgDiv.innerText = '登录中...';
     msgDiv.style.color = 'var(--primary)';
 
-    try {
-        const pa = await getLoginPa();
-        const res = await ipcRenderer.invoke('login-by-code', { mobile, code, pa });
+            try {
+                const pa = await getLoginPa();
+                if (loginGeneration !== accountValidationGeneration) return;
+                const res = await ipcRenderer.invoke('login-by-code', { mobile, code, pa });
+                if (loginGeneration !== accountValidationGeneration) return;
 
         if (res.status === 200 && res.success) {
             const token = res.content.token;
@@ -2228,52 +2467,70 @@ async function handleLoginByCode() {
             msgDiv.style.color = '#28a745';
             msgDiv.innerText = '登录成功！正在跳转...';
 
-            setTimeout(() => {
-                checkToken();
-            }, 500);
-        } else {
-            throw new Error(res.message || '登录失败');
+                    setTimeout(() => {
+                        if (loginGeneration === accountValidationGeneration) checkToken();
+                    }, 500);
+                } else {
+                    throw new Error(res.message || '登录失败');
+                }
+            } catch (err) {
+                if (loginGeneration !== accountValidationGeneration) return;
+                msgDiv.style.color = '#ff4d4f';
+                msgDiv.innerText = '登录失败: ' + err.message;
+            }
         }
-    } catch (err) {
-        msgDiv.style.color = '#ff4d4f';
-        msgDiv.innerText = '登录失败: ' + err.message;
-    }
-}
-async function checkToken() {
-    const tokenField = document.getElementById('login-token');
-    const tokenInput =
-        (tokenField && tokenField.value ? tokenField.value.trim() : '') ||
-        (typeof appToken !== 'undefined' && appToken ? String(appToken).trim() : '') ||
-        readStoredToken();
-    const msgBox = document.getElementById('login-msg');
-    const panelInput = document.getElementById('panel-login');
-    const panelSuccess = document.getElementById('panel-logged-in');
+        async function checkToken() {
+            const tokenField = document.getElementById('login-token');
+            const tokenInput = (tokenField && tokenField.value ? tokenField.value.trim() : '')
+                || (typeof appToken !== 'undefined' && appToken ? String(appToken).trim() : '')
+                || readStoredToken();
+            const msgBox = document.getElementById('login-msg');
+            const panelInput = document.getElementById('panel-login');
+            const panelSuccess = document.getElementById('panel-logged-in');
 
     const accountArea = document.getElementById('account-switcher-area');
     const accountList = document.getElementById('account-list');
 
-    if (!tokenInput) {
-        if (msgBox) msgBox.innerText = '请输入 Token';
-        return;
-    }
+            if (!tokenInput) {
+                if (msgBox) msgBox.innerText = '请输入 Token';
+                return;
+            }
+            const previousToken = String(appToken || readStoredToken() || '').trim();
+            if (previousToken && previousToken !== tokenInput
+                && typeof resetAccountScopedSessionState === 'function') {
+                resetAccountScopedSessionState();
+                currentPocketUserId = '';
+                currentPocketProfile = { nickname: '', avatar: '', avatarUrl: '' };
+            }
+            const validationGeneration = ++accountValidationGeneration;
+            const isCurrentValidation = () => (
+                validationGeneration === accountValidationGeneration
+                && String(appToken || '').trim() === tokenInput
+                && String(readStoredToken() || '').trim() === tokenInput
+            );
 
-    appToken = tokenInput;
-    writeStoredToken(appToken);
-    if (tokenField && tokenField.value !== tokenInput) {
-        tokenField.value = tokenInput;
-    }
+            appToken = tokenInput;
+            writeStoredToken(appToken);
+            if (previousToken && previousToken !== tokenInput) {
+                syncWebAccountButton(currentPocketProfile, false);
+                syncAccountProfileEditUi(currentPocketProfile);
+            }
+            if (tokenField && tokenField.value !== tokenInput) {
+                tokenField.value = tokenInput;
+            }
 
     if (msgBox) {
         msgBox.innerText = '正在验证身份...';
         msgBox.style.color = '#666';
     }
 
-    try {
-        const pa = window.getPA ? window.getPA() : null;
-        const res = await ipcRenderer.invoke('login-check-token', {
-            token: tokenInput,
-            pa
-        });
+            try {
+                const pa = window.getPA ? window.getPA() : null;
+                const res = await ipcRenderer.invoke('login-check-token', {
+                    token: tokenInput,
+                    pa
+                });
+                if (!isCurrentValidation()) return;
 
         if (res.success) {
             if (panelInput) panelInput.style.display = 'none';
@@ -2281,43 +2538,44 @@ async function checkToken() {
 
             updateLocalGiftDatabase();
 
-            const userInfo = res.userInfo;
-            const safeName = userInfo?.baseUserInfo?.nickname || userInfo?.nickname || '口袋用户';
-            const userId = userInfo?.baseUserInfo?.userId || userInfo?.userId || userInfo?.id || 'Unknown';
-            const currentAvatarRaw = userInfo?.baseUserInfo?.avatar || userInfo?.avatar || userInfo?.baseUserInfo?.faceImage || '';
-            const currentAvatarUrl = currentAvatarRaw
-                ? String(currentAvatarRaw).startsWith('http')
-                    ? String(currentAvatarRaw)
-                    : `https://source.48.cn${currentAvatarRaw}`
-                : './icon.png';
-            if (currentPocketUserId && String(currentPocketUserId) !== String(userId) && typeof resetAccountScopedSessionState === 'function') {
-                resetAccountScopedSessionState();
-            }
-            currentPocketUserId = String(userId);
-            currentPocketProfile = {
-                nickname: safeName,
-                avatar: currentAvatarRaw,
-                avatarUrl: currentAvatarUrl
-            };
-            syncWebAccountButton(currentPocketProfile, true);
-            document.getElementById('user-nickname').innerText = safeName;
-            const idDisplay = document.getElementById('user-id-display');
-            if (idDisplay) idDisplay.innerText = `ID: ${userId}`;
-            const currentAvatarEl = document.getElementById('current-user-avatar');
-            if (currentAvatarEl) currentAvatarEl.src = currentAvatarUrl;
-            syncAccountProfileEditUi(currentPocketProfile);
-            refreshAccountProfileMeta();
-            if (msgBox) msgBox.innerText = '';
-            syncAutoCheckinUi();
-            queueStartupAutoMessageFetch(1200);
-            if (typeof startFollowedRoomNotificationPolling === 'function') {
-                startFollowedRoomNotificationPolling(1200, { silentInitialSync: true });
-            }
+                    const userInfo = res.userInfo;
+                    const safeName = userInfo?.baseUserInfo?.nickname || userInfo?.nickname || '口袋用户';
+                    const userId = userInfo?.baseUserInfo?.userId || userInfo?.userId || userInfo?.id || 'Unknown';
+                    const currentAvatarRaw = userInfo?.baseUserInfo?.avatar || userInfo?.avatar || userInfo?.baseUserInfo?.faceImage || '';
+                    const currentAvatarUrl = currentAvatarRaw
+                        ? (String(currentAvatarRaw).startsWith('http') ? String(currentAvatarRaw) : `https://source.48.cn${currentAvatarRaw}`)
+                        : './icon.png';
+                    if (currentPocketUserId && String(currentPocketUserId) !== String(userId)
+                        && typeof resetAccountScopedSessionState === 'function') {
+                        resetAccountScopedSessionState();
+                    }
+                    currentPocketUserId = String(userId);
+                    currentPocketProfile = {
+                        nickname: safeName,
+                        avatar: currentAvatarRaw,
+                        avatarUrl: currentAvatarUrl
+                    };
+                    syncWebAccountButton(currentPocketProfile, true);
+                    document.getElementById('user-nickname').innerText = safeName;
+                    const idDisplay = document.getElementById('user-id-display');
+                    if (idDisplay) idDisplay.innerText = `ID: ${userId}`;
+                    const currentAvatarEl = document.getElementById('current-user-avatar');
+                    if (currentAvatarEl) currentAvatarEl.src = currentAvatarUrl;
+                    syncAccountProfileEditUi(currentPocketProfile);
+                    refreshAccountProfileMeta();
+                    if (msgBox) msgBox.innerText = '';
+                    syncAutoCheckinUi();
+                    if (typeof window.activateAutoMessageFetchForCurrentAccount === 'function') {
+                        window.activateAutoMessageFetchForCurrentAccount();
+                    }
+                    if (typeof startFollowedRoomNotificationPolling === 'function') {
+                        startFollowedRoomNotificationPolling(1200, { silentInitialSync: true });
+                    }
 
-            if (accountArea && accountList) {
-                accountList.innerHTML = '';
-                let hasOtherAccounts = false;
-                const bigSmall = userInfo.bigSmallInfo;
+                    if (accountArea && accountList) {
+                        accountList.replaceChildren();
+                        let hasOtherAccounts = false;
+                        const bigSmall = userInfo.bigSmallInfo;
 
                 const createCard = (user, type) => {
                     const card = document.createElement('div');
@@ -2364,82 +2622,101 @@ async function checkToken() {
                 accountArea.style.display = hasOtherAccounts ? 'block' : 'none';
             }
 
-            await performPocketCheckin({
-                force: false,
-                silentWhenSkipped: true
-            });
-        } else {
-            clearStoredToken();
-            appToken = '';
-            if (typeof stopFollowedRoomNotificationPolling === 'function') {
-                stopFollowedRoomNotificationPolling();
-            }
-            currentPocketUserId = '';
-            currentPocketProfile = { nickname: '', avatar: '', avatarUrl: '' };
-            clearWebAccountProfileCache();
-            syncWebAccountButton(currentPocketProfile, false);
-            if (panelInput) panelInput.style.display = 'block';
-            if (panelSuccess) panelSuccess.style.display = 'none';
-            syncAutoCheckinUi();
-            if (msgBox) {
-                msgBox.style.color = '#ff4d4f';
-                msgBox.innerText = res.msg || 'Token 无效';
-            }
-        }
-    } catch (e) {
-        console.error(e);
-        if (typeof stopFollowedRoomNotificationPolling === 'function') {
-            stopFollowedRoomNotificationPolling();
-        }
-        currentPocketUserId = '';
-        currentPocketProfile = { nickname: '', avatar: '', avatarUrl: '' };
-        syncWebAccountButton(currentPocketProfile, false);
-        if (panelInput) panelInput.style.display = 'block';
-        if (panelSuccess) panelSuccess.style.display = 'none';
-        syncAutoCheckinUi();
-        if (msgBox) {
-            msgBox.style.color = '#ff4d4f';
-            msgBox.innerText = '验证出错: ' + e.message;
-        }
-    }
-}
+                    await performPocketCheckin({
+                        force: false,
+                        silentWhenSkipped: true
+                    });
 
-async function handleSwitchAccount(targetUserId, targetName) {
-    const nickNameEl = document.getElementById('user-nickname');
-    const originalName = nickNameEl.innerText;
-
-    nickNameEl.innerText = `正在切换...`;
-
-    try {
-        const pa = window.getPA ? window.getPA() : null;
-        const res = await ipcRenderer.invoke('switch-big-small', {
-            token: appToken,
-            pa: pa,
-            targetUserId: targetUserId
-        });
-
-        if (res.success) {
-            const newToken = res.content.token;
-            if (newToken) {
+                } else {
+                    if (typeof resetAccountScopedSessionState === 'function') {
+                        resetAccountScopedSessionState();
+                    }
+                    clearStoredToken();
+                    appToken = '';
+                    if (typeof stopFollowedRoomNotificationPolling === 'function') {
+                        stopFollowedRoomNotificationPolling();
+                    }
+                    currentPocketUserId = '';
+                    currentPocketProfile = { nickname: '', avatar: '', avatarUrl: '' };
+                    clearWebAccountProfileCache();
+                    syncWebAccountButton(currentPocketProfile, false);
+                    if (panelInput) panelInput.style.display = 'block';
+                    if (panelSuccess) panelSuccess.style.display = 'none';
+                    syncAutoCheckinUi();
+                    if (msgBox) {
+                        msgBox.style.color = '#ff4d4f';
+                        msgBox.innerText = res.msg || 'Token 无效';
+                    }
+                }
+            } catch (e) {
+                if (!isCurrentValidation()) return;
+                console.error(e);
                 if (typeof resetAccountScopedSessionState === 'function') {
                     resetAccountScopedSessionState();
                 }
-                appToken = newToken;
-                writeStoredToken(newToken);
-                document.getElementById('login-token').value = newToken;
-
-                await checkToken();
-            } else {
-                throw new Error('接口未返回 Token');
+                if (typeof stopFollowedRoomNotificationPolling === 'function') {
+                    stopFollowedRoomNotificationPolling();
+                }
+                currentPocketUserId = '';
+                currentPocketProfile = { nickname: '', avatar: '', avatarUrl: '' };
+                syncWebAccountButton(currentPocketProfile, false);
+                if (panelInput) panelInput.style.display = 'block';
+                if (panelSuccess) panelSuccess.style.display = 'none';
+                syncAutoCheckinUi();
+                if (msgBox) {
+                    msgBox.style.color = '#ff4d4f';
+                    msgBox.innerText = '验证出错: ' + e.message;
+                }
             }
-        } else {
-            throw new Error(res.msg || '未知错误');
         }
-    } catch (e) {
-        showToast(`切换失败: ${e.message}`);
-        nickNameEl.innerText = originalName;
-    }
-}
+
+        async function handleSwitchAccount(targetUserId, targetName) {
+
+            const switchGeneration = ++accountSwitchGeneration;
+            accountValidationGeneration += 1;
+
+            const nickNameEl = document.getElementById('user-nickname');
+            const originalName = nickNameEl.innerText;
+
+    nickNameEl.innerText = `正在切换...`;
+
+            try {
+                const pa = window.getPA ? window.getPA() : null;
+                const res = await ipcRenderer.invoke('switch-big-small', {
+                    token: appToken,
+                    pa: pa,
+                    targetUserId: targetUserId
+                });
+                if (switchGeneration !== accountSwitchGeneration) return;
+
+                if (res.success) {
+                    const newToken = res.content.token;
+                    if (newToken) {
+                        if (typeof resetAccountScopedSessionState === 'function') {
+                            resetAccountScopedSessionState();
+                        }
+                        currentPocketUserId = '';
+                        currentPocketProfile = { nickname: '', avatar: '', avatarUrl: '' };
+                        appToken = newToken;
+                        writeStoredToken(newToken);
+                        syncWebAccountButton(currentPocketProfile, false);
+                        syncAccountProfileEditUi(currentPocketProfile);
+                        document.getElementById('login-token').value = newToken;
+
+                        await checkToken();
+
+                    } else {
+                        throw new Error("接口未返回 Token");
+                    }
+                } else {
+                    throw new Error(res.msg || "未知错误");
+                }
+            } catch (e) {
+                if (switchGeneration !== accountSwitchGeneration) return;
+                showToast(`切换失败: ${e.message}`);
+                nickNameEl.innerText = originalName;
+            }
+        }
 
 function copyToken() {
     const token = appToken || readStoredToken();
@@ -2468,21 +2745,23 @@ function copyToken() {
     }
 }
 
-function logout() {
-    clearStoredToken();
-    appToken = '';
-    if (typeof stopFollowedRoomNotificationPolling === 'function') {
-        stopFollowedRoomNotificationPolling();
-    }
-    currentPocketUserId = '';
-    currentPocketProfile = { nickname: '', avatar: '', avatarUrl: '' };
-    clearWebAccountProfileCache();
-    syncWebAccountButton(currentPocketProfile, false);
-    selectedAccountAvatarFile = null;
-    selectedAccountAvatarDataUrl = '';
-    if (typeof resetAccountScopedSessionState === 'function') {
-        resetAccountScopedSessionState();
-    }
+        function logout() {
+            accountValidationGeneration += 1;
+            accountSwitchGeneration += 1;
+            clearStoredToken();
+            appToken = '';
+            if (typeof stopFollowedRoomNotificationPolling === 'function') {
+                stopFollowedRoomNotificationPolling();
+            }
+            currentPocketUserId = '';
+            currentPocketProfile = { nickname: '', avatar: '', avatarUrl: '' };
+            clearWebAccountProfileCache();
+            syncWebAccountButton(currentPocketProfile, false);
+            selectedAccountAvatarFile = null;
+            selectedAccountAvatarDataUrl = '';
+            if (typeof resetAccountScopedSessionState === 'function') {
+                resetAccountScopedSessionState();
+            }
 
     const panelInput = document.getElementById('panel-login');
     const panelSuccess = document.getElementById('panel-logged-in');
@@ -2533,19 +2812,19 @@ async function fetchMsgs(isLoadMore = false) {
         return;
     }
 
-    if (!isLoadMore) {
-        box.innerHTML = '';
-        lastNextTime = 0;
-        allFetchedMsgs = [];
-        currentFetchStopKey = loadFetchBoundary(serverId, channelId, isFetchAllMode);
-        currentFetchStoppedAtPrevious = false;
-        currentFetchedServerId = serverId;
-        currentFetchedChannelId = channelId;
-        currentFetchedFetchAllMode = isFetchAllMode;
-        const statusEl = document.getElementById('fetch-status');
-        if (statusEl) statusEl.innerHTML = '';
-        if (exportBtn) exportBtn.disabled = true;
-    }
+            if (!isLoadMore) {
+                box.replaceChildren();
+                lastNextTime = 0;
+                allFetchedMsgs = [];
+                currentFetchStopKey = loadFetchBoundary(serverId, channelId, isFetchAllMode);
+                currentFetchStoppedAtPrevious = false;
+                currentFetchedServerId = serverId;
+                currentFetchedChannelId = channelId;
+                currentFetchedFetchAllMode = isFetchAllMode;
+                const statusEl = document.getElementById('fetch-status');
+                if (statusEl) statusEl.replaceChildren();
+                if (exportBtn) exportBtn.disabled = true;
+            }
 
     const loadingDiv = document.createElement('div');
     loadingDiv.innerText = '加载中...';
@@ -2580,18 +2859,18 @@ async function fetchMsgs(isLoadMore = false) {
 
             let list = content.messageList || content.message || [];
 
-            if (!isFetchAllMode) {
-                list = list.filter((m) => {
-                    let sid = m.senderUserId || m.senderId || m.uid;
-                    if (!sid && m.extInfo) {
-                        try {
-                            const ext = typeof m.extInfo === 'string' ? JSON.parse(m.extInfo) : m.extInfo;
-                            if (ext.user) sid = ext.user.userId || ext.user.id;
-                        } catch (e) {}
+                    if (!isFetchAllMode) {
+                        list = list.filter(m => {
+                            let sid = m.senderUserId || m.senderId || m.uid;
+                            if (!sid && m.extInfo) {
+                                try {
+                                    const ext = typeof m.extInfo === 'string' ? JSON.parse(m.extInfo) : m.extInfo;
+                                    if (ext.user) sid = ext.user.userId || ext.user.id;
+                                } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/fetch-legacy.js'); }
+                            }
+                            return String(sid) !== '121569667';
+                        });
                     }
-                    return String(sid) !== '121569667';
-                });
-            }
 
             let stoppedAtPreviousInThisBatch = false;
             if (currentFetchStopKey) {
@@ -2856,17 +3135,17 @@ function buildFetchExportEntries(messages) {
         let exportUserId = m.senderUserId || '';
         let exportRoleId = 0;
 
-        if (m.extInfo) {
-            try {
-                const ext = typeof m.extInfo === 'string' ? JSON.parse(m.extInfo) : m.extInfo;
-                if (ext?.user) {
-                    nickName = ext.user.nickName || nickName;
-                    if (ext.user.avatar) avatarUrl = fixFetchExportUrl(ext.user.avatar);
-                    if (!exportUserId) exportUserId = ext.user.userId || ext.user.id || '';
-                    exportRoleId = Number(ext.user.roleId) || 0;
+                if (m.extInfo) {
+                    try {
+                        const ext = typeof m.extInfo === 'string' ? JSON.parse(m.extInfo) : m.extInfo;
+                        if (ext?.user) {
+                            nickName = ext.user.nickName || nickName;
+                            if (ext.user.avatar) avatarUrl = fixFetchExportUrl(ext.user.avatar);
+                            if (!exportUserId) exportUserId = ext.user.userId || ext.user.id || '';
+                            exportRoleId = Number(ext.user.roleId) || 0;
+                        }
+                    } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/fetch-legacy.js'); }
                 }
-            } catch (error) {}
-        }
 
         const sortTime = Number(m.msgTime) || Date.now();
         const messageDate = new Date(sortTime);

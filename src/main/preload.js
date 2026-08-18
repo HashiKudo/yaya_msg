@@ -1,10 +1,12 @@
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const https = require('https');
 const readline = require('readline');
 const { pathToFileURL } = require('url');
 const { ipcRenderer, shell, webFrame } = require('electron');
 const { ensureStoragePaths } = require('../common/storage-paths');
+const { reportIgnoredError } = require('../common/error-utils');
 
 const appDir = path.join(__dirname, '../../');
 const platform = process.platform;
@@ -68,7 +70,7 @@ function removeFileIfExists(filePath) {
         if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
         }
-    } catch (error) {}
+    } catch (error) { reportIgnoredError(error, 'src/main/preload.js'); }
 }
 
 function removeManagedBackgroundFiles(exceptFileName = '') {
@@ -80,7 +82,7 @@ function removeManagedBackgroundFiles(exceptFileName = '') {
             if (exceptFileName && entry.name === exceptFileName) return;
             removeFileIfExists(path.join(storagePaths.internalDataDir, entry.name));
         });
-    } catch (error) {}
+    } catch (error) { reportIgnoredError(error, 'src/main/preload.js'); }
 }
 
 function persistBackgroundFileSync(bufferLike, extName) {
@@ -239,6 +241,21 @@ function removeCacheValueSync(key) {
     });
 }
 
+function getCachedImageThumbnailUrlSync(url, width = 520) {
+    const remoteUrl = String(url || '').trim();
+    if (!/^https?:\/\//i.test(remoteUrl)) return '';
+
+    const targetWidth = Math.max(160, Math.min(900, Math.round(Number(width) || 520)));
+    const key = crypto.createHash('sha1').update(`${targetWidth}:${remoteUrl}`).digest('hex');
+    const filePath = path.join(storagePaths.internalDataDir, 'image-thumb-cache', `${key}.jpg`);
+    try {
+        if (fs.existsSync(filePath) && fs.statSync(filePath).size > 128) {
+            return pathToFileURL(filePath).href;
+        }
+    } catch (error) { reportIgnoredError(error, 'src/main/preload.js'); }
+    return '';
+}
+
 window.desktop = {
     Buffer,
     appDir,
@@ -284,6 +301,9 @@ window.desktop = {
         getCacheValueSync,
         setCacheValueSync,
         removeCacheValueSync
+    },
+    imageCache: {
+        getCachedThumbnailUrlSync: getCachedImageThumbnailUrlSync
     }
 };
 
@@ -293,7 +313,7 @@ function resetRendererPageZoom() {
     try {
         webFrame.setZoomLevel(0);
         webFrame.setZoomFactor(1);
-    } catch (error) {}
+    } catch (error) { reportIgnoredError(error, 'src/main/preload.js'); }
 }
 
 resetRendererPageZoom();

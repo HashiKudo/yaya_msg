@@ -2,6 +2,7 @@
     window.YayaRendererFeatures = window.YayaRendererFeatures || {};
 
     window.YayaRendererFeatures.createCommunityFeature = function createCommunityFeature(deps) {
+        const { escapeHtml, escapeJsString, normalize48Url } = window.YayaRendererUtils;
         const {
             getAppToken,
             getCurrentUserId,
@@ -22,31 +23,6 @@
         const commentStateMap = new Map();
         const postDetailStateMap = new Map();
 
-        function escapeHtml(value) {
-            return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#39;'
-            }[char]));
-        }
-
-        function escapeJsString(value) {
-            return String(value == null ? '' : value)
-                .replace(/\\/g, '\\\\')
-                .replace(/'/g, "\\'")
-                .replace(/\r?\n/g, ' ');
-        }
-
-        function normalize48Url(value) {
-            const raw = String(value || '').trim();
-            if (!raw) return '';
-            if (/^https?:\/\//i.test(raw)) return raw;
-            if (raw.includes('48.cn')) return `https://${raw.replace(/^\/+/, '')}`;
-            return raw.startsWith('/') ? `https://source3.48.cn${raw}` : `https://source3.48.cn/${raw}`;
-        }
-
         function formatTime(value) {
             const raw = Number(value);
             const timestamp = Number.isFinite(raw)
@@ -63,6 +39,12 @@
             if (!Number.isFinite(number)) return String(value ?? '0');
             if (number >= 10000) return `${(number / 10000).toFixed(number >= 100000 ? 0 : 1)}万`;
             return String(number);
+        }
+
+        function getCommunityProfileOnclick(userId, name, avatar) {
+            const normalizedUserId = String(userId || '').trim();
+            if (!normalizedUserId) return '';
+            return `onclick="window.openFollowedUserProfile && window.openFollowedUserProfile('${escapeHtml(escapeJsString(normalizedUserId))}', '${escapeHtml(escapeJsString(name))}', '${escapeHtml(escapeJsString(avatar))}', false)"`;
         }
 
         function getResultMessage(result) {
@@ -402,8 +384,7 @@
                 const candidates = [raw];
                 try {
                     candidates.push(decodeURIComponent(raw));
-                } catch (_) {
-                }
+                } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/community-feature.js'); }
                 for (const candidate of candidates) {
                     for (const pattern of patterns) {
                         const match = candidate.match(pattern);
@@ -484,8 +465,10 @@
             const data = item?.data || {};
             const post = data.postsInfo || data.post || data || {};
             const user = post.user || data.user || {};
+            const userId = String(user.userId || user.id || post.userId || data.userId || '').trim();
             const name = user.realNickName || user.nickName || user.nickname || user.starName || user.name || '未知用户';
             const avatar = normalize48Url(user.avatar || user.headImg || user.headImgUrl || user.icon);
+            const openProfile = getCommunityProfileOnclick(userId, name, avatar);
             const title = post.title || '';
             const rawText = post.previewText || post.postContent || post.content || '';
             const postId = String(post.postId || data.postId || '').trim();
@@ -513,11 +496,13 @@
             return `
                 <article class="community-card community-post-card" data-post-id="${escapeHtml(postId)}">
                     <div class="community-post-head">
-                        ${avatar
-                            ? `<img class="community-avatar" src="${escapeHtml(avatar)}" alt="">`
-                            : '<div class="community-avatar community-avatar-placeholder"></div>'}
+                        <button type="button" class="community-post-profile-avatar" ${openProfile} ${userId ? `aria-label="查看 ${escapeHtml(name)} 的用户主页"` : 'disabled'}>
+                            ${avatar
+                                ? `<img class="community-avatar" src="${escapeHtml(avatar)}" alt="">`
+                                : '<span class="community-avatar community-avatar-placeholder"></span>'}
+                        </button>
                         <div class="community-post-meta">
-                            <div class="community-post-name">${escapeHtml(name)}</div>
+                            <button type="button" class="community-post-name community-post-profile-name" ${openProfile} ${userId ? '' : 'disabled'}>${escapeHtml(name)}</button>
                             <div class="community-post-time">${escapeHtml(time)}</div>
                         </div>
                     </div>
@@ -568,20 +553,24 @@
 
             const html = comments.map(comment => {
                 const user = state.userMap.get(String(comment.userId || '')) || {};
+                const userId = String(user.userId || comment.userId || '').trim();
                 const avatar = normalize48Url(user.avatar || user.headImg || user.icon);
                 const name = user.nickname || user.realNickName || user.name || String(comment.userId || '用户');
+                const openProfile = getCommunityProfileOnclick(userId, name, avatar);
                 const text = renderText(comment.msg || comment.comment || '');
                 const commentId = String(comment.commentId || comment.resourceId || '').trim();
                 const currentUserId = typeof getCurrentUserId === 'function' ? String(getCurrentUserId() || '') : '';
                 const canDelete = commentId && currentUserId && String(comment.userId || '') === currentUserId;
                 return `
                     <div class="community-comment-item">
-                        ${avatar
-                            ? `<img class="community-comment-avatar" src="${escapeHtml(avatar)}" alt="">`
-                            : '<div class="community-comment-avatar community-avatar-placeholder"></div>'}
+                        <button type="button" class="community-comment-profile-avatar" ${openProfile} ${userId ? `aria-label="查看 ${escapeHtml(name)} 的用户主页"` : 'disabled'}>
+                            ${avatar
+                                ? `<img class="community-comment-avatar" src="${escapeHtml(avatar)}" alt="">`
+                                : '<span class="community-comment-avatar community-avatar-placeholder"></span>'}
+                        </button>
                         <div class="community-comment-body">
                             <div class="community-comment-head">
-                                <span class="community-comment-name">${escapeHtml(name)}</span>
+                                <button type="button" class="community-comment-name community-comment-profile-name" ${openProfile} ${userId ? '' : 'disabled'}>${escapeHtml(name)}</button>
                                 <span class="community-comment-time">${escapeHtml(formatTime(comment.ctime))}</span>
                                 ${canDelete ? `
                                     <button class="community-comment-delete" onclick="deleteCommunityComment('${escapeJsString(postId)}', '${escapeJsString(commentId)}')">删除</button>
@@ -674,7 +663,7 @@
             if (!panel) return;
             if (panel.classList.contains('is-open')) {
                 panel.classList.remove('is-open');
-                panel.innerHTML = '';
+                panel.replaceChildren();
                 return;
             }
             loadCommunityComments(postId, { reset: true });
@@ -852,7 +841,7 @@
                 return '';
             }).filter(Boolean).join('');
 
-            if (!append) listEl.innerHTML = '';
+            if (!append) listEl.replaceChildren();
             if (html) {
                 listEl.insertAdjacentHTML('beforeend', html);
             } else if (!append) {
@@ -938,7 +927,7 @@
             isLoading = true;
             if (reset) {
                 nextId = 0;
-                listEl.innerHTML = '';
+                listEl.replaceChildren();
             }
             updateLoadState();
 

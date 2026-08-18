@@ -1,15 +1,14 @@
-(function () {
-    const settingsApi = window.desktop && window.desktop.appSettings ? window.desktop.appSettings : null;
-    const savedTheme =
-        settingsApi && typeof settingsApi.getSettingValueSync === 'function'
-            ? String(settingsApi.getSettingValueSync('theme', 'light') || 'light')
-            : localStorage.getItem('theme') || 'light';
-    const savedBg =
-        settingsApi && typeof settingsApi.getBackgroundUrlSync === 'function' ? settingsApi.getBackgroundUrlSync() : localStorage.getItem('custom_bg_data');
-    const DEFAULT_BACKGROUND_URL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-    const THEME_STYLE_ID = 'yaya-theme-init-style';
-
-    const BG_STYLE_ID = 'yaya-custom-bg-style';
+        (function () {
+            const settingsApi = window.desktop && window.desktop.appSettings ? window.desktop.appSettings : null;
+            const savedTheme = settingsApi && typeof settingsApi.getSettingValueSync === 'function'
+                ? String(settingsApi.getSettingValueSync('theme', 'light') || 'light')
+                : (localStorage.getItem('theme') || 'light');
+            const savedBg = settingsApi && typeof settingsApi.getBackgroundUrlSync === 'function'
+                ? settingsApi.getBackgroundUrlSync()
+                : localStorage.getItem('custom_bg_data');
+            const DEFAULT_BACKGROUND_URL = 'https://data.gnz.hk/assets/default-background.jpg?v=20260815';
+            const THEME_STYLE_ID = 'yaya-theme-init-style';
+            const BG_STYLE_ID = 'yaya-custom-bg-style';
 
     function ensureStyleNode(id) {
         let styleEl = document.getElementById(id);
@@ -21,21 +20,55 @@
         return styleEl;
     }
 
-    function applyThemeBootStyle(theme) {
-        const styleEl = ensureStyleNode(THEME_STYLE_ID);
-        styleEl.textContent = theme === 'dark' ? 'html, body { background-color: #1e1e1e !important; }' : '';
-    }
+            function applyThemeBootStyle(theme) {
+                const styleEl = ensureStyleNode(THEME_STYLE_ID);
+                styleEl.textContent = theme === 'dark'
+                    ? 'html, body { background-color: #1e1e1e !important; }'
+                    : '';
+            }
 
-    function applyCustomBackground(bgData) {
-        const styleEl = ensureStyleNode(BG_STYLE_ID);
-        const nextBg = bgData || DEFAULT_BACKGROUND_URL;
+            async function recoverWebBackground(imageElement) {
+                if (!imageElement || imageElement.dataset.fallbackAttempted === 'true') return;
+                const sourceUrl = imageElement.currentSrc || imageElement.src;
+                if (!sourceUrl || sourceUrl.startsWith('blob:')) return;
 
-        const escapedBg = String(nextBg).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        styleEl.textContent = `html, body { background-image: url("${escapedBg}") !important; background-size: cover !important; background-position: center !important; background-repeat: no-repeat !important; }`;
-    }
+                imageElement.dataset.fallbackAttempted = 'true';
+                try {
+                    const response = await fetch(sourceUrl, {
+                        cache: 'no-store',
+                        credentials: 'omit'
+                    });
+                    if (!response.ok) throw new Error(`Background request failed: ${response.status}`);
+                    imageElement.src = URL.createObjectURL(await response.blob());
+                } catch (_) {
+                    // Keep the theme background color as a safe fallback.
+                }
+            }
 
-    window.__applyYayaThemeBootStyle = applyThemeBootStyle;
-    window.__applyYayaCustomBackground = applyCustomBackground;
+            function applyCustomBackground(bgData) {
+                const styleEl = ensureStyleNode(BG_STYLE_ID);
+                const nextBg = bgData || DEFAULT_BACKGROUND_URL;
+                window.__yayaCurrentBackgroundUrl = nextBg;
+
+                const webBackgroundLayer = document.getElementById('web-background-layer');
+                if (webBackgroundLayer) {
+                    delete webBackgroundLayer.dataset.fallbackAttempted;
+                    webBackgroundLayer.src = nextBg;
+                }
+
+                const escapedBg = String(nextBg)
+                    .replace(/\\/g, '\\\\')
+                    .replace(/"/g, '\\"');
+                document.documentElement.style.setProperty(
+                    '--yaya-background-image',
+                    `url("${escapedBg}")`
+                );
+                styleEl.textContent = `html, body { background-image: url("${escapedBg}") !important; background-size: cover !important; background-position: center !important; background-repeat: no-repeat !important; }`;
+            }
+
+            window.__applyYayaThemeBootStyle = applyThemeBootStyle;
+            window.__applyYayaCustomBackground = applyCustomBackground;
+            window.__recoverYayaWebBackground = recoverWebBackground;
 
     document.documentElement.setAttribute('data-theme', savedTheme);
     applyThemeBootStyle(savedTheme);

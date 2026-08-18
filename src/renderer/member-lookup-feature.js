@@ -13,7 +13,7 @@
             const datalist = document.getElementById('member-list-suggestions');
             const memberNameMap = getMemberNameMap();
             if (!datalist || memberNameMap.size === 0) return;
-            datalist.innerHTML = '';
+            datalist.replaceChildren();
             const bestNameForId = new Map();
             for (const [name, id] of memberNameMap) {
                 if (!bestNameForId.has(id) || name.length > bestNameForId.get(id).length) {
