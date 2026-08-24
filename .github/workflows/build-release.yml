@@ -55,7 +55,7 @@ jobs:
       - name: Verify bundled FFmpeg in macOS archive
         if: matrix.label == 'macOS'
         run: |
-          unzip -l dist/*-mac.zip | grep -q '牙牙消息.app/Contents/Resources/ffmpeg$'
+          unzip -Z1 dist/*-mac.zip | grep -q '/Contents/Resources/ffmpeg$'
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
