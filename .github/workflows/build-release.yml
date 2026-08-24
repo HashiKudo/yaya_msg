@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      replace_mac_release_tag:
+        description: Existing release tag whose macOS asset should be replaced
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -78,6 +83,14 @@ jobs:
 
           print(f'Verified bundled FFmpeg: mode={mode:o}, size={matches[0].file_size}')
           PY
+
+      - name: Replace macOS asset in existing release
+        if: matrix.label == 'macOS' && github.event_name == 'workflow_dispatch' && inputs.replace_mac_release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shasum -a 256 dist/*-mac.zip
+          gh release upload "${{ inputs.replace_mac_release_tag }}" dist/*-mac.zip --clobber
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
