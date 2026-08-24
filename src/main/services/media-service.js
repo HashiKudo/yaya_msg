@@ -52,6 +52,10 @@ function hasSystemFfmpeg() {
 }
 
 function resolveFfmpegConfig() {
+    if (process.platform === 'linux' && hasSystemFfmpeg()) {
+        return { path: 'ffmpeg', source: 'system', isAvailable: true };
+    }
+
     if (app?.isPackaged && packagedFfmpegPath && fs.existsSync(packagedFfmpegPath)) {
         return { path: packagedFfmpegPath, source: 'packaged', isAvailable: true };
     }
