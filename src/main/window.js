@@ -93,7 +93,8 @@ function createWindow() {
         return { action: 'deny' };
     });
     mainWindow.on('close', (event) => {
-        if (isAppQuitting || process.platform !== 'win32' || mainWindow.webContents.isDestroyed()) return;
+        const supportsMinimizeToTray = process.platform === 'win32' || process.platform === 'linux';
+        if (isAppQuitting || !supportsMinimizeToTray || mainWindow.webContents.isDestroyed()) return;
         event.preventDefault();
         if (getWindowCloseBehavior() === 'quit') {
             app.quit();

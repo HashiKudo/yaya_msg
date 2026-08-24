@@ -84,6 +84,33 @@ jobs:
           print(f'Verified bundled FFmpeg: mode={mode:o}, size={matches[0].file_size}')
           PY
 
+      - name: Verify bundled FFmpeg in Linux archive
+        if: matrix.label == 'Linux'
+        run: |
+          python3 - <<'PY'
+          import glob
+          import tarfile
+
+          archives = glob.glob('dist/*-linux.tar.gz')
+          if len(archives) != 1:
+              raise SystemExit(f'Expected one Linux archive, found: {archives}')
+
+          with tarfile.open(archives[0], 'r:gz') as archive:
+              matches = [
+                  entry for entry in archive.getmembers()
+                  if entry.isfile() and entry.name.endswith('/resources/ffmpeg')
+              ]
+
+          if len(matches) != 1:
+              raise SystemExit(f'Expected one bundled FFmpeg entry, found: {len(matches)}')
+
+          mode = matches[0].mode
+          if mode & 0o111 == 0:
+              raise SystemExit(f'Bundled FFmpeg is not executable: mode={mode:o}')
+
+          print(f'Verified bundled FFmpeg: mode={mode:o}, size={matches[0].size}')
+          PY
+
       - name: Replace macOS asset in existing release
         if: matrix.label == 'macOS' && github.event_name == 'workflow_dispatch' && inputs.replace_mac_release_tag != ''
         env:
