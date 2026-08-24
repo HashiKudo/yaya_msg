@@ -108,7 +108,27 @@ jobs:
           if mode & 0o111 == 0:
               raise SystemExit(f'Bundled FFmpeg is not executable: mode={mode:o}')
 
+          with tarfile.open(archives[0], 'r:gz') as archive:
+              top_level = {
+                  entry.name.split('/', 1)[1]: entry
+                  for entry in archive.getmembers()
+                  if '/' in entry.name and '/' not in entry.name.split('/', 1)[1]
+              }
+
+          required_files = {
+              'icon.png': False,
+              '安装到应用菜单.sh': True,
+              '卸载.sh': True,
+          }
+          for name, must_be_executable in required_files.items():
+              entry = top_level.get(name)
+              if not entry or not entry.isfile():
+                  raise SystemExit(f'Missing Linux desktop integration file: {name}')
+              if must_be_executable and entry.mode & 0o111 == 0:
+                  raise SystemExit(f'Linux desktop integration file is not executable: {name}, mode={entry.mode:o}')
+
           print(f'Verified bundled FFmpeg: mode={mode:o}, size={matches[0].size}')
+          print('Verified Linux desktop integration files')
           PY
 
       - name: Replace macOS asset in existing release

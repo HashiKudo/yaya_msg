@@ -1,6 +1,35 @@
 const fs = require('fs');
 const path = require('path');
 
+function copyLinuxDesktopIntegrationFiles(projectDir, appOutDir) {
+    const files = [
+        {
+            source: path.join(projectDir, 'icon.png'),
+            target: path.join(appOutDir, 'icon.png'),
+            mode: 0o644
+        },
+        {
+            source: path.join(projectDir, 'packaging', 'linux', 'install-to-app-menu.sh'),
+            target: path.join(appOutDir, '安装到应用菜单.sh'),
+            mode: 0o755
+        },
+        {
+            source: path.join(projectDir, 'packaging', 'linux', 'uninstall.sh'),
+            target: path.join(appOutDir, '卸载.sh'),
+            mode: 0o755
+        }
+    ];
+
+    for (const file of files) {
+        if (!fs.existsSync(file.source)) {
+            throw new Error(`Linux desktop integration file not found: ${file.source}`);
+        }
+        fs.copyFileSync(file.source, file.target);
+        fs.chmodSync(file.target, file.mode);
+        console.log(`[afterPack] Copied Linux desktop integration file: ${file.target}`);
+    }
+}
+
 exports.default = async function copyFfmpeg(context) {
     const platform = context.electronPlatformName || process.platform;
     const ffmpegName = platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
@@ -48,4 +77,8 @@ exports.default = async function copyFfmpeg(context) {
     }
 
     console.log(`[afterPack] Copied ffmpeg into application resources: ${targetPath}`);
+
+    if (platform === 'linux') {
+        copyLinuxDesktopIntegrationFiles(projectDir, context.appOutDir);
+    }
 };
