@@ -11,11 +11,30 @@ exports.default = async function copyFfmpeg(context) {
         throw new Error(`FFmpeg binary not found for platform ${platform}: ${sourcePath}`);
     }
 
-    const resourcesDir = platform === 'darwin'
-        ? path.join(context.appOutDir, 'Contents', 'Resources')
-        : path.join(context.appOutDir, 'resources');
+    let resourcesDir;
 
-    fs.mkdirSync(resourcesDir, { recursive: true });
+    if (platform === 'darwin') {
+        const productFilename = context.packager?.appInfo?.productFilename;
+        if (!productFilename) {
+            throw new Error('Unable to determine the macOS app bundle name');
+        }
+
+        // On macOS appOutDir is the directory containing the .app bundle, not
+        // the bundle itself. Copying directly under appOutDir leaves FFmpeg
+        // outside the archive produced by electron-builder.
+        resourcesDir = path.join(
+            context.appOutDir,
+            `${productFilename}.app`,
+            'Contents',
+            'Resources'
+        );
+    } else {
+        resourcesDir = path.join(context.appOutDir, 'resources');
+    }
+
+    if (!fs.existsSync(resourcesDir)) {
+        throw new Error(`Application resources directory not found: ${resourcesDir}`);
+    }
 
     const targetPath = path.join(resourcesDir, ffmpegName);
     fs.copyFileSync(sourcePath, targetPath);
@@ -24,5 +43,9 @@ exports.default = async function copyFfmpeg(context) {
         fs.chmodSync(targetPath, 0o755);
     }
 
-    console.log(`[afterPack] Copied ffmpeg to ${targetPath}`);
+    if (!fs.existsSync(targetPath)) {
+        throw new Error(`Failed to copy FFmpeg to application resources: ${targetPath}`);
+    }
+
+    console.log(`[afterPack] Copied ffmpeg into application resources: ${targetPath}`);
 };

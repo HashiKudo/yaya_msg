@@ -102,6 +102,17 @@ app.on('window-all-closed', () => {
     }
 });
 
+app.on('activate', () => {
+    const window = getMainWindow();
+    if (!window || window.isDestroyed()) {
+        createWindow();
+        return;
+    }
+
+    if (!window.isVisible()) window.show();
+    window.focus();
+});
+
 app.on('before-quit', (event) => {
     if (quitCleanupFinished) {
         performFinalCleanup();

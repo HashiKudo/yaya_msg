@@ -101,6 +101,9 @@ function createWindow() {
         }
         mainWindow.hide();
     });
+    mainWindow.on('closed', () => {
+        mainWindow = null;
+    });
     return mainWindow;
 }
 

@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain, nativeImage, screen, Tray } = require('electron');
 const path = require('path');
-const { getMainWindow } = require('./window');
+const { createWindow, getMainWindow } = require('./window');
 const settingsService = require('./services/settings-service');
 
 let tray = null;
@@ -11,8 +11,10 @@ const TRAY_MENU_WIDTH = 136;
 const TRAY_MENU_HEIGHT = 82;
 
 function showMainWindow() {
-    const mainWindow = getMainWindow();
-    if (!mainWindow || mainWindow.isDestroyed()) return;
+    let mainWindow = getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        mainWindow = createWindow();
+    }
     if (mainWindow.isMinimized()) mainWindow.restore();
     if (!mainWindow.isVisible()) mainWindow.show();
     mainWindow.focus();
