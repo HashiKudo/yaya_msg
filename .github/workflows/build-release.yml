@@ -55,7 +55,29 @@ jobs:
       - name: Verify bundled FFmpeg in macOS archive
         if: matrix.label == 'macOS'
         run: |
-          unzip -Z1 dist/*-mac.zip | grep -q '/Contents/Resources/ffmpeg$'
+          python3 - <<'PY'
+          import glob
+          import zipfile
+
+          archives = glob.glob('dist/*-mac.zip')
+          if len(archives) != 1:
+              raise SystemExit(f'Expected one macOS archive, found: {archives}')
+
+          with zipfile.ZipFile(archives[0]) as archive:
+              matches = [
+                  entry for entry in archive.infolist()
+                  if entry.filename.endswith('/Contents/Resources/ffmpeg')
+              ]
+
+          if len(matches) != 1:
+              raise SystemExit(f'Expected one bundled FFmpeg entry, found: {len(matches)}')
+
+          mode = matches[0].external_attr >> 16
+          if mode & 0o111 == 0:
+              raise SystemExit(f'Bundled FFmpeg is not executable: mode={mode:o}')
+
+          print(f'Verified bundled FFmpeg: mode={mode:o}, size={matches[0].file_size}')
+          PY
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
