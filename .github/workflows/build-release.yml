@@ -10,6 +10,10 @@ on:
         description: Existing release tag whose macOS asset should be replaced
         required: false
         type: string
+      replace_linux_release_tag:
+        description: Existing release tag whose Linux asset should be replaced
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -138,6 +142,14 @@ jobs:
         run: |
           shasum -a 256 dist/*-mac.zip
           gh release upload "${{ inputs.replace_mac_release_tag }}" dist/*-mac.zip --clobber
+
+      - name: Replace Linux asset in existing release
+        if: matrix.label == 'Linux' && github.event_name == 'workflow_dispatch' && inputs.replace_linux_release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum dist/*-linux.tar.gz
+          gh release upload "${{ inputs.replace_linux_release_tag }}" dist/*-linux.tar.gz --clobber
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
