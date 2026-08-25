@@ -123,6 +123,7 @@
         const desktopVersion = 'v2.10';
         const releaseStamp = '20260815-fe62beb';
         const macReleaseStamp = '20260825-4cdfce75';
+        const linuxReleaseStamp = '20260825-74ac92c2';
         const notice = createElement('div', { className: 'web-limit-notice' });
         notice.append(createElement('span', {
             className: 'web-limit-copy',
@@ -135,7 +136,7 @@
         [
             ['Windows', `/downloads/yaya_msg-${desktopVersion}-win.zip?v=${releaseStamp}`],
             ['macOS', `/downloads/yaya_msg-${desktopVersion}-mac.zip?v=${macReleaseStamp}`],
-            ['Linux', `/downloads/yaya_msg-${desktopVersion}-linux.tar.gz?v=${releaseStamp}`]
+            ['Linux', `/downloads/yaya_msg-${desktopVersion}-linux.tar.gz?v=${linuxReleaseStamp}`]
         ].forEach(([label, href]) => {
             actions.append(createElement('a', {
                 className: 'web-desktop-download-btn',
