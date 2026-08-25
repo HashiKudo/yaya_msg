@@ -161,8 +161,13 @@
         visibleOptions.forEach(([label, href]) => {
             actions.append(createElement('a', {
                 className: 'web-desktop-download-btn',
-                text: label,
-                attributes: { href, download: '' }
+                text: detectedPlatform ? '本地下载' : label,
+                attributes: {
+                    href,
+                    download: '',
+                    title: detectedPlatform ? `下载 ${label} 版本` : label,
+                    'aria-label': detectedPlatform ? `下载 ${label} 版本` : label
+                }
             }));
         });
         actions.append(createElement('a', {
