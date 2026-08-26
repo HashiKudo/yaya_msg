@@ -5,7 +5,7 @@ const { spawn } = require('child_process');
 const { execFile, execFileSync } = require('child_process');
 const { pathToFileURL } = require('url');
 const axios = require('axios');
-const { BrowserWindow, dialog, nativeImage, screen, session, shell } = require('electron');
+const { BrowserWindow, dialog, nativeImage, Notification: ElectronNotification, screen, session, shell } = require('electron');
 const { ensureStoragePaths } = require('../../common/storage-paths');
 const { reportIgnoredError } = require('../../common/error-utils');
 
@@ -19,6 +19,7 @@ const DESKTOP_TOAST_GAP = 10;
 const DESKTOP_TOAST_MARGIN = 16;
 const DESKTOP_TOAST_DURATION_MS = 8000;
 const DESKTOP_TOAST_MAX_VISIBLE = 1;
+const activeNativeNotifications = new Set();
 let cachedForegroundFullscreenState = { checkedAt: 0, isForegroundFullscreen: false };
 
 const WINDOWS_FULLSCREEN_CHECK_SCRIPT = String.raw`
@@ -216,6 +217,51 @@ function openDesktopToastTarget(payload, title, mainWindow) {
     });
 }
 
+function isWaylandSession() {
+    if (process.platform !== 'linux') return false;
+    return String(process.env.XDG_SESSION_TYPE || '').toLowerCase() === 'wayland'
+        || Boolean(process.env.WAYLAND_DISPLAY);
+}
+
+function showNativeLinuxNotification({ title, body, appIcon, payload, mainWindow }) {
+    if (!ElectronNotification?.isSupported?.()) return null;
+
+    try {
+        const notification = new ElectronNotification({
+            title,
+            body,
+            icon: appIcon && !appIcon.isEmpty() ? appIcon : undefined,
+            timeoutType: 'default',
+            urgency: 'normal'
+        });
+        let cleanupTimer = null;
+        const cleanup = () => {
+            if (cleanupTimer) {
+                clearTimeout(cleanupTimer);
+                cleanupTimer = null;
+            }
+            activeNativeNotifications.delete(notification);
+        };
+
+        activeNativeNotifications.add(notification);
+        notification.once('click', () => {
+            openDesktopToastTarget(payload, title, mainWindow);
+            cleanup();
+        });
+        notification.once('close', cleanup);
+        notification.once('failed', (_event, error) => {
+            console.warn('[软件通知] Linux 原生通知发送失败:', error || 'unknown error');
+            cleanup();
+        });
+        notification.show();
+        cleanupTimer = setTimeout(cleanup, 60_000);
+        return { success: true, native: true };
+    } catch (error) {
+        console.warn('[软件通知] Linux 原生通知创建失败:', error.message || error);
+        return null;
+    }
+}
+
 async function showSystemNotification(payload = {}, mainWindow) {
     if (!BrowserWindow || !screen) {
         return { success: false, msg: '当前环境不支持桌面弹窗' };
@@ -227,6 +273,16 @@ async function showSystemNotification(payload = {}, mainWindow) {
     const appIconDataUrl = appIcon.isEmpty() ? '' : appIcon.toDataURL();
     const rawAvatarUrl = String(payload.iconUrl || '').trim();
     const theme = payload.theme === 'dark' ? 'dark' : 'light';
+    if (isWaylandSession()) {
+        const nativeResult = showNativeLinuxNotification({
+            title,
+            body,
+            appIcon,
+            payload,
+            mainWindow
+        });
+        if (nativeResult) return nativeResult;
+    }
     const avatarUrl = /^(?:https?:\/\/|data:image\/)/i.test(rawAvatarUrl)
         ? rawAvatarUrl
         : appIconDataUrl;

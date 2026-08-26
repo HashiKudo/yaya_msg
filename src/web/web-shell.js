@@ -117,11 +117,29 @@
         });
     }
 
+    function detectDesktopDownloadPlatform() {
+        const userAgent = String(navigator.userAgent || '');
+        const platform = String(navigator.userAgentData?.platform || navigator.platform || '');
+        const isMobile = Boolean(navigator.userAgentData?.mobile)
+            || /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent)
+            || (/MacIntel/i.test(platform) && Number(navigator.maxTouchPoints || 0) > 1);
+        if (isMobile) return '';
+
+        const signature = `${platform} ${userAgent}`;
+        if (/Windows/i.test(signature)) return 'Windows';
+        if (/Macintosh|Mac OS X|MacIntel|MacPPC|macOS/i.test(signature)) return 'macOS';
+        if (/CrOS/i.test(signature)) return '';
+        if (/Linux|X11/i.test(signature)) return 'Linux';
+        return '';
+    }
+
     function addDownloadNotice() {
         const footer = document.querySelector('.home-footer-credit');
         if (!footer || document.querySelector('.web-limit-notice')) return;
         const desktopVersion = 'v2.10';
         const releaseStamp = '20260815-fe62beb';
+        const macReleaseStamp = '20260825-4cdfce75';
+        const linuxReleaseStamp = '20260825-74ac92c2';
         const notice = createElement('div', { className: 'web-limit-notice' });
         notice.append(createElement('span', {
             className: 'web-limit-copy',
@@ -131,17 +149,36 @@
             className: 'web-download-actions',
             attributes: { 'aria-label': '桌面端下载' }
         });
-        [
+        const downloadOptions = [
             ['Windows', `/downloads/yaya_msg-${desktopVersion}-win.zip?v=${releaseStamp}`],
-            ['macOS', `/downloads/yaya_msg-${desktopVersion}-mac.zip?v=${releaseStamp}`],
-            ['Linux', `/downloads/yaya_msg-${desktopVersion}-linux.tar.gz?v=${releaseStamp}`]
-        ].forEach(([label, href]) => {
+            ['macOS', `/downloads/yaya_msg-${desktopVersion}-mac.zip?v=${macReleaseStamp}`],
+            ['Linux', `/downloads/yaya_msg-${desktopVersion}-linux.tar.gz?v=${linuxReleaseStamp}`]
+        ];
+        const detectedPlatform = detectDesktopDownloadPlatform();
+        const visibleOptions = detectedPlatform
+            ? downloadOptions.filter(([label]) => label === detectedPlatform)
+            : downloadOptions;
+        visibleOptions.forEach(([label, href]) => {
             actions.append(createElement('a', {
                 className: 'web-desktop-download-btn',
-                text: label,
-                attributes: { href, download: '' }
+                text: detectedPlatform ? '本地下载' : label,
+                attributes: {
+                    href,
+                    download: '',
+                    title: detectedPlatform ? `下载 ${label} 版本` : label,
+                    'aria-label': detectedPlatform ? `下载 ${label} 版本` : label
+                }
             }));
         });
+        actions.append(createElement('a', {
+            className: 'web-desktop-download-btn',
+            text: '百度网盘',
+            attributes: {
+                href: 'https://pan.baidu.com/s/1XBbptH_FFct791CKOF0wBg?pwd=0403',
+                target: '_blank',
+                rel: 'noopener noreferrer'
+            }
+        }));
         notice.append(actions);
         footer.before(notice);
     }

@@ -1,7 +1,5 @@
 const { app, globalShortcut } = require('electron');
-const { createWindow } = require('./window');
-const { getMainWindow } = require('./window');
-const { markAppQuitting } = require('./window');
+const { createWindow, getMainWindow, markAppQuitting } = require('./window');
 const { createTray, destroyTray } = require('./tray');
 const { ensureWasmLoaded } = require('./services/wasm-service');
 const {
@@ -35,6 +33,19 @@ const MEDIA_KEY_SHORTCUTS = [
 let quitCleanupStarted = false;
 let quitCleanupFinished = false;
 let finalCleanupPerformed = false;
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+function showMainWindow() {
+    if (!gotSingleInstanceLock || quitCleanupStarted) return;
+
+    let window = getMainWindow();
+    if (!window || window.isDestroyed()) {
+        window = createWindow();
+    }
+    if (window.isMinimized()) window.restore();
+    if (!window.isVisible()) window.show();
+    window.focus();
+}
 
 function runLiveRecordingRecovery() {
     return recoverInterruptedLiveRecordings()
@@ -83,20 +94,25 @@ if (process.platform === 'win32') {
     app.setAppUserModelId(app.isPackaged ? 'com.yaya.message' : 'electron.app.Electron');
 }
 
-app.whenReady().then(() => {
-    ensureStoragePaths();
-    createWindow();
-    createTray();
-    startMessageIndexWatcher((result) => {
-        const window = getMainWindow();
-        if (!window || window.isDestroyed()) return;
-        window.webContents.send('message-index-updated', result);
+if (!gotSingleInstanceLock) {
+    app.quit();
+} else {
+    app.on('second-instance', showMainWindow);
+    app.whenReady().then(() => {
+        ensureStoragePaths();
+        createWindow();
+        createTray();
+        startMessageIndexWatcher((result) => {
+            const window = getMainWindow();
+            if (!window || window.isDestroyed()) return;
+            window.webContents.send('message-index-updated', result);
+        });
+        registerMediaKeyShortcuts();
+        ensureWasmLoaded();
+        runLiveRecordingRecovery();
+        setTimeout(runLiveRecordingRecovery, 20_000);
     });
-    registerMediaKeyShortcuts();
-    ensureWasmLoaded();
-    runLiveRecordingRecovery();
-    setTimeout(runLiveRecordingRecovery, 20_000);
-});
+}
 
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
@@ -104,7 +120,13 @@ app.on('window-all-closed', () => {
     }
 });
 
+app.on('activate', () => {
+    showMainWindow();
+});
+
 app.on('before-quit', (event) => {
+    if (!gotSingleInstanceLock) return;
+
     if (quitCleanupFinished) {
         performFinalCleanup();
         return;

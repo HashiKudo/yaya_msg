@@ -376,25 +376,14 @@ html[data-platform="web"] .web-topbar-btn:hover {
 html[data-platform="web"] .web-pbc-btn,
 html[data-platform="web"] .web-invoice-btn {
     min-width: 96px;
-    color: rgba(255, 255, 255, 0.92);
+    color: var(--text);
+    background: transparent;
 }
 
 html[data-platform="web"] .web-pbc-btn:hover,
 html[data-platform="web"] .web-invoice-btn:hover {
-    color: #fff;
-    background: rgba(255, 255, 255, 0.14);
-}
-
-html[data-platform="web"][data-theme="light"] .web-pbc-btn,
-html[data-platform="web"][data-theme="light"] .web-invoice-btn {
-    color: var(--primary);
-    background: rgba(255, 255, 255, 0.38);
-}
-
-html[data-platform="web"][data-theme="light"] .web-pbc-btn:hover,
-html[data-platform="web"][data-theme="light"] .web-invoice-btn:hover {
-    color: var(--primary);
-    background: rgba(255, 255, 255, 0.72);
+    color: var(--text);
+    background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
 html[data-platform="web"] .web-account-button {

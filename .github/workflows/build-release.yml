@@ -5,6 +5,15 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      replace_mac_release_tag:
+        description: Existing release tag whose macOS asset should be replaced
+        required: false
+        type: string
+      replace_linux_release_tag:
+        description: Existing release tag whose Linux asset should be replaced
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -51,6 +60,88 @@ jobs:
 
       - name: Build application
         run: ${{ matrix.build_command }}
+
+      - name: Verify bundled FFmpeg in macOS archive
+        if: matrix.label == 'macOS'
+        run: |
+          python3 - <<'PY'
+          import glob
+          import zipfile
+
+          archives = glob.glob('dist/*-mac.zip')
+          if len(archives) != 1:
+              raise SystemExit(f'Expected one macOS archive, found: {archives}')
+
+          with zipfile.ZipFile(archives[0]) as archive:
+              matches = [
+                  entry for entry in archive.infolist()
+                  if entry.filename.endswith('/Contents/Resources/ffmpeg')
+              ]
+
+          if len(matches) != 1:
+              raise SystemExit(f'Expected one bundled FFmpeg entry, found: {len(matches)}')
+
+          mode = matches[0].external_attr >> 16
+          if mode & 0o111 == 0:
+              raise SystemExit(f'Bundled FFmpeg is not executable: mode={mode:o}')
+
+          print(f'Verified bundled FFmpeg: mode={mode:o}, size={matches[0].file_size}')
+          PY
+
+      - name: Verify bundled FFmpeg in Linux archive
+        if: matrix.label == 'Linux'
+        run: |
+          python3 - <<'PY'
+          import glob
+          import tarfile
+
+          archives = glob.glob('dist/*-linux.tar.gz')
+          if len(archives) != 1:
+              raise SystemExit(f'Expected one Linux archive, found: {archives}')
+
+          with tarfile.open(archives[0], 'r:gz') as archive:
+              matches = [
+                  entry for entry in archive.getmembers()
+                  if entry.isfile() and entry.name.endswith('/resources/ffmpeg')
+              ]
+
+          if len(matches) != 1:
+              raise SystemExit(f'Expected one bundled FFmpeg entry, found: {len(matches)}')
+
+          mode = matches[0].mode
+          if mode & 0o111 == 0:
+              raise SystemExit(f'Bundled FFmpeg is not executable: mode={mode:o}')
+
+          with tarfile.open(archives[0], 'r:gz') as archive:
+              top_level = {
+                  entry.name.split('/', 1)[1]: entry
+                  for entry in archive.getmembers()
+                  if '/' in entry.name and '/' not in entry.name.split('/', 1)[1]
+              }
+
+          icon = top_level.get('icon.png')
+          if not icon or not icon.isfile():
+              raise SystemExit('Missing Linux icon: icon.png')
+
+          print(f'Verified bundled FFmpeg: mode={mode:o}, size={matches[0].size}')
+          print('Verified Linux icon')
+          PY
+
+      - name: Replace macOS asset in existing release
+        if: matrix.label == 'macOS' && github.event_name == 'workflow_dispatch' && inputs.replace_mac_release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shasum -a 256 dist/*-mac.zip
+          gh release upload "${{ inputs.replace_mac_release_tag }}" dist/*-mac.zip --clobber
+
+      - name: Replace Linux asset in existing release
+        if: matrix.label == 'Linux' && github.event_name == 'workflow_dispatch' && inputs.replace_linux_release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum dist/*-linux.tar.gz
+          gh release upload "${{ inputs.replace_linux_release_tag }}" dist/*-linux.tar.gz --clobber
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

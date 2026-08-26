@@ -1,6 +1,6 @@
-const { app, BrowserWindow, ipcMain, nativeImage, screen, Tray } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } = require('electron');
 const path = require('path');
-const { getMainWindow } = require('./window');
+const { createWindow, getMainWindow } = require('./window');
 const settingsService = require('./services/settings-service');
 
 let tray = null;
@@ -11,8 +11,10 @@ const TRAY_MENU_WIDTH = 136;
 const TRAY_MENU_HEIGHT = 82;
 
 function showMainWindow() {
-    const mainWindow = getMainWindow();
-    if (!mainWindow || mainWindow.isDestroyed()) return;
+    let mainWindow = getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        mainWindow = createWindow();
+    }
     if (mainWindow.isMinimized()) mainWindow.restore();
     if (!mainWindow.isVisible()) mainWindow.show();
     mainWindow.focus();
@@ -58,6 +60,20 @@ function primeTrayMenuWindow(menuWindow) {
     menuWindow.setOpacity(0);
     menuWindow.setIgnoreMouseEvents(true);
     if (!menuWindow.isVisible()) menuWindow.showInactive();
+}
+
+function createNativeTrayMenu() {
+    return Menu.buildFromTemplate([
+        {
+            label: '显示主窗口',
+            click: showMainWindow
+        },
+        { type: 'separator' },
+        {
+            label: '退出软件',
+            click: () => app.quit()
+        }
+    ]);
 }
 
 function createTrayMenuWindow() {
@@ -165,8 +181,12 @@ function createTray() {
     tray = new Tray(icon);
     tray.setToolTip('牙牙消息');
     tray.on('click', showMainWindow);
-    tray.on('right-click', (_event, bounds) => showTrayMenu(bounds));
-    createTrayMenuWindow();
+    if (process.platform === 'linux') {
+        tray.setContextMenu(createNativeTrayMenu());
+    } else {
+        tray.on('right-click', (_event, bounds) => showTrayMenu(bounds));
+        createTrayMenuWindow();
+    }
     return tray;
 }
 
