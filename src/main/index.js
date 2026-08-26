@@ -1,5 +1,10 @@
 const { app, globalShortcut } = require('electron');
-const { createWindow, getMainWindow, markAppQuitting } = require('./window');
+const {
+    createWindow,
+    getMainWindow,
+    showMainWindow,
+    markAppQuitting
+} = require('./window');
 const { createTray, destroyTray } = require('./tray');
 const { ensureWasmLoaded } = require('./services/wasm-service');
 const {
@@ -23,8 +28,6 @@ registerPocketIpc();
 registerSystemIpc();
 registerMessageIndexIpc();
 
-let isQuitting = false;
-
 const MEDIA_KEY_SHORTCUTS = [
     ['MediaPlayPause', 'play-pause'],
     ['MediaNextTrack', 'next'],
@@ -34,18 +37,6 @@ let quitCleanupStarted = false;
 let quitCleanupFinished = false;
 let finalCleanupPerformed = false;
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
-
-function showMainWindow() {
-    if (!gotSingleInstanceLock || quitCleanupStarted) return;
-
-    let window = getMainWindow();
-    if (!window || window.isDestroyed()) {
-        window = createWindow();
-    }
-    if (window.isMinimized()) window.restore();
-    if (!window.isVisible()) window.show();
-    window.focus();
-}
 
 function runLiveRecordingRecovery() {
     return recoverInterruptedLiveRecordings()
@@ -114,6 +105,10 @@ if (!gotSingleInstanceLock) {
     });
 }
 
+app.on('activate', () => {
+    showMainWindow();
+});
+
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         app.quit();
@@ -127,6 +122,7 @@ app.on('activate', () => {
 app.on('before-quit', (event) => {
     if (!gotSingleInstanceLock) return;
 
+    markAppQuitting();
     if (quitCleanupFinished) {
         performFinalCleanup();
         return;

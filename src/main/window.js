@@ -94,9 +94,17 @@ function createWindow() {
     });
 
     mainWindow.on('close', (event) => {
-        if (process.platform === 'darwin' && !app.isQuitting) {
-            event.preventDefault();
-            mainWindow.hide();
+        if (!isAppQuitting) {
+            if (process.platform === 'darwin') {
+                event.preventDefault();
+                mainWindow.hide();
+                return;
+            }
+            if (getWindowCloseBehavior() === 'minimize-to-tray') {
+                event.preventDefault();
+                mainWindow.hide();
+                return;
+            }
         }
     });
 
@@ -124,6 +132,21 @@ function getMainWindow() {
     return mainWindow;
 }
 
+function showMainWindow() {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        mainWindow = createWindow();
+    } else {
+        if (mainWindow.isMinimized()) {
+            mainWindow.restore();
+        }
+        if (!mainWindow.isVisible()) {
+            mainWindow.show();
+        }
+        mainWindow.focus();
+    }
+    return mainWindow;
+}
+
 function markAppQuitting() {
     isAppQuitting = true;
 }
@@ -136,6 +159,7 @@ function requestWindowClose() {
 module.exports = {
     createWindow,
     getMainWindow,
+    showMainWindow,
     markAppQuitting,
     requestWindowClose
 };

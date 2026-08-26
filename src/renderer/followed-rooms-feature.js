@@ -1154,8 +1154,8 @@
                     container.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`;
                 }
             } finally {
-                if (isCurrentAccount() && refreshBtn && !silent) {
-                    refreshBtn.innerText = '刷新';
+                if (refreshBtn && !silent) {
+                    refreshBtn.classList.remove('is-fetching');
                     refreshBtn.disabled = false;
                 }
             }
@@ -1191,6 +1191,11 @@
                 quickButton.innerText = '关注';
                 quickButton.style.color = '';
                 quickButton.disabled = false;
+            }
+            const refreshBtn = document.querySelector('button[onclick="loadFollowedRooms()"]');
+            if (refreshBtn) {
+                refreshBtn.classList.remove('is-fetching');
+                refreshBtn.disabled = false;
             }
         }
 

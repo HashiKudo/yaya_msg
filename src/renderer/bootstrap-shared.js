@@ -113,7 +113,7 @@
 
         // 本地手动修正：key 为 ownerName，value 为需要覆盖的字段
         const LOCAL_MEMBER_PATCHES = {
-            '方琪': { yklzId: '39604595', serverId: '1148118' }
+            // '方琪': { yklzId: '39604595', serverId: '1148118' }
         };
 
         function applyMemberDataList(list) {

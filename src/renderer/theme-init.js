@@ -6,7 +6,6 @@
             const savedBg = settingsApi && typeof settingsApi.getBackgroundUrlSync === 'function'
                 ? settingsApi.getBackgroundUrlSync()
                 : localStorage.getItem('custom_bg_data');
-            const DEFAULT_BACKGROUND_URL = 'https://data.gnz.hk/assets/default-background.jpg?v=20260815';
             const THEME_STYLE_ID = 'yaya-theme-init-style';
             const BG_STYLE_ID = 'yaya-custom-bg-style';
 
@@ -47,13 +46,23 @@
 
             function applyCustomBackground(bgData) {
                 const styleEl = ensureStyleNode(BG_STYLE_ID);
-                const nextBg = bgData || DEFAULT_BACKGROUND_URL;
+                const nextBg = String(bgData || '').trim();
                 window.__yayaCurrentBackgroundUrl = nextBg;
 
                 const webBackgroundLayer = document.getElementById('web-background-layer');
                 if (webBackgroundLayer) {
                     delete webBackgroundLayer.dataset.fallbackAttempted;
-                    webBackgroundLayer.src = nextBg;
+                    if (nextBg) {
+                        webBackgroundLayer.src = nextBg;
+                    } else {
+                        webBackgroundLayer.removeAttribute('src');
+                    }
+                }
+
+                if (!nextBg) {
+                    document.documentElement.style.removeProperty('--yaya-background-image');
+                    styleEl.textContent = 'html, body { background-image: none !important; }';
+                    return;
                 }
 
                 const escapedBg = String(nextBg)
