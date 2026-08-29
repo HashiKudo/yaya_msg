@@ -136,7 +136,7 @@
     function addDownloadNotice() {
         const footer = document.querySelector('.home-footer-credit');
         if (!footer || document.querySelector('.web-limit-notice')) return;
-        const desktopVersion = 'v2.10';
+        const desktopVersion = 'v2.11';
         const releaseStamp = '20260815-fe62beb';
         const macReleaseStamp = '20260825-4cdfce75';
         const linuxReleaseStamp = '20260825-74ac92c2';

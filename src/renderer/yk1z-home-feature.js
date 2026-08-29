@@ -12,24 +12,36 @@
         const YK1Z_HOME_CACHE_KEY = 'yk1z_home_config_v1';
 
         const DEFAULT_YK1Z_HOME_CONFIG = {
-            title: 'yk1z',
-            subtitle: '诶 这是什么O.o？',
+            title: '牙口栗子',
+            subtitle: 'O.o？',
             buttons: [
                 {
-                    title: '牙牙回放',
-                    desc: '在外部浏览器打开',
+                    title: '牙牙推送',
+                    desc: '牙牙推送',
                     type: 'url',
-                    value: 'https://www.bilibili.com/video/BV1Ba8FzxEje'
+                    value: 'https://push.gnz.hk'
                 },
                 {
-                    title: '哔哩哔哩',
-                    desc: '打开主页空间',
+                    title: '牙牙字幕',
+                    desc: '牙牙字幕',
                     type: 'url',
-                    value: 'https://space.bilibili.com/508441523'
+                    value: 'https://zimu.gnz.hk'
                 },
                 {
-                    title: 'GitHub',
-                    desc: '打开项目仓库',
+                    title: 'Room',
+                    desc: '所有房间',
+                    type: 'url',
+                    value: 'https://snh48.xyz'
+                },
+                {
+                    title: '看看烟花',
+                    desc: 'kh',
+                    type: 'url',
+                    value: 'https://kh.gay'
+                },
+                {
+                    title: '项目仓库',
+                    desc: '项目仓库',
                     type: 'url',
                     value: 'https://github.com/yk1z/yaya_msg'
                 }
@@ -114,11 +126,39 @@
             openInBrowser(button.value);
         }
 
+        function isYk1zHomeConfigRendered(config) {
+            const titleEl = document.getElementById('home-yk1z-title');
+            const subtitleEl = document.getElementById('home-yk1z-subtitle');
+            const actionsEl = document.getElementById('home-yk1z-actions');
+            if (!titleEl || !subtitleEl || !actionsEl) return false;
+
+            const buttonEls = Array.from(actionsEl.children);
+            if (titleEl.textContent !== config.title
+                || subtitleEl.textContent !== config.subtitle
+                || buttonEls.length !== config.buttons.length) {
+                return false;
+            }
+
+            return config.buttons.every((button, index) => {
+                const buttonEl = buttonEls[index];
+                const titleEl = buttonEl && buttonEl.querySelector('.home-card-title');
+                const desc = button.desc || (button.type === 'view' ? '进入对应页面' : '打开外部链接');
+                return buttonEl
+                    && titleEl
+                    && titleEl.textContent === button.title
+                    && buttonEl.dataset.yk1zType === button.type
+                    && buttonEl.dataset.yk1zValue === button.value
+                    && buttonEl.dataset.yk1zDesc === desc
+                    && buttonEl.classList.contains('home-card-primary') === Boolean(button.primary);
+            });
+        }
+
         function renderYk1zHomeConfig(config) {
             const titleEl = document.getElementById('home-yk1z-title');
             const subtitleEl = document.getElementById('home-yk1z-subtitle');
             const actionsEl = document.getElementById('home-yk1z-actions');
             if (!titleEl || !subtitleEl || !actionsEl) return;
+            if (isYk1zHomeConfigRendered(config)) return;
 
             titleEl.textContent = config.title;
             subtitleEl.textContent = config.subtitle;
@@ -128,6 +168,9 @@
             config.buttons.forEach(button => {
                 const buttonEl = document.createElement('button');
                 buttonEl.className = `home-card${button.primary ? ' home-card-primary' : ''}`;
+                buttonEl.dataset.yk1zType = button.type;
+                buttonEl.dataset.yk1zValue = button.value;
+                buttonEl.dataset.yk1zDesc = button.desc || (button.type === 'view' ? '进入对应页面' : '打开外部链接');
                 buttonEl.onclick = () => handleYk1zHomeAction(button);
 
                 const titleSpan = document.createElement('span');
@@ -191,20 +234,28 @@
         }
 
         function initYk1zHomePanel() {
-            const cachedConfig = readYk1zHomeConfigCache();
-            if (cachedConfig) {
-                renderYk1zHomeConfig(cachedConfig);
-            }
+            const refreshConfig = () => {
+                const cachedConfig = readYk1zHomeConfigCache();
+                if (cachedConfig) {
+                    renderYk1zHomeConfig(cachedConfig);
+                }
 
-            fetchYk1zHomeConfig()
-                .then(config => {
-                    renderYk1zHomeConfig(config);
-                })
-                .catch(() => {
-                    if (!cachedConfig) {
-                        renderYk1zHomeConfig(normalizeYk1zHomeConfig(DEFAULT_YK1Z_HOME_CONFIG));
-                    }
-                });
+                fetchYk1zHomeConfig()
+                    .then(config => {
+                        renderYk1zHomeConfig(config);
+                    })
+                    .catch(() => {
+                        if (!cachedConfig) {
+                            renderYk1zHomeConfig(normalizeYk1zHomeConfig(DEFAULT_YK1Z_HOME_CONFIG));
+                        }
+                    });
+            };
+
+            if (typeof window.requestIdleCallback === 'function') {
+                window.requestIdleCallback(refreshConfig, { timeout: 2000 });
+            } else {
+                window.setTimeout(refreshConfig, 500);
+            }
         }
 
         return {

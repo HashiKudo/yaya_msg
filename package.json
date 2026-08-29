@@ -1,6 +1,6 @@
 {
   "name": "yaya_msg",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "description": "牙牙消息",
   "homepage": "https://github.com/yk1z/yaya_msg",
   "main": "main.js",
@@ -16,7 +16,9 @@
     "pack": "npm run database:build && node scripts/run-builder.js --dir",
     "dist": "npm run database:build && node scripts/run-builder.js",
     "seine:export-all": "node scripts/export-all-member-channels.js",
-    "seine:compare": "node scripts/compare-member-channels.js"
+    "seine:compare": "node scripts/compare-member-channels.js",
+    "seine:compare-members": "python scripts/compare-member-profiles.py",
+    "seine:export-compare": "npm run seine:export-all && npm run seine:compare && npm run seine:compare-members"
   },
   "author": {
     "name": "yk1z",

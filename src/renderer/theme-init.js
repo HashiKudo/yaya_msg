@@ -6,7 +6,7 @@
             const savedBg = settingsApi && typeof settingsApi.getBackgroundUrlSync === 'function'
                 ? settingsApi.getBackgroundUrlSync()
                 : localStorage.getItem('custom_bg_data');
-            const DEFAULT_BACKGROUND_URL = 'https://data.gnz.hk/assets/default-background.jpg?v=20260815';
+            const DEFAULT_BACKGROUND_URL = 'https://data.gnz.hk/assets/default-background.jpg?v=20260829';
             const THEME_STYLE_ID = 'yaya-theme-init-style';
             const BG_STYLE_ID = 'yaya-custom-bg-style';
 
@@ -27,10 +27,23 @@
                     : '';
             }
 
+            function hideUnavailableWebBackground(imageElement) {
+                if (!imageElement) return;
+                imageElement.classList.add('is-unavailable');
+                imageElement.removeAttribute('src');
+            }
+
             async function recoverWebBackground(imageElement) {
-                if (!imageElement || imageElement.dataset.fallbackAttempted === 'true') return;
+                if (!imageElement) return;
+                if (imageElement.dataset.fallbackAttempted === 'true') {
+                    hideUnavailableWebBackground(imageElement);
+                    return;
+                }
                 const sourceUrl = imageElement.currentSrc || imageElement.src;
-                if (!sourceUrl || sourceUrl.startsWith('blob:')) return;
+                if (!sourceUrl || sourceUrl.startsWith('blob:')) {
+                    hideUnavailableWebBackground(imageElement);
+                    return;
+                }
 
                 imageElement.dataset.fallbackAttempted = 'true';
                 try {
@@ -41,7 +54,7 @@
                     if (!response.ok) throw new Error(`Background request failed: ${response.status}`);
                     imageElement.src = URL.createObjectURL(await response.blob());
                 } catch (_) {
-                    // Keep the theme background color as a safe fallback.
+                    hideUnavailableWebBackground(imageElement);
                 }
             }
 
@@ -53,6 +66,7 @@
                 const webBackgroundLayer = document.getElementById('web-background-layer');
                 if (webBackgroundLayer) {
                     delete webBackgroundLayer.dataset.fallbackAttempted;
+                    webBackgroundLayer.classList.remove('is-unavailable');
                     webBackgroundLayer.src = nextBg;
                 }
 

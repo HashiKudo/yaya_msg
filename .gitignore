@@ -6,9 +6,12 @@ web-dist/
 html/
 tmp/
 reports/
-scripts/
+scripts/*
 tools/
 .agents/
+.codex-tmp/
+.codex-logs/
+dist-next/
 .npmrc
 .env
 .env.*
@@ -17,6 +20,8 @@ data/
 *.db
 *.sqlite
 *.sqlite3
+__pycache__/
+*.py[cod]
 
 # Generated app assets
 /src/renderer/database/runtime.js

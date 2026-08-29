@@ -10,6 +10,7 @@ const MEET48_APP_VERSION = '2.0.3';
 const MEET48_APP_BUILD = '2602062';
 const MEET48_BUNDLE_ID = 'com.dapp.meet48';
 const MEET48_APP_ID = '2e63a31eac9d056755b0f83b89ef6674';
+const INVOICE_UPSTREAM_TIMEOUT_MS = 15 * 1000;
 
 let deviceId = '';
 const live48QrLoginSessions = new Map();
@@ -482,6 +483,11 @@ async function postJson(url, payload, headers, options = {}) {
             ...(controller ? { signal: controller.signal } : {})
         });
         text = await response.text();
+    } catch (error) {
+        if (controller?.signal.aborted) {
+            throw new Error(options.timeoutMessage || '口袋 API 请求超时，请稍后重试');
+        }
+        throw error;
     } finally {
         if (timeoutId) clearTimeout(timeoutId);
     }
@@ -1588,11 +1594,32 @@ async function fetchGiftList({ token, pa, liveId }) {
 
 async function getNimLoginInfo({ token, pa }) {
     if (!token) return { success: false, msg: '未登录' };
-    const response = await postJson('https://pocketapi.48.cn/user/api/v1/user/info/home', {}, createModernHeaders(token, pa));
-    if (response.status === 200 && response.data?.success) {
-        return { success: true, accid: response.data.content.userInfo.accId, token };
+    const headers = createModernHeaders(token, pa);
+    headers['P-Sign-Type'] = 'V0';
+    const response = await postJson(
+        'https://pocketapi.48.cn/im/api/v1/im/userinfo',
+        {},
+        headers
+    );
+    const content = response.data?.content || {};
+    const accid = String(content.accid || content.accId || content.imUserId || '').trim();
+    const nimToken = String(content.pwd || content.token || content.imPwd || '').trim();
+    if (response.status === 200
+        && (response.data?.success || response.data?.status === 200)
+        && accid
+        && nimToken) {
+        return {
+            success: true,
+            accid,
+            account: accid,
+            token: nimToken,
+            userId: String(content.userId || '').trim()
+        };
     }
-    return { success: false, msg: '获取用户信息失败' };
+    return {
+        success: false,
+        msg: response.data?.message || '口袋48没有返回完整的云信账号凭证'
+    };
 }
 
 async function fetchRoomAlbum({ token, pa, channelId, nextTime }) {
@@ -1907,7 +1934,11 @@ async function fetchInvoiceConfig({ token } = {}) {
     const response = await postJson(
         'https://pocketapi.48.cn/invoice/api/v1/invoice/config',
         {},
-        createInvoiceHeaders(token, { tokenHeader: true })
+        createInvoiceHeaders(token, { tokenHeader: true }),
+        {
+            timeoutMs: INVOICE_UPSTREAM_TIMEOUT_MS,
+            timeoutMessage: '获取开票配置超时，请稍后重试'
+        }
     );
     if (response.status === 200 && response.data?.status === 200) {
         return { success: true, content: response.data.content };
@@ -1924,7 +1955,11 @@ async function fetchInvoiceOrderList({ token, nextTime = '', yearMonth = '' } = 
             token,
             yearMonth: String(yearMonth || '')
         },
-        createInvoiceHeaders()
+        createInvoiceHeaders(),
+        {
+            timeoutMs: INVOICE_UPSTREAM_TIMEOUT_MS,
+            timeoutMessage: '获取可开票订单超时，请稍后重试'
+        }
     );
     if (response.status === 200 && response.data?.status === 200) {
         return { success: true, content: response.data.content };

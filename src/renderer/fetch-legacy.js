@@ -2605,7 +2605,7 @@
                     if (typeof window.activateAutoMessageFetchForCurrentAccount === 'function') {
                         window.activateAutoMessageFetchForCurrentAccount();
                     }
-                    if (typeof startFollowedRoomNotificationPolling === 'function') {
+                    if (!isWebRuntimeForAccountUi() && typeof startFollowedRoomNotificationPolling === 'function') {
                         startFollowedRoomNotificationPolling(1200, { silentInitialSync: true });
                     }
 

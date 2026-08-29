@@ -29,6 +29,8 @@
         const AUTO_LIVE_RECORD_ENABLED_KEY = 'yaya_auto_live_record_enabled';
         const AUTO_LIVE_RECORD_MEMBERS_KEY = 'yaya_auto_live_record_members';
         const AUTO_LIVE_RECORD_POLL_INTERVAL_MS = 3000;
+        const IS_WEB_PLATFORM = window.desktop?.platform === 'web'
+            || document.documentElement?.dataset?.platform === 'web';
         let autoLiveRecordEnabled = false;
         let autoLiveRecordMembers = [];
         let autoLiveRecordPollTimer = null;
@@ -751,6 +753,12 @@
         }
 
         function toggleAutoLiveRecording(enabled) {
+            if (IS_WEB_PLATFORM) {
+                autoLiveRecordEnabled = false;
+                updateAutoLiveRecordUi();
+                showAutoLiveRecordToast('网页端已禁用直播自动录制');
+                return;
+            }
             autoLiveRecordEnabled = !!enabled;
             persistAutoLiveRecordSettings();
             updateAutoLiveRecordUi();
@@ -769,7 +777,7 @@
         function scheduleAutoLiveRecordPoll(delay = AUTO_LIVE_RECORD_POLL_INTERVAL_MS) {
             if (autoLiveRecordPollTimer) clearTimeout(autoLiveRecordPollTimer);
             autoLiveRecordPollTimer = null;
-            if (!autoLiveRecordEnabled) return;
+            if (IS_WEB_PLATFORM || !autoLiveRecordEnabled) return;
             autoLiveRecordPollTimer = setTimeout(() => {
                 autoLiveRecordPollTimer = null;
                 pollAutoLiveRecordMembers();
@@ -795,6 +803,7 @@
         }
 
         async function startAutoLiveRecordTask(member, liveItem) {
+            if (IS_WEB_PLATFORM) return;
             const liveId = String(liveItem?.liveId || '').trim();
             if (!liveId || autoLiveRecordHandledLiveIds.has(liveId) || autoLiveRecordTasks.has(member.id)) return;
             const retryState = autoLiveRecordRetryState.get(liveId);
@@ -843,7 +852,7 @@
         }
 
         async function pollAutoLiveRecordMembers() {
-            if (!autoLiveRecordEnabled || autoLiveRecordPollRunning) return;
+            if (IS_WEB_PLATFORM || !autoLiveRecordEnabled || autoLiveRecordPollRunning) return;
             if (autoLiveRecordMembers.length === 0 || !getSafeToken()) {
                 scheduleAutoLiveRecordPoll();
                 return;
@@ -1179,7 +1188,8 @@
             });
         }
 
-        autoLiveRecordEnabled = readJsonSetting(AUTO_LIVE_RECORD_ENABLED_KEY, false) === true;
+        autoLiveRecordEnabled = !IS_WEB_PLATFORM
+            && readJsonSetting(AUTO_LIVE_RECORD_ENABLED_KEY, false) === true;
         autoLiveRecordMembers = normalizeStoredAutoLiveRecordMembers(
             readJsonSetting(AUTO_LIVE_RECORD_MEMBERS_KEY, [])
         );

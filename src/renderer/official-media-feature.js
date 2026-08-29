@@ -110,7 +110,10 @@
 
         let currentAudioCtime = 0;
         let isAudioLoading = false;
+        let audioProgramItems = [];
         let audioProgramPlaylist = [];
+        let audioProgramSortKey = 'date';
+        let audioProgramSortDirection = 'desc';
         let currentAudioProgramTalkId = null;
         let currentAudioProgramPlayMode = readStringSetting('yaya_audio_program_play_mode', 'sequence');
         let currentAudioPlayRequestId = 0;
@@ -399,16 +402,65 @@
             writeStringSetting(MEDIA_PLAY_URL_CACHE_KEY, JSON.stringify(cache));
         }
 
+        function getAudioProgramSortValue(item, key) {
+            if (key === 'title') return String(item?.title || '');
+            if (key === 'program') return String(item?.subTitle || '口袋电台');
+            const ctime = Number(item?.ctime);
+            if (Number.isFinite(ctime) && ctime > 0) return ctime;
+            const parsedDate = Date.parse(String(item?.dateStr || ''));
+            return Number.isFinite(parsedDate) ? parsedDate : 0;
+        }
+
+        function getSortedAudioProgramItems(items = audioProgramItems) {
+            const direction = audioProgramSortDirection === 'asc' ? 1 : -1;
+            const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
+            return (Array.isArray(items) ? items : [])
+                .map((item, index) => ({ item, index }))
+                .sort((left, right) => {
+                    const leftValue = getAudioProgramSortValue(left.item, audioProgramSortKey);
+                    const rightValue = getAudioProgramSortValue(right.item, audioProgramSortKey);
+                    const comparison = audioProgramSortKey === 'date'
+                        ? leftValue - rightValue
+                        : collator.compare(leftValue, rightValue);
+                    return comparison === 0 ? left.index - right.index : comparison * direction;
+                })
+                .map(entry => entry.item);
+        }
+
+        function renderAudioProgramSortHeader(key, label) {
+            const isActive = audioProgramSortKey === key;
+            const mark = isActive ? (audioProgramSortDirection === 'asc' ? '↑' : '↓') : '';
+            const nextDirection = isActive
+                ? (audioProgramSortDirection === 'asc' ? '降序' : '升序')
+                : (key === 'date' ? '降序' : '升序');
+            return `<button type="button" class="audio-program-sort${isActive ? ' is-active' : ''}"
+                data-sort-key="${key}" aria-label="按${label}${nextDirection}排序">${label}<span>${mark}</span></button>`;
+        }
+
         function ensureAudioProgramTableHead(container) {
             if (!container || container.querySelector('.audio-program-table-head')) return;
             const tableHead = document.createElement('div');
             tableHead.className = 'audio-program-table-head';
             tableHead.innerHTML = `
-                                <span>标题</span>
-                                <span>节目</span>
-                                <span>日期</span>
+                                ${renderAudioProgramSortHeader('title', '标题')}
+                                ${renderAudioProgramSortHeader('program', '节目')}
+                                ${renderAudioProgramSortHeader('date', '日期')}
                             `;
+            tableHead.querySelectorAll('[data-sort-key]').forEach((button) => {
+                button.addEventListener('click', () => sortAudioPrograms(button.dataset.sortKey));
+            });
             container.appendChild(tableHead);
+        }
+
+        function sortAudioPrograms(key) {
+            if (!['title', 'program', 'date'].includes(key)) return;
+            if (audioProgramSortKey === key) {
+                audioProgramSortDirection = audioProgramSortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                audioProgramSortKey = key;
+                audioProgramSortDirection = key === 'date' ? 'desc' : 'asc';
+            }
+            renderAudioProgramsFromItems(audioProgramItems);
         }
 
         function appendAudioProgramRow(container, item) {
@@ -453,15 +505,17 @@
         function renderAudioProgramsFromItems(items) {
             const container = document.getElementById('audio-programs-list');
             if (!container) return false;
+            audioProgramItems = Array.isArray(items) ? [...items] : [];
             container.replaceChildren();
             audioProgramPlaylist = [];
-            if (!Array.isArray(items) || !items.length) {
+            if (!audioProgramItems.length) {
                 container.innerHTML = '<div class="empty-state" style="grid-column: 1 / -1;">暂无节目</div>';
                 renderAudioProgramQueue();
                 return false;
             }
             ensureAudioProgramTableHead(container);
-            items.forEach(item => appendAudioProgramRow(container, item));
+            getSortedAudioProgramItems().forEach(item => appendAudioProgramRow(container, item));
+            updateAudioProgramRows();
             renderAudioProgramQueue();
             handleAudioSearch(document.getElementById('audio-inner-search')?.value || '');
             return true;
@@ -768,6 +822,7 @@
             try {
                 if (startCtime === 0) {
                     container.replaceChildren();
+                    audioProgramItems = [];
                     audioProgramPlaylist = [];
                     renderAudioProgramQueue();
                 }
@@ -794,6 +849,7 @@
 
                         totalCount += data.length;
                         fetchedItems.push(...data);
+                        audioProgramItems.push(...data);
                         ensureAudioProgramTableHead(container);
 
                         data.forEach(item => {
@@ -827,6 +883,7 @@
             } finally {
                 if (startCtime === 0 && fetchedItems.length) {
                     if (fetchedAllItems) setAudioProgramCache(fetchedItems);
+                    renderAudioProgramsFromItems(fetchedItems);
                 }
                 isAudioLoading = false;
                 if (statusEl) statusEl.innerText = ``;

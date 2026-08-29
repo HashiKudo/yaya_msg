@@ -1,7 +1,7 @@
         import React, { useState, useMemo, useRef, useEffect } from 'react';
         import { createRoot } from 'react-dom/client';
         import { pinyin } from 'pinyin-pro';
-        import { Search, Users, Filter, Upload, Heart, MapPin, Calendar, Hash, X, ChevronRight, Layers, Flag, CheckCircle2, ChevronDown, Check, Cake, Trophy, FileText, Clock, ArrowUpCircle, LogOut, GraduationCap, Copy, Moon, Sun, List, UserSquare2, Sparkles, TrendingUp, TrendingDown, Minus, Music, Disc, AlertCircle, Mic2, Loader2, ExternalLink, ClipboardCopy, Star, Ruler, Droplet, UserCircle, CalendarDays, Activity } from 'lucide-react';
+        import { Search, Users, Upload, Heart, MapPin, Calendar, Hash, X, Layers, ChevronDown, Check, Cake, Trophy, FileText, Clock, ArrowUpCircle, LogOut, GraduationCap, Copy, Moon, Sun, List, UserSquare2, Sparkles, TrendingUp, TrendingDown, Minus, Music, Disc, AlertCircle, Mic2, Loader2, ExternalLink, ClipboardCopy, Star, Ruler, Droplet, UserCircle, CalendarDays, Activity } from 'lucide-react';
         const DEMO_DATA = [];
         const DATABASE_UI_STATE_KEY = 'yaya_database_ui_state_v1';
 
@@ -201,6 +201,18 @@
             "default": "bg-gray-50 text-gray-500 border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700"
         };
 
+        const GROUP_ACCENT_COLORS = {
+            "SNH48": "#2563EB",
+            "GNZ48": "#16A34A",
+            "BEJ48": "#DB2777",
+            "CKG48": "#EA580C",
+            "CGT48": "#DC2626",
+            "SHY48": "#9333EA",
+            "IDFT": "#900058",
+            "明星殿堂": "#9333EA",
+            "default": "#6B7280"
+        };
+
         const ALBUM_CARD_STYLES = {
             "SNH48": "bg-white border-blue-200 dark:bg-blue-900/20 dark:border-blue-800/50",
             "GNZ48": "bg-white border-green-200 dark:bg-green-900/20 dark:border-green-800/50",
@@ -251,6 +263,7 @@
         const MEMBER_GROUP_SORT_ORDER = ['SNH48', 'BEJ48', 'GNZ48', 'CKG48', 'CGT48', 'SHY48', 'IDFT', '明星殿堂'];
 
         const getGroupStyle = (groupName) => GROUP_COLORS[groupName] || GROUP_COLORS["default"];
+        const getGroupAccentColor = (groupName) => GROUP_ACCENT_COLORS[groupName] || GROUP_ACCENT_COLORS["default"];
 
         const getTeamStyle = (teamName) => {
             if (!teamName) return TEAM_COLORS["default"];
@@ -551,6 +564,7 @@
                     .map(line => {
                         return line.replace(/\[\d{2}:\d{2}(\.\d{2,3})?\]/g, '').trim();
                     })
+                    .filter(line => !window.YayaRendererUtils.isLyricCreditLine(line))
                     .filter(line => line);
             }, [lyrics]);
 
@@ -765,18 +779,6 @@
             );
         };
 
-        const StatsCard = ({ title, value, icon: Icon, colorClass }) => (
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center space-x-4 hover:shadow-md transition-shadow dark:bg-gray-800 dark:border-gray-700">
-                <div className={`p-3 rounded-lg ${colorClass} bg-opacity-10 dark:bg-opacity-20`}>
-                    <Icon className={`w-6 h-6 ${colorClass.replace('bg-', 'text-')}`} />
-                </div>
-                <div>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">{title}</p>
-                    <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-100">{value}</h3>
-                </div>
-            </div>
-        );
-
         const DatabaseSectionPlaceholder = ({ icon: Icon, title, detail }) => (
             <div className="rounded-2xl border border-dashed border-gray-200 bg-white/70 px-6 py-16 text-center shadow-sm dark:border-gray-800 dark:bg-gray-900/60">
                 <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400">
@@ -967,23 +969,50 @@
             );
         };
 
+        const MemberAvatar = ({ member }) => {
+            const avatarUrl = String(member.avatar || '').trim();
+            const [imageFailed, setImageFailed] = useState(false);
+
+            useEffect(() => {
+                setImageFailed(false);
+            }, [avatarUrl]);
+
+            return (
+                <span className="db-member-card-avatar" aria-hidden="true">
+                    {avatarUrl && !imageFailed ? (
+                        <img
+                            src={avatarUrl}
+                            alt=""
+                            loading="lazy"
+                            decoding="async"
+                            draggable="false"
+                            onError={() => setImageFailed(true)}
+                        />
+                    ) : (
+                        <UserCircle className="db-member-card-avatar-placeholder" />
+                    )}
+                </span>
+            );
+        };
+
         const MemberCard = ({ member, onClick }) => {
             const isActive = checkIsActive(member);
             return (
                 <div
-                    className={`bg-white rounded-lg shadow-sm hover:shadow-md border p-3 cursor-pointer transition-all duration-200 animate-content group flex items-center justify-between hover:bg-gray-50 dark:bg-gray-800 dark:hover:bg-gray-750 ${isActive ? 'border-gray-200 dark:border-gray-700' : 'border-gray-100 bg-gray-50 opacity-80 dark:bg-gray-800/50 dark:border-gray-800'}`}
+                    className={`db-member-card bg-white rounded-lg shadow-sm hover:shadow-md border p-3 cursor-pointer transition-all duration-200 animate-content group flex items-center justify-between hover:bg-gray-50 dark:bg-gray-800 dark:hover:bg-gray-750 ${isActive ? 'border-gray-200 dark:border-gray-700' : 'border-gray-100 bg-gray-50 opacity-80 dark:bg-gray-800/50 dark:border-gray-800'}`}
                     onClick={() => onClick(member)}
                 >
-                    <div className="flex flex-col min-w-0 flex-1">
-                        <div className="mb-1 min-w-0">
-                            <span className={`block font-bold text-base leading-tight whitespace-nowrap ${isActive ? 'text-gray-800 dark:text-gray-200' : 'text-gray-500 dark:text-gray-500'}`}>{member.ownerName}</span>
-                            {member.pinyin && <span className="block text-xs text-gray-400 font-light truncate dark:text-gray-500">{member.pinyin}</span>}
-                        </div>
-                        <div className="flex items-center space-x-2">
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${getTeamStyle(member.team)}`}>{member.team}</span>
+                    <div className="flex items-center min-w-0 flex-1 gap-3">
+                        <MemberAvatar member={member} />
+                        <div className="flex flex-col min-w-0 flex-1">
+                            <div className="mb-1 min-w-0">
+                                <span className={`block font-bold text-base leading-tight whitespace-nowrap truncate ${isActive ? 'text-gray-800 dark:text-gray-200' : 'text-gray-500 dark:text-gray-500'}`}>{member.ownerName}</span>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${getTeamStyle(member.team)}`}>{member.team}</span>
+                            </div>
                         </div>
                     </div>
-                    <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-gray-500 transition-colors dark:text-gray-600 dark:group-hover:text-gray-400" />
                 </div>
             );
         };
@@ -1285,23 +1314,6 @@
             }, [fxzpData]);
 
 
-            const stats = useMemo(() => {
-                const total = members.length;
-                const activeCount = members.filter(m => checkIsActive(m)).length;
-                const groupCounts = members.reduce((acc, curr) => {
-                    acc[curr.groupName] = (acc[curr.groupName] || 0) + 1;
-                    return acc;
-                }, {});
-                const topGroup = Object.entries(groupCounts).sort((a, b) => b[1] - a[1])[0];
-                return {
-                    total,
-                    activeCount,
-                    groupCounts,
-                    topGroupName: topGroup ? topGroup[0] : '-',
-                    topGroupCount: topGroup ? topGroup[1] : 0
-                };
-            }, [members]);
-
             const categorizedMembers = useMemo(() => {
                 const filtered = members.filter(member => {
                     const normalizedSearch = searchTerm.toLowerCase().replace(/\s+/g, '');
@@ -1359,10 +1371,6 @@
                     };
                 });
             }, [members, searchTerm, selectedGroup, sortBy, statusFilter]);
-
-            const displayedCount = categorizedMembers.reduce((acc, group) => {
-                return acc + group.subGroups.reduce((pAcc, p) => pAcc + p.members.length, 0);
-            }, 0);
 
             const { regularElectionData, newcomerElectionData, electionName, isSearchResult } = useMemo(() => {
                 const regular = [];
@@ -1561,11 +1569,6 @@
                                 )}
                                 {datasetStatus.members.status !== 'loading' && datasetStatus.members.status !== 'error' && (
                                     <>
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                                            <StatsCard title="成员总数" value={stats.total} icon={Users} colorClass="text-blue-500 bg-blue-500" />
-                                            <StatsCard title="在团人数" value={stats.activeCount} icon={CheckCircle2} colorClass="text-green-500 bg-green-500" />
-                                            <StatsCard title="当前显示" value={displayedCount} icon={Filter} colorClass="text-pink-500 bg-pink-500" />
-                                        </div>
                                         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6 space-y-4 transition-colors duration-300 dark:bg-gray-900 dark:border-gray-800">
                                             <div className="flex flex-col lg:flex-row gap-4">
                                                 <div className="flex-1 relative group">
@@ -1599,8 +1602,8 @@
                                         {categorizedMembers.map((groupData) => (
                                             <div key={groupData.groupName} className="animate-fadeIn">
                                                 <div className="flex items-center mb-6 pb-2 border-b border-gray-200 dark:border-gray-800">
-                                                    <span className={`w-2 h-8 rounded-full mr-3 ${getGroupStyle(groupData.groupName).split(' ')[0].replace('bg-', 'bg-')}`}></span>
-                                                    <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100">{groupData.groupName}</h2>
+                                                    <span className="w-2 h-8 rounded-full mr-3" style={{ backgroundColor: getGroupAccentColor(groupData.groupName) }}></span>
+                                                    <h2 className="text-2xl font-bold" style={{ color: getGroupAccentColor(groupData.groupName) }}>{groupData.groupName}</h2>
                                                     <span className="ml-3 px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full font-medium dark:bg-gray-800 dark:text-gray-400">
                                                         {groupData.subGroups.reduce((acc, p) => acc + p.members.length, 0)} 人
                                                     </span>
@@ -1609,7 +1612,7 @@
                                                     {groupData.subGroups.map((subGroupData) => (
                                                         <div key={subGroupData.name}>
                                                             <h3 className={`text-sm font-bold uppercase tracking-wider mb-3 flex items-center ${sortBy === 'team' ? getTeamStyle(subGroupData.name).split(' ')[0] : 'text-gray-500 dark:text-gray-400'}`}>
-                                                                {sortBy === 'period' ? <Calendar className="w-4 h-4 mr-2 text-gray-400 dark:text-gray-500" /> : <Flag className="w-4 h-4 mr-2" />}
+                                                                {sortBy === 'period' && <Calendar className="w-4 h-4 mr-2 text-gray-400 dark:text-gray-500" />}
                                                                 {subGroupData.name}
                                                             </h3>
                                                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-3">

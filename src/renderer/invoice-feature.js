@@ -431,7 +431,7 @@
                         <button class="btn btn-secondary invoice-stats-btn" type="button" onclick="openInvoiceStatsModal()">统计</button>
                         <button class="btn btn-secondary" onclick="refreshInvoicePage(true)" ${state.loading ? 'disabled' : ''}>查询</button>
                     </div>
-                    <div id="invoice-order-list" class="invoice-order-list">${orderRows}</div>
+                    <div id="invoice-order-list" class="invoice-order-list${visibleOrders.length ? '' : ' is-empty'}">${orderRows}</div>
                 </section>
                 <section class="invoice-panel invoice-apply-panel">
                     <div class="invoice-summary">
@@ -516,7 +516,6 @@
         return request.requestGeneration === state.requestGeneration
             && request.accountGeneration === state.accountGeneration
             && request.token === getInvoiceToken()
-            && request.accountScope === getInvoiceAccountScope()
             && (typeof window.getPocketAccountSessionGeneration !== 'function'
                 || request.sessionGeneration === window.getPocketAccountSessionGeneration());
     }
