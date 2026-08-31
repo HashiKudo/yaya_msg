@@ -171,6 +171,19 @@
             setMusicLyricsPanelState('lines', currentMusicLyricMeta?.歌曲名 || '歌词');
         }
 
+        function getMusicLyricActiveRange(activeIndex) {
+            if (activeIndex < 0 || activeIndex >= currentMusicLyrics.length) {
+                return { start: activeIndex, end: activeIndex };
+            }
+
+            const activeTime = currentMusicLyrics[activeIndex].time;
+            let start = activeIndex;
+            let end = activeIndex;
+            while (start > 0 && Math.abs(currentMusicLyrics[start - 1].time - activeTime) < 0.001) start -= 1;
+            while (end + 1 < currentMusicLyrics.length && Math.abs(currentMusicLyrics[end + 1].time - activeTime) < 0.001) end += 1;
+            return { start, end };
+        }
+
         function syncMusicLyrics(currentTime, force = false) {
             if (!currentMusicLyrics.length) return;
             const scrollEl = document.getElementById('music-lyrics-scroll');
@@ -185,19 +198,30 @@
             if (!force && activeIndex === currentMusicLyricActiveIndex) return;
             currentMusicLyricActiveIndex = activeIndex;
 
+            const activeRange = getMusicLyricActiveRange(activeIndex);
+
             const lineEls = Array.from(linesEl.children);
             lineEls.forEach((el, index) => {
-                el.classList.toggle('active', index === activeIndex);
-                el.classList.toggle('past', index < activeIndex);
-                el.classList.toggle('near', Math.abs(index - activeIndex) === 1);
-                el.classList.toggle('mid', Math.abs(index - activeIndex) === 2);
-                el.classList.toggle('far', Math.abs(index - activeIndex) >= 3);
+                const isActive = index >= activeRange.start && index <= activeRange.end;
+                const distance = index < activeRange.start
+                    ? activeRange.start - index
+                    : index > activeRange.end
+                        ? index - activeRange.end
+                        : 0;
+                el.classList.toggle('active', isActive);
+                el.classList.toggle('past', index < activeRange.start);
+                el.classList.toggle('near', distance === 1);
+                el.classList.toggle('mid', distance === 2);
+                el.classList.toggle('far', distance >= 3);
             });
 
-            const activeEl = lineEls[activeIndex];
-            if (!activeEl) return;
+            const activeStartEl = lineEls[activeRange.start];
+            const activeEndEl = lineEls[activeRange.end];
+            if (!activeStartEl || !activeEndEl) return;
             if (!force && currentMusicLyricsUserScrolling) return;
-            const targetTop = activeEl.offsetTop - (scrollEl.clientHeight / 2) + (activeEl.offsetHeight / 2);
+            const activeGroupTop = activeStartEl.offsetTop;
+            const activeGroupBottom = activeEndEl.offsetTop + activeEndEl.offsetHeight;
+            const targetTop = activeGroupTop - (scrollEl.clientHeight / 2) + ((activeGroupBottom - activeGroupTop) / 2);
             scrollEl.scrollTo({
                 top: Math.max(targetTop, 0),
                 behavior: force ? 'auto' : 'smooth'

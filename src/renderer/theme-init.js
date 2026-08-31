@@ -26,10 +26,23 @@
                     : '';
             }
 
+            function hideUnavailableWebBackground(imageElement) {
+                if (!imageElement) return;
+                imageElement.classList.add('is-unavailable');
+                imageElement.removeAttribute('src');
+            }
+
             async function recoverWebBackground(imageElement) {
-                if (!imageElement || imageElement.dataset.fallbackAttempted === 'true') return;
+                if (!imageElement) return;
+                if (imageElement.dataset.fallbackAttempted === 'true') {
+                    hideUnavailableWebBackground(imageElement);
+                    return;
+                }
                 const sourceUrl = imageElement.currentSrc || imageElement.src;
-                if (!sourceUrl || sourceUrl.startsWith('blob:')) return;
+                if (!sourceUrl || sourceUrl.startsWith('blob:')) {
+                    hideUnavailableWebBackground(imageElement);
+                    return;
+                }
 
                 imageElement.dataset.fallbackAttempted = 'true';
                 try {
@@ -40,7 +53,7 @@
                     if (!response.ok) throw new Error(`Background request failed: ${response.status}`);
                     imageElement.src = URL.createObjectURL(await response.blob());
                 } catch (_) {
-                    // Keep the theme background color as a safe fallback.
+                    hideUnavailableWebBackground(imageElement);
                 }
             }
 

@@ -165,6 +165,7 @@
         let toggleTheme;
         let updateThemeBtn;
         let ensureNimChatroomSdkLoaded;
+        let disconnectLiveDanmu;
         let initLiveDanmu;
         let initArtLiveDanmu;
         let initDanmuForDPlayer;
@@ -1949,6 +1950,7 @@
                 if (!matches.length) return;
                 const content = line.replace(timeReg, '').trim();
                 if (!content) return;
+                if (window.YayaRendererUtils.isLyricCreditLine(content)) return;
 
                 matches.forEach(match => {
                     const min = Number(match[1] || 0);
@@ -2902,6 +2904,9 @@
             startPlayer
         } = window.YayaRendererFeatures.createPlayerCoreFeature({
             backToLiveList,
+            disconnectLiveDanmu: (...args) => typeof disconnectLiveDanmu === 'function'
+                ? disconnectLiveDanmu(...args)
+                : undefined,
             fetchDanmuNative,
             fetchPocketAPI,
             getArt: () => art,
@@ -3327,19 +3332,28 @@
         window.toggleTheme = toggleTheme;
 
         ({
+            disconnectLiveDanmu,
             ensureNimChatroomSdkLoaded,
             initLiveDanmu,
             initArtLiveDanmu,
             initDanmuForDPlayer
         } = window.YayaRendererFeatures.createNimChatroomFeature({
             getDp: () => dp,
+            getNimAuth: async () => {
+                const token = getCurrentAppToken();
+                if (!token) return { success: false, msg: '未登录口袋48' };
+                if (window.yayaWasmReadyPromise) {
+                    try {
+                        await window.yayaWasmReadyPromise;
+                    } catch (error) {
+                        window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/app-legacy.js');
+                    }
+                }
+                const pa = typeof window.getPA === 'function' ? window.getPA() : null;
+                return ipcRenderer.invoke('get-nim-login-info', { token, pa });
+            },
             getNimInstance: () => nimInstance,
             setNimInstance: value => { nimInstance = value; },
-            handlePocketMessage: (msg, player) => {
-                if (typeof handlePocketMessage === 'function') {
-                    handlePocketMessage(msg, player);
-                }
-            },
             showToast: (...args) => showToast(...args)
         }));
 

@@ -224,11 +224,25 @@
         return element;
     }
 
+    function isLyricCreditLine(value) {
+        const text = String(value == null ? '' : value).normalize('NFKC').trim();
+        if (!text) return false;
+        const noticeText = text.replace(/^[\s【\[(（]+/, '');
+        if (/^(?:未经(?:著作权人)?许可|未经授权|版权所有|本歌曲声明|本作品声明)/i.test(noticeText)) return true;
+
+        const separatorIndex = text.search(/[:：]/);
+        if (separatorIndex < 1 || separatorIndex > 80) return false;
+
+        const label = text.slice(0, separatorIndex).replace(/[\s/\\&+·•・()（）【】\[\]]+/g, '').toLowerCase();
+        return /^(?:作词|填词|歌词|中文词|中文译词|原作词|原词|改编词|rap词|词|作曲|谱曲|原曲|改编曲|曲|原编曲|编曲|制作人?|总制作人|联合制作|改编制作|demo制作|监制|出品人?|出品|项目(?:统筹|策划)|策划|统筹|艺人统筹|ar企划|中文版|录音|人声录音|配唱|监棚配唱|音频编辑|人声编辑|声乐指导|声乐老师|声音设计|和声|合声|和音|混音|母带|吉他|贝斯|鼓手?|弦乐|钢琴|键盘|笛子|中阮|乐器|音乐(?:工程|制作|总监|版权|企划|统筹|监制|营销|发行|策划)|版权|发行|宣发|出处|来源|管理(?:方|单位)?|akb48.*制作人|tsh48管理制作人|admin(?:by|istrator)?|op|sp|isrc|lyricist|lyrics?|composer|composedby|arranger|arrangedby|producer|producedby|vocal|backingvocal|harmony|recording|mixing|mastering|guitar|bass|drums?|piano|keyboard|strings?|musicdirector)/i.test(label);
+    }
+
     window.YayaRendererUtils = Object.freeze({
         escapeHtml,
         escapeJsString,
         getErrorMessage,
         html,
+        isLyricCreditLine,
         normalize48Url,
         normalizeUrl,
         parseJson,

@@ -4,6 +4,7 @@
     window.YayaRendererFeatures.createPlayerCoreFeature = function createPlayerCoreFeature(deps) {
         const {
             backToLiveList,
+            disconnectLiveDanmu,
             fetchDanmuNative,
             fetchPocketAPI,
             getArt,
@@ -353,12 +354,17 @@
             }
         }
 
-        async function switchToCompatVodPlayback(video, videoUrl, player, reason = '') {
+        async function switchToCompatVodPlayback(video, videoUrl, player, reason = '', playbackState = {}) {
             if (!video || video.yayaCompatFallbackStarted) return;
             if (window.desktop?.platform === 'web') return;
 
             const currentArt = getArt();
             if (!currentArt || currentArt.video !== video) return;
+            const savedResumeAt = Number(playbackState.resumeAt);
+            const resumeAt = Math.max(0, Number.isFinite(savedResumeAt) ? savedResumeAt : (Number(video.currentTime) || 0));
+            const shouldResumePlayback = typeof playbackState.shouldResumePlayback === 'boolean'
+                ? playbackState.shouldResumePlayback
+                : !video.paused && !video.ended;
             video.yayaCompatFallbackStarted = true;
 
             if (video.yayaCompatFallbackTimer) {
@@ -383,9 +389,15 @@
 
                 video.src = result.url;
                 video.load();
-                await video.play().catch((error) => {
-                    window.YayaRendererUtils.reportIgnoredError(error, 'player-core:compat-autoplay');
-                });
+                if (resumeAt > 0) {
+                    await restoreCompatVodPosition(video, resumeAt);
+                }
+                if (getArt() !== latestArt || latestArt.video !== video) return;
+                if (shouldResumePlayback) {
+                    await video.play().catch((error) => {
+                        window.YayaRendererUtils.reportIgnoredError(error, 'player-core:compat-autoplay');
+                    });
+                }
                 if (latestArt.notice) latestArt.notice.show = '已切换兼容播放';
             } catch (error) {
                 console.error('[播放器] 兼容播放失败:', reason, error);
@@ -393,6 +405,57 @@
                     showToast(error?.message || '旧版直播兼容播放失败');
                 }
             }
+        }
+
+        function restoreCompatVodPosition(video, resumeAt) {
+            const requestedTime = Math.max(0, Number(resumeAt) || 0);
+            if (!video || requestedTime <= 0) return Promise.resolve();
+
+            return new Promise((resolve) => {
+                const metadataReady = video.readyState >= HTMLMediaElement.HAVE_METADATA;
+                let seekStarted = false;
+                let settled = false;
+                let timeout = null;
+
+                const cleanup = () => {
+                    video.removeEventListener('loadedmetadata', handleMetadata);
+                    video.removeEventListener('seeked', finish);
+                    video.removeEventListener('error', finish);
+                    if (timeout) clearTimeout(timeout);
+                    timeout = null;
+                };
+                const finish = () => {
+                    if (settled) return;
+                    settled = true;
+                    cleanup();
+                    resolve();
+                };
+                const handleMetadata = () => {
+                    if (seekStarted) return;
+                    seekStarted = true;
+                    const duration = Number(video.duration);
+                    const targetTime = Number.isFinite(duration) && duration > 0
+                        ? Math.min(requestedTime, Math.max(0, duration - 0.25))
+                        : requestedTime;
+
+                    try {
+                        if (Math.abs((Number(video.currentTime) || 0) - targetTime) < 0.1) {
+                            finish();
+                            return;
+                        }
+                        video.addEventListener('seeked', finish, { once: true });
+                        video.currentTime = targetTime;
+                    } catch (error) {
+                        window.YayaRendererUtils.reportIgnoredError(error, 'player-core:compat-restore-position');
+                        finish();
+                    }
+                };
+
+                video.addEventListener('loadedmetadata', handleMetadata, { once: true });
+                video.addEventListener('error', finish, { once: true });
+                timeout = setTimeout(finish, 10000);
+                if (metadataReady) handleMetadata();
+            });
         }
 
         function canUseNativeHls(video) {
@@ -862,7 +925,13 @@
                     if (typeof renderDanmuListUI === 'function') {
                         renderDanmuListUI(danmuData);
                     }
-                    await startPlayer(streamUrl, title, isLive, res.content.chatroomId, danmuData);
+                    const chatroomId = res.content.chatroomId
+                        || res.content.roomId
+                        || hydratedItem.chatroomId
+                        || hydratedItem.roomId;
+                    await startPlayer(streamUrl, title, isLive, chatroomId, danmuData, {
+                        liveId: res.content.liveId || hydratedItem.liveId || item.liveId
+                    });
                 } else {
                     showToast(res?.msg || res?.message || '无法获取流地址');
                     backToLiveList();
@@ -876,7 +945,8 @@
         async function startPlayer(url, title = '直播/回放', isLiveContent = false, chatroomId = null, vodDanmuData = [], options = {}) {
             const {
                 clearAuxPanels = false,
-                autoRecoveryAttempt = 0
+                autoRecoveryAttempt = 0,
+                liveId = ''
             } = options || {};
             url = normalizePlaybackUrl(url);
             destroyPlayers({ clearTimeline: isLiveContent, clearAuxPanels });
@@ -983,7 +1053,8 @@
                         }
                         await startPlayer(url, title, true, chatroomId, vodDanmuData, {
                             clearAuxPanels: false,
-                            autoRecoveryAttempt: nextAttempt
+                            autoRecoveryAttempt: nextAttempt,
+                            liveId
                         });
                     };
 
@@ -1050,7 +1121,7 @@
                     };
 
                     if (chatroomId) {
-                        initLiveDanmu(chatroomId);
+                        initLiveDanmu(chatroomId, { liveId });
                     }
                 } catch (err) {
                     const nextAttempt = Math.max(0, Number(autoRecoveryAttempt) || 0) + 1;
@@ -1062,7 +1133,8 @@
                         if (!isLivePlayerViewOpen()) return;
                         startPlayer(url, title, true, chatroomId, vodDanmuData, {
                             clearAuxPanels: false,
-                            autoRecoveryAttempt: nextAttempt
+                            autoRecoveryAttempt: nextAttempt,
+                            liveId
                         });
                     }, retryDelay);
                 }
@@ -1296,8 +1368,12 @@
                             if (window.mpegts.Events?.ERROR) {
                                 player.on(window.mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
                                     const detail = String(errorInfo?.msg || errorDetail || errorType || '未知错误');
+                                    const playbackState = {
+                                        resumeAt: Math.max(0, Number(video.currentTime) || 0),
+                                        shouldResumePlayback: !video.paused && !video.ended
+                                    };
                                     console.error('[播放器] FLV 加载失败:', errorType, errorDetail, errorInfo);
-                                    setTimeout(() => switchToCompatVodPlayback(video, videoUrl, player, detail), 0);
+                                    setTimeout(() => switchToCompatVodPlayback(video, videoUrl, player, detail, playbackState), 0);
                                 });
                             }
                             player.attachMediaElement(video);
@@ -1333,7 +1409,7 @@
             setArt(nextArt);
 
             if (chatroomId && isLiveContent) {
-                initArtLiveDanmu(chatroomId, nextArt);
+                initArtLiveDanmu(chatroomId, nextArt, { liveId });
             }
 
             nextArt.on('ready', () => {
@@ -1403,8 +1479,11 @@
                 setDp(null);
             }
 
-            if (nimInstance) {
-                nimInstance.disconnect();
+            if (typeof disconnectLiveDanmu === 'function') {
+                disconnectLiveDanmu();
+            } else if (nimInstance) {
+                if (typeof nimInstance.destroy === 'function') nimInstance.destroy();
+                else nimInstance.disconnect();
                 setNimInstance(null);
             }
 

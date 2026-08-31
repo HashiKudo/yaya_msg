@@ -4,11 +4,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="yaya-web-build" content="__YAYA_BUILD_VERSION__">
     <meta http-equiv="Content-Security-Policy"
         content="default-src 'self' file: https: data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' file: https: data: blob:; media-src 'self' file: https: http: data: blob:; connect-src 'self' file: https: http: ws: wss: data: blob:; font-src 'self' data:;">
     <title>牙牙消息</title>
     <link rel="icon" href="./icon.png" type="image/x-icon">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=__YAYA_BUILD_VERSION__">
     <link rel="stylesheet" href="./src/web/web-overrides.css?v=__YAYA_BUILD_VERSION__">
 
     <script src="./src/renderer/renderer-utils.js?v=__YAYA_BUILD_VERSION__"></script>
@@ -54,7 +55,7 @@
                 </svg>
             </div>
             <img src="./icon.png" class="title-logo">
-            <span>牙牙消息 v2.10</span>
+            <span>牙牙消息 v2.11</span>
         </div>
         <div id="topbar-page-title" class="title-bar-center-title" aria-live="polite"></div>
         <div class="window-controls">
@@ -492,19 +493,19 @@
 
                         <div class="home-panel home-panel-settings">
                             <div class="home-panel-title">通用</div>
-                            <div class="home-panel-subtitle">口袋账号、B站账号、下载管理、开具发票、软件相关设置</div>
+                            <div class="home-panel-subtitle">口袋账号、B站账号、开具发票、下载管理、软件相关设置</div>
                             <div class="home-panel-actions home-card-grid">
                                 <button class="home-card" onclick="switchView('login')">
                                     <span class="home-card-title">账号登录</span>
                                     <span class="home-card-desc">登录与账号信息</span>
                                 </button>
-                                <button class="home-card" onclick="switchView('downloads')">
-                                    <span class="home-card-title">下载管理</span>
-                                    <span class="home-card-desc">查看任务与进度</span>
-                                </button>
                                 <button class="home-card" onclick="switchView('invoice')">
                                     <span class="home-card-title">开具发票</span>
                                     <span class="home-card-desc">订单开票申请</span>
+                                </button>
+                                <button class="home-card" onclick="switchView('downloads')">
+                                    <span class="home-card-title">下载管理</span>
+                                    <span class="home-card-desc">查看任务与进度</span>
                                 </button>
                                 <button class="home-card" onclick="switchView('settings')">
                                     <span class="home-card-title">软件设置</span>
@@ -514,9 +515,36 @@
                         </div>
 
                         <div class="home-panel home-panel-yk1z">
-                            <div id="home-yk1z-title" class="home-panel-title">yk1z</div>
-                            <div id="home-yk1z-subtitle" class="home-panel-subtitle">诶 这是什么O.o？</div>
-                            <div id="home-yk1z-actions" class="home-panel-actions home-card-grid"></div>
+                            <div id="home-yk1z-title" class="home-panel-title">牙口栗子</div>
+                            <div id="home-yk1z-subtitle" class="home-panel-subtitle">O.o？</div>
+                            <div id="home-yk1z-actions" class="home-panel-actions home-card-grid">
+                                <button class="home-card" data-yk1z-type="url" data-yk1z-value="https://push.gnz.hk"
+                                    data-yk1z-desc="牙牙推送" onclick="openInBrowser('https://push.gnz.hk')">
+                                    <span class="home-card-title">牙牙推送</span>
+                                    <span class="home-card-desc">牙牙推送</span>
+                                </button>
+                                <button class="home-card" data-yk1z-type="url" data-yk1z-value="https://zimu.gnz.hk"
+                                    data-yk1z-desc="牙牙字幕" onclick="openInBrowser('https://zimu.gnz.hk')">
+                                    <span class="home-card-title">牙牙字幕</span>
+                                    <span class="home-card-desc">牙牙字幕</span>
+                                </button>
+                                <button class="home-card" data-yk1z-type="url" data-yk1z-value="https://snh48.xyz"
+                                    data-yk1z-desc="所有房间" onclick="openInBrowser('https://snh48.xyz')">
+                                    <span class="home-card-title">Room</span>
+                                    <span class="home-card-desc">所有房间</span>
+                                </button>
+                                <button class="home-card" data-yk1z-type="url" data-yk1z-value="https://kh.gay"
+                                    data-yk1z-desc="kh" onclick="openInBrowser('https://kh.gay')">
+                                    <span class="home-card-title">看看烟花</span>
+                                    <span class="home-card-desc">kh</span>
+                                </button>
+                                <button class="home-card" data-yk1z-type="url"
+                                    data-yk1z-value="https://github.com/yk1z/yaya_msg" data-yk1z-desc="项目仓库"
+                                    onclick="openInBrowser('https://github.com/yk1z/yaya_msg')">
+                                    <span class="home-card-title">项目仓库</span>
+                                    <span class="home-card-desc">项目仓库</span>
+                                </button>
+                            </div>
                         </div>
                     </section>
                     <div class="home-footer-credit">presented by yk1z</div>
@@ -1417,13 +1445,21 @@
                         </div>
                         <div class="official-site-music-header-tools">
                             <div class="official-site-music-toolbar" aria-label="分团筛选">
+                                <button id="official-site-music-view-toggle" type="button"
+                                    class="official-site-music-filter official-site-music-view-toggle"
+                                    data-view-toggle onclick="toggleOfficialSiteMusicView()" title="切换到专辑视图"
+                                    aria-label="切换到专辑视图" aria-pressed="false">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M8 6h12M8 12h12M8 18h12"></path>
+                                        <circle cx="4" cy="6" r="1"></circle>
+                                        <circle cx="4" cy="12" r="1"></circle>
+                                        <circle cx="4" cy="18" r="1"></circle>
+                                    </svg>
+                                </button>
                                 <button type="button" class="official-site-music-filter is-active"
                                     data-group-filter="ALL" onclick="setOfficialSiteMusicGroupFilter('ALL')">全部</button>
                                 <button type="button" class="official-site-music-filter official-site-music-favorite-filter"
                                     data-favorites-filter onclick="toggleOfficialSiteMusicFavoritesFilter()">
-                                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                                        <path d="M12 3.5l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8L12 3.5z" />
-                                    </svg>
                                     <span>收藏</span>
                                 </button>
                                 <button type="button" class="official-site-music-filter"
@@ -1439,7 +1475,24 @@
                                 <button type="button" class="official-site-music-filter"
                                     data-group-filter="SHY" onclick="setOfficialSiteMusicGroupFilter('SHY')">SHY48</button>
                                 <button type="button" class="official-site-music-filter"
+                                    data-group-filter="AKB" onclick="setOfficialSiteMusicGroupFilter('AKB')">AKB48</button>
+                                <button type="button" class="official-site-music-filter"
                                     data-group-filter="TSH" onclick="setOfficialSiteMusicGroupFilter('TSH')">TSH48</button>
+                                <button type="button" class="official-site-music-filter"
+                                    data-group-filter="TPE" onclick="setOfficialSiteMusicGroupFilter('TPE')">TPE48</button>
+                            </div>
+                            <div id="official-site-music-grouping-filter" class="official-site-music-grouping-filter">
+                                <button id="official-site-music-grouping-trigger" type="button"
+                                    class="official-site-music-grouping-trigger" aria-label="专辑类型筛选"
+                                    aria-haspopup="listbox" aria-expanded="false"
+                                    onclick="toggleOfficialSiteMusicAlbumGroupingMenu(event)">
+                                    <span id="official-site-music-grouping-label">全部类型</span>
+                                    <svg viewBox="0 0 20 20" aria-hidden="true">
+                                        <path d="M5.5 7.5L10 12l4.5-4.5"></path>
+                                    </svg>
+                                </button>
+                                <div id="official-site-music-grouping-menu" class="official-site-music-grouping-menu"
+                                    role="listbox" aria-label="专辑类型" hidden></div>
                             </div>
                             <div class="official-site-music-search media-search-shell">
                                 <span class="media-search-icon" aria-hidden="true">
@@ -1449,7 +1502,7 @@
                                     </svg>
                                 </span>
                                 <input type="text" id="official-site-music-search-input"
-                                    class="input-control media-search-input" placeholder="搜索歌曲名 / 专辑 / 分团 / 歌手"
+                                    class="input-control media-search-input" placeholder="搜索关键词"
                                     oninput="handleOfficialSiteMusicSearch(this.value)">
                             </div>
                         </div>
@@ -1561,9 +1614,21 @@
                     <div id="official-site-music-player-queue" class="player-queue-panel" style="display: none;">
                         <div class="player-queue-header">
                             <span>播放列表</span>
-                            <span id="official-site-music-player-queue-count">0 首</span>
+                            <div class="player-queue-header-actions">
+                                <span id="official-site-music-player-queue-count">0 首</span>
+                                <button id="official-site-music-player-queue-clear" type="button"
+                                    class="player-queue-clear-btn"
+                                    onclick="event.stopPropagation(); clearOfficialSiteMusicQueue()">清空</button>
+                            </div>
                         </div>
                         <div id="official-site-music-player-queue-list" class="player-queue-list"></div>
+                    </div>
+                    <div id="official-site-music-context-menu" class="official-site-music-context-menu"
+                        role="menu" hidden>
+                        <button id="official-site-music-context-add" type="button" role="menuitem"
+                            onclick="toggleOfficialSiteTrackInQueue(this.parentElement.dataset.trackId)">添加到播放列表</button>
+                        <button id="official-site-music-context-favorite" type="button" role="menuitem"
+                            onclick="toggleOfficialSiteMusicFavoriteByTrackId(this.parentElement.dataset.trackId)">收藏</button>
                     </div>
                 </div>
             </div>
@@ -2914,6 +2979,7 @@
                                         <h3>上麦列表</h3>
                                         <div id="room-radio-scan-progress-copy" class="room-radio-scan-progress-copy" hidden>
                                             <span id="room-radio-scan-progress-text">准备扫描...</span>
+                                            <span id="room-radio-scan-detected"></span>
                                             <span id="room-radio-scan-summary"></span>
                                         </div>
                                     </div>
@@ -2928,36 +2994,9 @@
                                 <div id="room-radio-scan-results" class="room-radio-scan-results" hidden></div>
                             </div>
 
-                            <details class="Box-row room-radio-manual-panel">
-                                <summary>手动连接</summary>
-                                <div class="room-radio-manual-content">
-                                    <div class="room-radio-manual-fields">
-                                        <div class="search-wrapper" style="flex: 1;">
-                                            <label>搜索成员</label>
-                                            <input type="text" id="room-radio-member-input" class="input-control"
-                                                placeholder="请输入成员名" oninput="handleRoomRadioSearch(this.value)"
-                                                onfocus="handleRoomRadioSearch(this.value)">
-                                            <div id="room-radio-search-results" class="suggestion-box"></div>
-                                        </div>
-
-                                        <div style="flex: 1.25;">
-                                            <label id="room-radio-channel-label">大房间 Channel ID</label>
-                                            <div class="room-radio-manual-channel-row">
-                                                <input type="text" id="room-radio-channel-id" class="input-control"
-                                                    placeholder="大房间 Channel ID">
-                                                <button type="button" id="btn-toggle-room-radio-room-type"
-                                                    class="btn btn-secondary"
-                                                    onclick="toggleRoomRadioRoomType()">大房间</button>
-                                            </div>
-                                        </div>
-
-                                        <input type="hidden" id="room-radio-server-id">
-                                    </div>
-
-                                    <button class="btn btn-primary room-radio-manual-connect"
-                                        onclick="connectRoomRadio()">连接电台</button>
-                                </div>
-                            </details>
+                            <input type="hidden" id="room-radio-member-input">
+                            <input type="hidden" id="room-radio-channel-id">
+                            <input type="hidden" id="room-radio-server-id">
 
                             <div id="room-radio-result-container" style="margin-top: 20px;"></div>
                         </div>

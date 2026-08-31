@@ -22,6 +22,8 @@
         const AUTO_ROOM_RADIO_RECORD_ENABLED_KEY = 'yaya_auto_room_radio_record_enabled';
         const AUTO_ROOM_RADIO_RECORD_MEMBERS_KEY = 'yaya_auto_room_radio_record_members';
         const AUTO_ROOM_RADIO_RECORD_POLL_INTERVAL_MS = 3000;
+        const IS_WEB_PLATFORM = window.desktop?.platform === 'web'
+            || document.documentElement?.dataset?.platform === 'web';
 
         let radioMpegtsPlayer = null;
         let radioMediaElement = null;
@@ -39,7 +41,6 @@
         let roomRadioPlaybackRequestId = 0;
         let roomRadioScanRunId = 0;
         let isRoomRadioScanning = false;
-        let roomRadioScanStartedAt = 0;
         let roomRadioScanTotal = 0;
         let roomRadioScanCompleted = 0;
         let roomRadioScanFailed = 0;
@@ -143,6 +144,7 @@
                 button: document.getElementById('btn-room-radio-scan'),
                 progressCopy: document.getElementById('room-radio-scan-progress-copy'),
                 progressText: document.getElementById('room-radio-scan-progress-text'),
+                detected: document.getElementById('room-radio-scan-detected'),
                 summary: document.getElementById('room-radio-scan-summary'),
                 results: document.getElementById('room-radio-scan-results')
             };
@@ -157,13 +159,6 @@
             button.classList.toggle('btn-secondary', !isRoomRadioScanning);
         }
 
-        function formatRoomRadioScanElapsed() {
-            if (!roomRadioScanStartedAt) return '';
-            const elapsedSeconds = Math.max(0, Math.round((Date.now() - roomRadioScanStartedAt) / 1000));
-            if (elapsedSeconds < 60) return `${elapsedSeconds} 秒`;
-            return `${Math.floor(elapsedSeconds / 60)} 分 ${elapsedSeconds % 60} 秒`;
-        }
-
         function getRoomRadioScanVoiceUserCount() {
             return roomRadioScanResults.reduce((total, item) => {
                 const voiceUserCount = Array.isArray(item.voiceUsers) ? item.voiceUsers.length : 0;
@@ -172,18 +167,18 @@
         }
 
         function updateRoomRadioScanProgress(statusText = '') {
-            const { progressCopy, progressText, summary } = getRoomRadioScanElements();
+            const { progressCopy, progressText, detected, summary } = getRoomRadioScanElements();
             if (progressCopy) progressCopy.hidden = false;
             const percent = roomRadioScanTotal > 0
                 ? Math.min(100, Math.round((roomRadioScanCompleted / roomRadioScanTotal) * 100))
                 : 0;
             if (progressText) {
                 progressText.textContent = statusText
-                    || `正在扫描 ${roomRadioScanCompleted}/${roomRadioScanTotal}（${percent}%）`;
+                    || `正在扫描（${percent}%）`;
             }
+            if (detected) detected.textContent = `已检测 ${roomRadioScanCompleted}/${roomRadioScanTotal}`;
             if (summary) {
-                const elapsed = formatRoomRadioScanElapsed();
-                summary.textContent = `上麦 ${getRoomRadioScanVoiceUserCount()} · 房间 ${roomRadioScanResults.length} · 异常 ${roomRadioScanFailed}${elapsed ? ` · ${elapsed}` : ''}`;
+                summary.textContent = `上麦 ${getRoomRadioScanVoiceUserCount()} · 异常 ${roomRadioScanFailed}`;
             }
         }
 
@@ -408,6 +403,12 @@
         }
 
         function toggleAutoRoomRadioRecording(enabled) {
+            if (IS_WEB_PLATFORM) {
+                autoRoomRadioRecordEnabled = false;
+                updateAutoRoomRadioRecordUi();
+                showToast('网页端已禁用上麦请求');
+                return;
+            }
             autoRoomRadioRecordEnabled = enabled === true;
             persistAutoRoomRadioRecordSettings();
             updateAutoRoomRadioRecordUi();
@@ -746,13 +747,13 @@
         function scheduleAutoRoomRadioRecordPoll(delay = AUTO_ROOM_RADIO_RECORD_POLL_INTERVAL_MS) {
             if (autoRoomRadioRecordPollTimer) clearTimeout(autoRoomRadioRecordPollTimer);
             autoRoomRadioRecordPollTimer = null;
-            if (!autoRoomRadioRecordEnabled) return;
+            if (IS_WEB_PLATFORM || !autoRoomRadioRecordEnabled) return;
             autoRoomRadioRecordPollTimer = setTimeout(pollAutoRoomRadioRecordMembers, Math.max(0, delay));
         }
 
         async function pollAutoRoomRadioRecordMembers() {
             autoRoomRadioRecordPollTimer = null;
-            if (!autoRoomRadioRecordEnabled) return;
+            if (IS_WEB_PLATFORM || !autoRoomRadioRecordEnabled) return;
             if (autoRoomRadioRecordPollRunning) {
                 scheduleAutoRoomRadioRecordPoll();
                 return;
@@ -814,12 +815,13 @@
             roomRadioScanRunId += 1;
             isRoomRadioScanning = false;
             setRoomRadioScanButton();
-            updateRoomRadioScanProgress(`扫描已停止：已检测 ${roomRadioScanCompleted}/${roomRadioScanTotal}`);
+            updateRoomRadioScanProgress('扫描已停止');
             renderRoomRadioScanResults({ cancelled: true });
             showToast('已停止全成员上麦扫描');
         }
 
         async function scanAllMemberRoomRadios(options = {}) {
+            if (IS_WEB_PLATFORM) return;
             const {
                 followedOnly = false,
                 preferredChannelId = '',
@@ -873,7 +875,6 @@
             const runId = roomRadioScanRunId + 1;
             roomRadioScanRunId = runId;
             isRoomRadioScanning = true;
-            roomRadioScanStartedAt = Date.now();
             roomRadioScanTotal = tasks.length;
             roomRadioScanCompleted = 0;
             roomRadioScanFailed = 0;
@@ -951,7 +952,7 @@
             roomRadioScanCompletedAt = Date.now();
             roomRadioScanCompletedScope = followedOnly ? 'followed' : 'all';
             setRoomRadioScanButton();
-            updateRoomRadioScanProgress(`扫描完成：已检测 ${roomRadioScanCompleted}/${roomRadioScanTotal}`);
+            updateRoomRadioScanProgress('扫描完成');
             renderRoomRadioScanResults({ finished: true });
             if (!silent) {
                 showToast(`扫描完成，发现 ${getRoomRadioScanVoiceUserCount()} 位上麦成员（${roomRadioScanResults.length} 个房间）`);
@@ -1012,6 +1013,7 @@
         }
 
         function startAllMemberRoomRadioAutoScan() {
+            if (IS_WEB_PLATFORM) return;
             const alreadyScanningAll = isRoomRadioAutoScanEnabled && !roomRadioAutoScanFollowedOnly;
             isRoomRadioAutoScanEnabled = true;
             roomRadioAutoScanFollowedOnly = false;
@@ -1020,6 +1022,7 @@
         }
 
         function startFollowedMemberRoomRadioAutoScan() {
+            if (IS_WEB_PLATFORM) return;
             const alreadyScanningFollowed = isRoomRadioAutoScanEnabled && roomRadioAutoScanFollowedOnly;
             isRoomRadioAutoScanEnabled = true;
             roomRadioAutoScanFollowedOnly = true;
@@ -1034,6 +1037,7 @@
         }
 
         function ensureRoomRadioScanFresh(options = {}) {
+            if (IS_WEB_PLATFORM) return;
             const {
                 preferredChannelId = '',
                 prioritizeCurrent = false,
@@ -1067,6 +1071,7 @@
         }
 
         async function startScannedRoomRadioPlayback(item) {
+            if (IS_WEB_PLATFORM) return;
             const targetKey = getRoomRadioScanKey(item);
             if (activeRoomRadioScanKey === targetKey && (radioMpegtsPlayer || radioMediaElement)) return;
             stopRoomRadio(false);
@@ -1127,6 +1132,7 @@
         }
 
         function autoConnectFollowedRoomRadio(channelId, serverId, memberId = '', memberName = '') {
+            if (IS_WEB_PLATFORM) return;
             const normalizedChannelId = normalizeRoomRadioChannelId(channelId);
             if (!normalizedChannelId) return;
             const normalizedServerId = String(serverId || '').trim();
@@ -1273,6 +1279,10 @@
         }
 
         async function connectRoomRadio() {
+            if (IS_WEB_PLATFORM) {
+                showToast('网页端已禁用上麦请求');
+                return;
+            }
             const container = document.getElementById('room-radio-result-container');
             const channelId = String(document.getElementById('room-radio-channel-id')?.value || '').trim();
             const serverId = String(document.getElementById('room-radio-server-id')?.value || '').trim() || 0;
@@ -1285,7 +1295,7 @@
             }
 
             if (!channelId || channelId === 'undefined') {
-                showToast('请先搜索成员，或手动输入 Channel ID');
+                showToast('未获取到房间 Channel ID');
                 return;
             }
 
@@ -1654,7 +1664,8 @@
             }
         }
 
-        autoRoomRadioRecordEnabled = readJsonSetting(AUTO_ROOM_RADIO_RECORD_ENABLED_KEY, false) === true;
+        autoRoomRadioRecordEnabled = !IS_WEB_PLATFORM
+            && readJsonSetting(AUTO_ROOM_RADIO_RECORD_ENABLED_KEY, false) === true;
         autoRoomRadioRecordMembers = normalizeStoredAutoRoomRadioRecordMembers(
             readJsonSetting(AUTO_ROOM_RADIO_RECORD_MEMBERS_KEY, [])
         );

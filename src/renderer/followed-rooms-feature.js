@@ -48,6 +48,11 @@
             FOLLOWED_NOTIFICATION_CURSORS_KEY
         ]);
 
+        function isWebRuntime() {
+            return window.desktop?.platform === 'web'
+                || document.documentElement.dataset.platform === 'web';
+        }
+
         function getFollowedNotificationAccountSuffix() {
             const userId = String(typeof getCurrentUserId === 'function' ? getCurrentUserId() || '' : '').trim();
             if (userId) return `user-${userId.replace(/[^a-z0-9_-]/gi, '_')}`;
@@ -190,6 +195,16 @@
             const button = document.getElementById('btn-toggle-followed-notification');
             if (!button) return;
 
+            if (isWebRuntime()) {
+                const label = '网页版不启用发言通知';
+                button.disabled = true;
+                button.classList.remove('is-enabled');
+                button.setAttribute('aria-pressed', 'false');
+                button.setAttribute('aria-label', label);
+                button.title = label;
+                return;
+            }
+
             const card = getActiveFollowedRoomCard(channelId);
             const mainChannelId = String(card?.dataset?.channelid || '').trim();
             const enabled = !!mainChannelId && isFollowedRoomNotificationEnabled(mainChannelId);
@@ -215,6 +230,18 @@
             const button = document.getElementById('btn-toggle-all-followed-notifications');
             if (!button) return;
 
+            if (isWebRuntime()) {
+                const label = '网页版不启用发言通知';
+                const buttonLabel = button.querySelector('.followed-notification-all-label');
+                if (buttonLabel) buttonLabel.textContent = '停用';
+                button.disabled = true;
+                button.classList.remove('is-enabled', 'is-partial', 'is-initializing');
+                button.setAttribute('aria-pressed', 'false');
+                button.setAttribute('aria-label', label);
+                button.title = label;
+                return;
+            }
+
             const candidates = getAllFollowedNotificationCandidates();
             const enabledChannelIds = new Set(getFollowedNotificationConfigs().map(config => config.channelId));
             const enabledCount = candidates.filter(config => enabledChannelIds.has(config.channelId)).length;
@@ -233,6 +260,12 @@
         }
 
         function toggleAllFollowedRoomNotifications() {
+            if (isWebRuntime()) {
+                stopFollowedRoomNotificationPolling();
+                showToast('网页版不启用发言通知');
+                return;
+            }
+
             const candidates = getAllFollowedNotificationCandidates();
             if (!candidates.length) {
                 showToast('暂无可开启通知的关注成员');
@@ -411,6 +444,8 @@
 
         function startFollowedRoomNotificationPolling(delayMs = 1000, options = {}) {
             stopFollowedRoomNotificationPolling();
+            if (isWebRuntime()) return;
+
             followedRoomNotificationEnabled = true;
             const pollingGeneration = followedRoomNotificationGeneration;
             let silentInitialSyncPending = options?.silentInitialSync === true;
@@ -708,6 +743,12 @@
         }
 
         async function toggleFollowedRoomNotification(card) {
+            if (isWebRuntime()) {
+                stopFollowedRoomNotificationPolling();
+                showToast('网页版不启用发言通知');
+                return;
+            }
+
             const channelId = String(card?.dataset?.channelid || '').trim();
             const smallChannelId = String(card?.dataset?.smallChannelId || '').trim();
             const serverId = String(card?.dataset?.serverId || '').trim();

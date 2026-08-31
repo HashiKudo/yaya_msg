@@ -5,6 +5,33 @@
 
     document.documentElement.dataset.platform = 'web';
     document.documentElement.classList.add('web-shell-pending');
+    const currentWebBuildVersion = document.querySelector('meta[name="yaya-web-build"]')?.content || '';
+    let isCheckingWebBuild = false;
+    const checkForWebBuildUpdate = async () => {
+        if (!currentWebBuildVersion || isCheckingWebBuild) return;
+        isCheckingWebBuild = true;
+        try {
+            const response = await fetch(`/index.html?yaya_build_check=${Date.now()}`, {
+                cache: 'no-store',
+                credentials: 'same-origin',
+                headers: { 'Cache-Control': 'no-cache' }
+            });
+            if (!response.ok) return;
+            const html = await response.text();
+            const nextVersion = html.match(/<meta\s+name=["']yaya-web-build["']\s+content=["']([^"']+)["']/i)?.[1] || '';
+            if (nextVersion && nextVersion !== currentWebBuildVersion) {
+                window.location.reload();
+            }
+        } catch (error) {
+            window.YayaRendererUtils?.reportIgnoredError?.(error, 'src/web/browser-shim.js');
+        } finally {
+            isCheckingWebBuild = false;
+        }
+    };
+    window.setInterval(checkForWebBuildUpdate, 60 * 1000);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') checkForWebBuildUpdate();
+    });
     window.setTimeout(() => {
         document.documentElement.classList.remove('web-shell-pending');
     }, 5000);
@@ -57,6 +84,12 @@
 
     const SETTINGS_KEY = 'yaya_web_settings';
     const CACHE_KEY = 'yaya_web_cache';
+    const INVOICE_REQUEST_TIMEOUT_MS = 25 * 1000;
+    const invoiceLoadChannels = new Set([
+        'fetch-invoice-tips',
+        'fetch-invoice-config',
+        'fetch-invoice-order-list'
+    ]);
     const channelsNeedingPa = new Set([
         'login-by-code',
         'login-check-token',
@@ -80,10 +113,6 @@
         'operate-flip-question',
         'fetch-member-photos',
         'fetch-user-money',
-        'fetch-invoice-tips',
-        'fetch-invoice-config',
-        'fetch-invoice-order-list',
-        'apply-electronic-invoice',
         'fetch-checkin-today',
         'fetch-unread-message-count',
         'edit-user-info',
@@ -700,6 +729,27 @@
         });
     }
 
+    async function fetchRemoteRequest(url, requestOptions, timeoutMs = 0) {
+        const normalizedTimeoutMs = Math.max(0, Number(timeoutMs) || 0);
+        const controller = normalizedTimeoutMs > 0 ? new AbortController() : null;
+        const timeoutId = controller
+            ? window.setTimeout(() => controller.abort(), normalizedTimeoutMs)
+            : null;
+        try {
+            return await fetch(url, {
+                ...requestOptions,
+                ...(controller ? { signal: controller.signal } : {})
+            });
+        } catch (error) {
+            if (controller?.signal.aborted) {
+                throw new Error('开票订单请求超时，请稍后重试');
+            }
+            throw error;
+        } finally {
+            if (timeoutId) window.clearTimeout(timeoutId);
+        }
+    }
+
     const fsShim = {
         existsSync() {
             return false;
@@ -793,14 +843,15 @@
             body: requestBody
         };
         const primaryUrl = apiUrl('/api/ipc');
-        let response = await fetch(primaryUrl, requestOptions);
+        const requestTimeoutMs = invoiceLoadChannels.has(channel) ? INVOICE_REQUEST_TIMEOUT_MS : 0;
+        let response = await fetchRemoteRequest(primaryUrl, requestOptions, requestTimeoutMs);
         let text = await response.text();
         let parsed = parseJsonResponseText(text);
 
         if (parsed.looksLikeHtml) {
             const fallbackUrl = sameOriginApiUrl('/api/ipc');
             if (fallbackUrl !== primaryUrl) {
-                response = await fetch(fallbackUrl, requestOptions);
+                response = await fetchRemoteRequest(fallbackUrl, requestOptions, requestTimeoutMs);
                 text = await response.text();
                 parsed = parseJsonResponseText(text);
             }
@@ -1362,6 +1413,9 @@
             }
             if (channel === 'resolve-bilibili-live') {
                 return { success: false, msg: '网页版暂不支持解析 B 站直播流' };
+            }
+            if (channel === 'fetch-room-radio') {
+                return { success: false, disabled: true, msg: '网页端已禁用上麦请求' };
             }
             if (channel === 'start-live-proxy' || channel === 'start-radio-proxy') {
                 return payload?.url || payload;

@@ -4,12 +4,26 @@ import errorUtils from '../src/common/error-utils.js';
 const { getErrorMessage, reportIgnoredError } = errorUtils;
 
 const DEFAULT_API_BACKEND = 'https://api.gnz.hk';
-const DESKTOP_DOWNLOAD_FILE = 'yaya_msg-v2.10-win.zip';
+const DESKTOP_DOWNLOAD_FILE = 'yaya_msg-v2.11-win.zip';
 const R2_MUSIC_LIST_CACHE_TTL_SECONDS = 6 * 60 * 60;
 const R2_MUSIC_LIST_CACHE_TTL_MS = R2_MUSIC_LIST_CACHE_TTL_SECONDS * 1000;
+const R2_MUSIC_ALBUM_METADATA_KEY = '_metadata/r2-music-albums.json';
+const R2_MUSIC_TRACK_METADATA_KEY = '_metadata/r2-music-tracks.json';
+const R2_MUSIC_PUBLIC_ORIGIN = 'https://music.gnz.hk';
 const POCKET_PROXY_RETRY_DELAYS_MS = [350, 900];
+const INVOICE_BACKEND_TIMEOUT_MS = 20 * 1000;
 
 let r2MusicListCache = null;
+
+const R2_MUSIC_TITLE_OVERRIDES = new Map([
+    ['SNH48/魔女的诗篇/Tinkle Tinkle.mp3', 'Twinkle Twinkle'],
+    ['SNH48/化作北极星/化作北极星.flac', '化作樱花树 (万万没想到特别版)'],
+    ['TPE48/24／7 Shining/24／7 Shining.flac', '24/7 Shining']
+]);
+const R2_MUSIC_ALBUM_OVERRIDES = new Map([
+    ['TPE48/24／7 Shining', '24/7 Shining'],
+    ['TPE48/RESET／UNIT DAISY', 'RESET錄音室錄音選輯']
+]);
 
 function logWorkerEvent(level, event, details = {}) {
     const entry = {
@@ -40,10 +54,21 @@ const invoiceChannels = new Set([
     'fetch-invoice-order-list',
     'apply-electronic-invoice'
 ]);
+const invoiceLoadChannels = new Set([
+    'fetch-invoice-tips',
+    'fetch-invoice-config',
+    'fetch-invoice-order-list'
+]);
 
 export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
+        if (url.hostname.toLowerCase() === 'music.gnz.hk' && url.pathname === '/') {
+            const musicPageUrl = new URL('https://gnz.hk/music');
+            musicPageUrl.search = url.search;
+            return Response.redirect(musicPageUrl.toString(), 302);
+        }
+
         if (url.pathname.length > 1 && url.pathname.endsWith('/')) {
             url.pathname = url.pathname.replace(/\/+$/, '');
             return Response.redirect(url.toString(), 301);
@@ -250,7 +275,9 @@ async function proxyIpcRequest(request, env, apiBackend) {
         channel = String(body?.channel || '');
     } catch (error) { reportIgnoredError(error, 'workers/yaya-web.mjs'); }
 
-    const response = await proxyApiRequest(request.clone(), apiBackend);
+    const response = await proxyApiRequest(request.clone(), apiBackend, {
+        timeoutMs: invoiceLoadChannels.has(channel) ? INVOICE_BACKEND_TIMEOUT_MS : 0
+    });
     if (!invoiceChannels.has(channel)) {
         return response;
     }
@@ -273,21 +300,26 @@ async function proxyIpcRequest(request, env, apiBackend) {
     return response;
 }
 
-function proxyApiRequest(request, apiBackend) {
+async function proxyApiRequest(request, apiBackend, options = {}) {
     const sourceUrl = new URL(request.url);
     const targetUrl = new URL(sourceUrl.pathname + sourceUrl.search, apiBackend);
     const headers = new Headers(request.headers);
     headers.delete('host');
+    const timeoutMs = Math.max(0, Number(options.timeoutMs) || 0);
+    const controller = timeoutMs > 0 ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
 
     const init = {
         method: request.method,
         headers,
-        redirect: 'manual'
+        redirect: 'manual',
+        ...(controller ? { signal: controller.signal } : {})
     };
     if (request.method !== 'GET' && request.method !== 'HEAD') {
         init.body = request.body;
     }
-    return fetch(targetUrl.toString(), init).then(async (response) => {
+    try {
+        const response = await fetch(targetUrl.toString(), init);
         const contentType = response.headers.get('content-type') || '';
         if (!contentType.includes('text/html')) {
             return response;
@@ -306,7 +338,21 @@ function proxyApiRequest(request, apiBackend) {
             success: false,
             msg: 'API 后端被 Cloudflare 浏览器校验拦截，请放行 api.gnz.hk/api/* 或配置不受校验的 YAYA_API_BACKEND。'
         }, 502);
-    });
+    } catch (error) {
+        if (controller?.signal.aborted) {
+            logWorkerEvent('warn', 'api_backend_timeout', {
+                path: sourceUrl.pathname,
+                timeoutMs
+            });
+            return json({
+                success: false,
+                msg: '开票服务响应超时，请稍后重试'
+            }, 504);
+        }
+        throw error;
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+    }
 }
 
 async function handleDownloadRequest(request, env, url) {
@@ -360,11 +406,31 @@ function getDownloadContentType(key) {
     return 'application/octet-stream';
 }
 
-const R2_MUSIC_PREFIXES = ['SNH48/', 'GNZ48/', 'BEJ48/', 'CKG48/', 'CGT48/', 'SHY48/', 'TSH48/'];
+const R2_MUSIC_PREFIXES = [
+    'SNH48/',
+    'GNZ48/',
+    'BEJ48/',
+    'CKG48/',
+    'CGT48/',
+    'SHY48/',
+    'TSH48/',
+    'AKB48/',
+    'TPE48/',
+    '7SENSES/',
+    'BLUEV/',
+    'DEMOON/',
+    'HO2/',
+    'Color Girls/',
+    '塞纳河组合/'
+];
 const R2_AUDIO_EXTENSIONS = new Set(['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'opus']);
 const R2_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp']);
 const R2_MUSIC_IMAGE_CACHE_SECONDS = 30 * 24 * 60 * 60;
 const R2_MUSIC_AUDIO_CACHE_SECONDS = 7 * 24 * 60 * 60;
+
+function getR2MusicBucket(env) {
+    return env.YAYA_MUSIC || env.YAYA_DOWNLOADS;
+}
 
 function getR2MusicCorsHeaders(extraHeaders = {}) {
     const headers = new Headers(extraHeaders);
@@ -415,6 +481,8 @@ function encodeR2MusicPath(key) {
 }
 
 function parseR2MusicTitle(key) {
+    const override = R2_MUSIC_TITLE_OVERRIDES.get(String(key || ''));
+    if (override) return override;
     const file = String(key || '').split('/').pop() || '';
     return file
         .replace(/\.[a-z0-9]+$/i, '')
@@ -427,7 +495,8 @@ function parseR2MusicTitle(key) {
 function getR2MusicAlbum(key) {
     const parts = String(key || '').split('/').filter(Boolean);
     if (parts.length <= 2) return '';
-    return parts.slice(1, -1).join(' / ');
+    const albumPath = parts.slice(0, -1).join('/');
+    return R2_MUSIC_ALBUM_OVERRIDES.get(albumPath) || parts.slice(1, -1).join(' / ');
 }
 
 function getR2MusicGroupInfo(key) {
@@ -439,12 +508,12 @@ function getR2MusicGroupInfo(key) {
     };
 }
 
-async function listR2MusicObjects(env) {
+async function listR2MusicObjects(bucket) {
     const objectsByPrefix = await Promise.all(R2_MUSIC_PREFIXES.map(async (prefix) => {
         const objects = [];
         let cursor = undefined;
         do {
-            const listed = await env.YAYA_DOWNLOADS.list({ prefix, cursor, limit: 1000 });
+            const listed = await bucket.list({ prefix, cursor, limit: 1000 });
             objects.push(...(listed.objects || []));
             cursor = listed.truncated ? listed.cursor : undefined;
         } while (cursor);
@@ -452,6 +521,50 @@ async function listR2MusicObjects(env) {
     }));
 
     return objectsByPrefix.flat();
+}
+
+async function loadR2MusicAlbumMetadata(bucket) {
+    try {
+        const metadataObject = await bucket.get(R2_MUSIC_ALBUM_METADATA_KEY);
+        if (!metadataObject) return new Map();
+        const payload = JSON.parse(await metadataObject.text());
+        const albums = payload && typeof payload.albums === 'object' ? payload.albums : {};
+        return new Map(Object.entries(albums).map(([key, value]) => [key, {
+            grouping: String(value?.grouping || '').trim(),
+            date: String(value?.date || '').trim()
+        }]));
+    } catch (error) {
+        logWorkerEvent('error', 'r2_music_album_metadata_failed', { error: getErrorMessage(error) });
+        return new Map();
+    }
+}
+
+function normalizeR2MusicTrackNumber(value) {
+    const match = String(value ?? '').trim().match(/^\s*(\d{1,4})/u);
+    const number = match ? Number(match[1]) : 0;
+    return Number.isSafeInteger(number) && number > 0 ? number : 0;
+}
+
+function parseR2MusicTrackNumberFromKey(key) {
+    const file = String(key || '').split('/').pop() || '';
+    const match = file.match(/^\s*(?:[\[(（]\s*)?(\d{1,3})(?:\s*[\])）]|\s*[._\-、])\s*/u);
+    return match ? normalizeR2MusicTrackNumber(match[1]) : 0;
+}
+
+async function loadR2MusicTrackMetadata(bucket) {
+    try {
+        const metadataObject = await bucket.get(R2_MUSIC_TRACK_METADATA_KEY);
+        if (!metadataObject) return new Map();
+        const payload = JSON.parse(await metadataObject.text());
+        const tracks = payload && typeof payload.tracks === 'object' ? payload.tracks : {};
+        return new Map(Object.entries(tracks).map(([key, value]) => [key, {
+            trackNumber: normalizeR2MusicTrackNumber(value?.trackNumber),
+            discNumber: normalizeR2MusicTrackNumber(value?.discNumber) || 1
+        }]));
+    } catch (error) {
+        logWorkerEvent('error', 'r2_music_track_metadata_failed', { error: getErrorMessage(error) });
+        return new Map();
+    }
 }
 
 async function handleR2MusicListRequest(request, env, ctx) {
@@ -467,7 +580,8 @@ async function handleR2MusicListRequest(request, env, ctx) {
             })
         });
     }
-    if (!env.YAYA_DOWNLOADS || typeof env.YAYA_DOWNLOADS.list !== 'function') {
+    const musicBucket = getR2MusicBucket(env);
+    if (!musicBucket || typeof musicBucket.list !== 'function') {
         return new Response(JSON.stringify({ success: false, msg: 'Music storage is not configured', tracks: [] }), {
             status: 500,
             headers: getR2MusicCorsHeaders({
@@ -489,7 +603,7 @@ async function handleR2MusicListRequest(request, env, ctx) {
         });
     }
     const edgeCache = typeof caches !== 'undefined' ? caches.default : null;
-    const edgeCacheKey = new Request(new URL('/api/r2-music-cache-v1', request.url).toString(), { method: 'GET' });
+    const edgeCacheKey = new Request(new URL('/api/r2-music-cache-v7', request.url).toString(), { method: 'GET' });
     if (!bypassCache && edgeCache) {
         const cached = await edgeCache.match(edgeCacheKey);
         if (cached) {
@@ -509,8 +623,14 @@ async function handleR2MusicListRequest(request, env, ctx) {
     }
 
     let objects;
+    let albumMetadata;
+    let trackMetadata;
     try {
-        objects = await listR2MusicObjects(env);
+        [objects, albumMetadata, trackMetadata] = await Promise.all([
+            listR2MusicObjects(musicBucket),
+            loadR2MusicAlbumMetadata(musicBucket),
+            loadR2MusicTrackMetadata(musicBucket)
+        ]);
     } catch (error) {
         logWorkerEvent('error', 'r2_music_list_failed', {
             prefixCount: R2_MUSIC_PREFIXES.length,
@@ -536,16 +656,23 @@ async function handleR2MusicListRequest(request, env, ctx) {
             const key = object.key || '';
             const folder = key.split('/').slice(0, -1).join('/');
             const group = getR2MusicGroupInfo(key);
+            const album = getR2MusicAlbum(key);
+            const metadata = albumMetadata.get(`${group.groupLabel}/${album}`) || {};
+            const trackOrder = trackMetadata.get(key) || {};
             const coverKey = imageByFolder.get(folder) || imageByFolder.get(key.split('/')[0]) || '';
             return {
                 id: `R2-${key}`,
                 key,
                 title: parseR2MusicTitle(key),
-                album: getR2MusicAlbum(key),
+                album,
+                grouping: metadata.grouping || '',
+                albumDate: metadata.date || '',
+                trackNumber: trackOrder.trackNumber || parseR2MusicTrackNumberFromKey(key),
+                discNumber: trackOrder.discNumber || 1,
                 groupKey: group.groupKey,
                 groupLabel: group.groupLabel,
-                mp3: `/r2-music/${encodeR2MusicPath(key)}`,
-                coverUrl: coverKey ? `/r2-music/${encodeR2MusicPath(coverKey)}` : '',
+                mp3: `${R2_MUSIC_PUBLIC_ORIGIN}/${encodeR2MusicPath(key)}`,
+                coverUrl: coverKey ? `${R2_MUSIC_PUBLIC_ORIGIN}/${encodeR2MusicPath(coverKey)}` : '',
                 size: object.size || 0,
                 uploaded: object.uploaded ? object.uploaded.toISOString() : '',
                 sourceIndex: 100000 + index,
@@ -598,16 +725,6 @@ async function handleR2MusicObjectRequest(request, env, url) {
             })
         });
     }
-    if (!env.YAYA_DOWNLOADS) {
-        return new Response('Music storage is not configured', {
-            status: 500,
-            headers: getR2MusicCorsHeaders({
-                'Content-Type': 'text/plain;charset=utf-8',
-                'Cache-Control': 'no-store'
-            })
-        });
-    }
-
     const key = decodeURIComponent(url.pathname.replace(/^\/r2-music\/?/, '')).replace(/^\/+/, '');
     const ext = getR2ObjectExtension(key);
     if (!isAllowedR2MusicKey(key) || (!R2_AUDIO_EXTENSIONS.has(ext) && !R2_IMAGE_EXTENSIONS.has(ext))) {
@@ -620,38 +737,12 @@ async function handleR2MusicObjectRequest(request, env, url) {
         });
     }
 
-    const object = await env.YAYA_DOWNLOADS.get(key, { range: request.headers });
-    if (!object) {
-        return new Response('File not found', {
-            status: 404,
-            headers: getR2MusicCorsHeaders({
-                'Content-Type': 'text/plain;charset=utf-8',
-                'Cache-Control': 'no-store'
-            })
-        });
-    }
-
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set('etag', object.httpEtag);
-    headers.set('Accept-Ranges', 'bytes');
-    headers.set('Cache-Control', R2_IMAGE_EXTENSIONS.has(ext)
-        ? `public, max-age=${R2_MUSIC_IMAGE_CACHE_SECONDS}, immutable`
-        : `public, max-age=${R2_MUSIC_AUDIO_CACHE_SECONDS}`);
-    headers.set('Content-Type', getR2MusicContentType(key, headers.get('Content-Type') || ''));
-    headers.set('Content-Disposition', `inline; filename="${encodeURIComponent(key.split('/').pop() || 'music')}"`);
-    if (object.range) {
-        const offset = Number(object.range.offset) || 0;
-        const length = Number(object.range.length);
-        const end = Number.isFinite(Number(object.range.end))
-            ? Number(object.range.end)
-            : (Number.isFinite(length) && length > 0 ? offset + length - 1 : object.size - 1);
-        headers.set('Content-Range', `bytes ${offset}-${Math.min(end, object.size - 1)}/${object.size}`);
-    }
-
-    return new Response(request.method === 'HEAD' ? null : object.body, {
-        status: object.range ? 206 : 200,
-        headers: getR2MusicCorsHeaders(headers)
+    return new Response(null, {
+        status: 307,
+        headers: getR2MusicCorsHeaders({
+            Location: `${R2_MUSIC_PUBLIC_ORIGIN}/${encodeR2MusicPath(key)}`,
+            'Cache-Control': 'public, max-age=604800'
+        })
     });
 }
 
@@ -662,10 +753,12 @@ function withWebRuntimeHeaders(response, url = null) {
     headers.set('Cross-Origin-Resource-Policy', 'cross-origin');
     if (url) {
         const contentType = headers.get('content-type') || '';
-        if (url.searchParams.has('v')) {
+        if (contentType.includes('text/html')) {
+            headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+        } else if (url.pathname === '/service-worker.js') {
+            headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+        } else if (url.searchParams.has('v')) {
             headers.set('Cache-Control', 'public, max-age=31536000, immutable');
-        } else if (contentType.includes('text/html')) {
-            headers.set('Cache-Control', 'no-cache');
         } else if (/\.(?:png|ico|svg|webp|wasm)$/i.test(url.pathname)) {
             headers.set('Cache-Control', 'public, max-age=86400');
         }
