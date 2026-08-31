@@ -137,9 +137,9 @@
         const footer = document.querySelector('.home-footer-credit');
         if (!footer || document.querySelector('.web-limit-notice')) return;
         const desktopVersion = 'v2.11';
-        const releaseStamp = '20260830-6a9e0130';
-        const macReleaseStamp = '20260830-5c6e5a91';
-        const linuxReleaseStamp = '20260830-e43e430b';
+        const releaseStamp = '20260901-d75b6b7';
+        const macReleaseStamp = '20260901-d75b6b7';
+        const linuxReleaseStamp = '20260901-d75b6b7';
         const notice = createElement('div', { className: 'web-limit-notice' });
         notice.append(createElement('span', {
             className: 'web-limit-copy',
