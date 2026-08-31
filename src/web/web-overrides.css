@@ -111,6 +111,73 @@ html[data-platform="web"].web-mobile-device [data-clip-toolbar] {
     display: none !important;
 }
 
+html[data-platform="web"] .web-live-clip-toolbar-hidden {
+    display: none !important;
+}
+
+html[data-platform="web"] [data-clip-toolbar="bilibili-live"] {
+    display: none !important;
+}
+
+@media (min-width: 769px) {
+    html[data-platform="web"] #clip-toolbar > div {
+        position: relative !important;
+        display: flex !important;
+        align-items: flex-end !important;
+        min-height: 58px !important;
+        padding-right: 141px !important;
+        box-sizing: border-box !important;
+    }
+
+    html[data-platform="web"] #clip-toolbar > div > div:first-child {
+        flex: 1 1 auto !important;
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    html[data-platform="web"] #clip-toolbar .web-clip-status-area {
+        position: absolute !important;
+        top: 0 !important;
+        right: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        width: 126px !important;
+        min-width: 126px !important;
+        max-width: 126px !important;
+        height: 14px !important;
+        line-height: 14px !important;
+        overflow: hidden !important;
+    }
+
+    html[data-platform="web"] #clip-toolbar .web-clip-action-area {
+        position: absolute !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
+        width: 126px !important;
+        min-width: 126px !important;
+        max-width: 126px !important;
+        height: 38px !important;
+    }
+
+    html[data-platform="web"] #clip-duration-display {
+        display: block !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+    }
+
+    html[data-platform="web"] #btn-do-clip {
+        width: 100% !important;
+        min-width: 0 !important;
+        box-sizing: border-box !important;
+    }
+}
+
 html.web-secondary-route-boot #view-home {
     display: none !important;
     visibility: hidden !important;

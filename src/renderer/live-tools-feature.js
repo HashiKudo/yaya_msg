@@ -123,6 +123,19 @@
             return typeof getCurrentMode === 'function' ? getCurrentMode() : 'live';
         }
 
+        function syncWebLiveClipToolbarVisibility() {
+            if (!IS_WEB_PLATFORM) return;
+
+            const mode = getClipMode();
+            const shouldHide = mode === 'live' || mode === 'meet-live';
+            const toolbar = getSafeCurrentViewName() === 'bilibili-live'
+                ? document.querySelector('[data-clip-toolbar="bilibili-live"]')
+                : document.getElementById('clip-toolbar');
+            if (toolbar) {
+                toolbar.classList.toggle('web-live-clip-toolbar-hidden', shouldHide);
+            }
+        }
+
         async function refreshLiveAnnouncement(btnElement) {
             const currentPlayingItem = typeof getCurrentPlayingItem === 'function' ? getCurrentPlayingItem() : null;
             if (!currentPlayingItem || !currentPlayingItem.liveId || !btnElement) return;
@@ -382,6 +395,8 @@
         }
 
         function updateClipUI() {
+            syncWebLiveClipToolbarVisibility();
+
             const startDisplay = getClipElement('start-display', 'clip-start-display');
             const endDisplay = getClipElement('end-display', 'clip-end-display');
             const durationDisplay = getClipElement('duration-display', 'clip-duration-display');
