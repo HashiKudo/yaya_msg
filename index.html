@@ -844,6 +844,7 @@
                         <div class="live-card-grid" id="live-list-container" hidden></div>
                         <div class="vod-list-mode" id="vod-list-container"></div>
                 </div>
+                <div id="vod-pagination-controls" class="pagination-container" style="padding-bottom: 20px;"></div>
 
                 <div id="live-player-view" style="display: none; height: 100%; flex-direction: column; padding: 0;">
                     <div
@@ -1042,7 +1043,7 @@
                                     <div class="web-clip-status-area">
                                         <div id="clip-duration-display" data-clip-role="duration-display"
                                             style="font-size: 11px; color: var(--text); font-weight: bold; width: 100%; text-align: center;">
-                                            切片时长: 0s</div>
+                                            时长: 0s</div>
                                     </div>
                                     <div class="web-clip-action-area">
                                         <button class="btn btn-primary" onclick="executeClip()" id="btn-do-clip" data-clip-role="do-clip"
@@ -1054,8 +1055,6 @@
                         </div>
                     </div>
                 </div>
-                <div id="vod-pagination-controls" class="pagination-container" style="padding-bottom: 20px;"></div>
-
             </div>
 
             <div id="view-login"
@@ -1979,7 +1978,7 @@
                             </div>
 
                             <div class="bilibili-live-clip-action">
-                                <div class="bilibili-live-clip-duration" data-clip-role="duration-display">切片时长: 0s</div>
+                                <div class="bilibili-live-clip-duration" data-clip-role="duration-display">时长: 0s</div>
                                 <button class="btn btn-primary" onclick="executeClip()" data-clip-role="do-clip" disabled>切片</button>
                             </div>
                         </div>

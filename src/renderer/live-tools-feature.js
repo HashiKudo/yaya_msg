@@ -427,14 +427,14 @@
             if (clipStartTime !== null && clipEndTime !== null) {
                 const duration = clipEndTime - clipStartTime;
                 if (duration > 0) {
-                    if (durationDisplay) durationDisplay.textContent = `切片时长: ${duration.toFixed(2)}s`;
+                    if (durationDisplay) durationDisplay.textContent = `时长: ${duration.toFixed(2)}s`;
                     if (clipBtn) clipBtn.disabled = false;
                 } else {
-                    if (durationDisplay) durationDisplay.textContent = '切片时长: 无效';
+                    if (durationDisplay) durationDisplay.textContent = '时长: 无效';
                     if (clipBtn) clipBtn.disabled = true;
                 }
             } else {
-                if (durationDisplay) durationDisplay.textContent = '切片时长: 0s';
+                if (durationDisplay) durationDisplay.textContent = '时长: 0s';
                 if (clipBtn) clipBtn.disabled = true;
             }
         }

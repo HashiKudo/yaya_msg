@@ -16,11 +16,41 @@
 
 .danmu-row.active {
     background-color: rgba(155, 106, 156, 0.15);
-    border-left: 3px solid var(--primary);
 }
 
 [data-theme="dark"] .danmu-row.active {
     background-color: rgba(181, 131, 182, 0.2);
+}
+
+.danmu-follow-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 26px;
+    margin-left: 10px;
+    color: var(--text-sub);
+    font-size: 12px;
+    line-height: 14px;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+}
+
+.danmu-follow-control input {
+    display: block;
+    flex: 0 0 14px;
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    accent-color: var(--primary);
+    cursor: pointer;
+}
+
+.danmu-follow-control span {
+    display: inline-flex;
+    align-items: center;
+    height: 14px;
+    line-height: 14px;
 }
 
 .danmu-time-col {
@@ -9752,6 +9782,101 @@ body:has(#live-player-view[style*="display: flex"]) #player-combo-wrapper {
     transition: box-shadow 0.3s ease !important;
 }
 
+@media (min-width: 769px) {
+    #clip-toolbar > div {
+        position: relative !important;
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) 100px !important;
+        grid-template-rows: 14px 38px !important;
+        column-gap: 15px !important;
+        row-gap: 6px !important;
+        align-items: stretch !important;
+        min-height: 58px !important;
+        padding-right: 0 !important;
+        box-sizing: border-box !important;
+    }
+
+    #clip-toolbar > div > div:first-child {
+        grid-column: 1 !important;
+        grid-row: 1 / 3 !important;
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    #clip-toolbar > div > div:first-child > div > div {
+        align-items: center !important;
+    }
+
+    #clip-toolbar > div > div:first-child > div > span {
+        display: flex !important;
+        align-items: center !important;
+        height: 14px !important;
+        line-height: 14px !important;
+    }
+
+    #clip-toolbar > div > div:first-child button {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex: 0 0 64px !important;
+        width: 64px !important;
+        height: 38px !important;
+        min-height: 38px !important;
+        max-height: 38px !important;
+        line-height: 1 !important;
+        margin: 0 !important;
+    }
+
+    #clip-toolbar .web-clip-status-area {
+        position: static !important;
+        grid-column: 2 !important;
+        grid-row: 1 !important;
+        display: flex !important;
+        align-items: center !important;
+        width: 100px !important;
+        min-width: 100px !important;
+        max-width: 100px !important;
+        height: 14px !important;
+        line-height: 14px !important;
+        overflow: hidden !important;
+    }
+
+    #clip-toolbar .web-clip-action-area {
+        position: static !important;
+        grid-column: 2 !important;
+        grid-row: 2 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
+        width: 100px !important;
+        min-width: 100px !important;
+        max-width: 100px !important;
+        height: 38px !important;
+    }
+
+    #clip-duration-display {
+        display: block !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+    }
+
+    #btn-do-clip {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: none !important;
+        height: 38px !important;
+        min-height: 38px !important;
+        max-height: 38px !important;
+        line-height: 1 !important;
+        margin: 0 !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+        box-sizing: border-box !important;
+    }
+}
+
 #player-split-layout {
     min-height: 0 !important;
     height: 0 !important;
@@ -12626,7 +12751,7 @@ html[data-theme="light"] .flip-seven-day-countdown.is-urgent {
     }
 
     #btn-danmu-analysis,
-    #danmu-count-display {
+    #danmu-follow-control {
         flex-shrink: 0 !important;
     }
 

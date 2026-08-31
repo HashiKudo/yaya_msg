@@ -1371,12 +1371,19 @@
                         if (liveControls) liveControls.style.display = 'none';
                         if (window.vodState) {
                             const nextSource = getMediaSourceForMode(mode);
-                            if (vodState.source !== nextSource) {
+                            const sourceChanged = vodState.source !== nextSource;
+                            if (sourceChanged) {
                                 vodState.source = nextSource;
                                 vodState.resetPagination(vodState.currentGroup);
                                 vodState.filterSignature = getVodFilterSignature();
                             }
-                            handleRefreshList();
+                            const memberFilterInput = document.getElementById('vod-member-filter');
+                            const hasMemberFilter = Boolean(memberFilterInput?.value.trim());
+                            if (sourceChanged || !hasMemberFilter) {
+                                handleRefreshList();
+                            } else {
+                                window.renderVODListUI();
+                            }
                         }
                     }
                     document.getElementById('live-player-view').style.display = 'none';
