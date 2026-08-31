@@ -1255,13 +1255,24 @@
                 ? await writeHlsClipInputs(ffmpeg, sourceUrl, startTime, duration, taskId)
                 : await writeDirectClipInput(ffmpeg, sourceUrl, taskId);
             const seekTime = input.localStartTime === null ? startTime : input.localStartTime;
-            setDownloadTaskStatus(taskId, '正在封装切片...', 70);
+            setDownloadTaskStatus(taskId, '正在精确定位并生成切片...', 70);
+            const seekArgs = input.localStartTime === null
+                ? ['-ss', String(Math.max(0, seekTime)), '-i', input.inputName]
+                : ['-i', input.inputName, '-ss', String(Math.max(0, seekTime))];
             await ffmpeg.run(
-                '-ss', String(Math.max(0, seekTime)),
-                '-i', input.inputName,
+                ...seekArgs,
                 '-t', String(duration),
-                '-c', 'copy',
-                '-movflags', 'faststart',
+                '-map', '0:v:0',
+                '-map', '0:a:0?',
+                '-c:v', 'libx264',
+                '-preset', 'ultrafast',
+                '-crf', '22',
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                '-af', 'aresample=async=1:first_pts=0',
+                '-vsync', '2',
+                '-movflags', '+faststart',
+                '-avoid_negative_ts', 'make_zero',
                 outputName
             );
             const output = ffmpeg.FS('readFile', outputName);

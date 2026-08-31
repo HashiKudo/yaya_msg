@@ -36,6 +36,8 @@
         const LIVE_STALL_RECOVERY_DELAY = 5000;
         const MEDIA_SIGNATURE_TIMEOUT_MS = 6000;
         const LEGACY_FLV_FALLBACK_TIMEOUT_MS = 10000;
+        const HLS_INITIAL_LOAD_TIMEOUT_MS = 15000;
+        const HLS_RELOAD_MAX_ATTEMPTS = 4;
         const detectedMediaTypeCache = new Map();
 
         function getLiveReconnectDelay(attempt = 0) {
@@ -466,15 +468,86 @@
             );
         }
 
+        function cleanupAttachedHls(video) {
+            if (!video) return;
+
+            if (typeof video.yayaHlsCleanup === 'function') {
+                video.yayaHlsCleanup();
+                return;
+            }
+
+            if (video.hls && typeof video.hls.destroy === 'function') {
+                try {
+                    video.hls.destroy();
+                } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'player-core:hls-destroy'); }
+            }
+            video.hls = null;
+        }
+
         function attachStableHls(video, videoUrl, isLiveContent) {
+            const resumeAt = isLiveContent
+                ? 0
+                : Math.max(0, Number(video.yayaHlsResumeAt) || Number(video.currentTime) || 0);
+            const shouldResumePlayback = Boolean(video.yayaHlsShouldResume)
+                || (!video.paused && !video.ended);
+            cleanupAttachedHls(video);
+
             let stallRecoverCount = 0;
             let stallRecoverTimer = null;
+            let initialLoadTimer = null;
+            let reloadTimer = null;
             let lastRecoverAt = 0;
             let sourceLoaded = false;
             let hasPlayableMedia = false;
+            let disposed = false;
+
+            const clearReloadTimers = () => {
+                clearTimeout(initialLoadTimer);
+                clearTimeout(reloadTimer);
+                initialLoadTimer = null;
+                reloadTimer = null;
+            };
+
+            const rememberPlaybackState = () => {
+                if (!isLiveContent) {
+                    video.yayaHlsResumeAt = Math.max(
+                        0,
+                        Number(video.yayaHlsResumeAt) || 0,
+                        Number(video.currentTime) || 0,
+                        resumeAt || 0
+                    );
+                }
+                video.yayaHlsShouldResume = Boolean(video.yayaHlsShouldResume)
+                    || shouldResumePlayback
+                    || (!video.paused && !video.ended);
+            };
+
+            const scheduleFullReload = (reason = 'fatal error', delay = 800) => {
+                if (disposed || reloadTimer) return;
+
+                const attempts = Math.max(0, Number(video.yayaHlsRecoveryAttempts) || 0);
+                if (attempts >= HLS_RELOAD_MAX_ATTEMPTS) {
+                    console.error(`[播放器] HLS ${reason}，已达到自动重载上限`);
+                    return;
+                }
+
+                rememberPlaybackState();
+                video.yayaHlsRecoveryAttempts = attempts + 1;
+                reloadTimer = setTimeout(() => {
+                    reloadTimer = null;
+                    if (disposed || video.hls !== hls) return;
+
+                    const currentArt = getArt();
+                    if (!currentArt || currentArt.video !== video) return;
+
+                    console.warn(`[播放器] HLS ${reason}，重建播放器 #${attempts + 1}`);
+                    cleanupAttachedHls(video);
+                    currentArt.url = videoUrl;
+                }, Math.max(0, Number(delay) || 0));
+            };
 
             const recoverFromStall = (reason = 'stalled') => {
-                if (!video || video.paused || video.ended) return;
+                if (disposed || !video || video.paused || video.ended) return;
                 const now = Date.now();
                 if (now - lastRecoverAt < 1200) return;
                 lastRecoverAt = now;
@@ -608,11 +681,17 @@
                     }
 
                     if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
-                        hls.startLoad();
+                        try {
+                            hls.startLoad();
+                        } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'player-core:hls-network-recover'); }
+                        scheduleFullReload(data.details || 'network error', hasPlayableMedia ? 2500 : 1200);
                     } else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
-                        hls.recoverMediaError();
+                        try {
+                            hls.recoverMediaError();
+                        } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'player-core:hls-media-recover'); }
+                        scheduleFullReload(data.details || 'media error', 1800);
                     } else {
-                        hls.destroy();
+                        scheduleFullReload(data.details || data.type || 'fatal error', 300);
                     }
                 });
             }
@@ -620,12 +699,35 @@
             video.preservesPitch = true;
             video.mozPreservesPitch = true;
             video.webkitPreservesPitch = true;
-            video.addEventListener('waiting', () => scheduleStallRecovery('waiting'));
-            video.addEventListener('stalled', () => scheduleStallRecovery('stalled'));
+            const handleWaiting = () => scheduleStallRecovery('waiting');
+            const handleStalled = () => scheduleStallRecovery('stalled');
+            const restorePlaybackPosition = () => {
+                if (isLiveContent || resumeAt <= 0) return;
+                const duration = Number(video.duration);
+                const targetTime = Number.isFinite(duration) && duration > 0
+                    ? Math.min(resumeAt, Math.max(0, duration - 0.25))
+                    : resumeAt;
+                try {
+                    video.currentTime = targetTime;
+                } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'player-core:hls-restore-position'); }
+            };
             const markPlayable = () => {
+                if (disposed) return;
                 hasPlayableMedia = true;
                 clearStallRecovery();
+                clearReloadTimers();
+                video.yayaHlsRecoveryAttempts = 0;
+                video.yayaHlsResumeAt = 0;
+                video.yayaHlsShouldResume = false;
+                if (shouldResumePlayback && video.paused) {
+                    video.play().catch((error) => {
+                        window.YayaRendererUtils.reportIgnoredError(error, 'player-core:hls-resume');
+                    });
+                }
             };
+            video.addEventListener('waiting', handleWaiting);
+            video.addEventListener('stalled', handleStalled);
+            video.addEventListener('loadedmetadata', restorePlaybackPosition);
             video.addEventListener('loadeddata', markPlayable);
             video.addEventListener('playing', markPlayable);
             video.addEventListener('canplay', markPlayable);
@@ -641,6 +743,29 @@
             hls.attachMedia(video);
             if (!window.Hls.Events?.MEDIA_ATTACHED) loadSourceAfterAttach();
             video.hls = hls;
+            const cleanup = () => {
+                if (disposed) return;
+                disposed = true;
+                clearStallRecovery();
+                clearReloadTimers();
+                video.removeEventListener('waiting', handleWaiting);
+                video.removeEventListener('stalled', handleStalled);
+                video.removeEventListener('loadedmetadata', restorePlaybackPosition);
+                video.removeEventListener('loadeddata', markPlayable);
+                video.removeEventListener('playing', markPlayable);
+                video.removeEventListener('canplay', markPlayable);
+                try {
+                    hls.destroy();
+                } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'player-core:hls-cleanup'); }
+                if (video.hls === hls) video.hls = null;
+                if (video.yayaHlsCleanup === cleanup) video.yayaHlsCleanup = null;
+            };
+            video.yayaHlsCleanup = cleanup;
+            initialLoadTimer = setTimeout(() => {
+                if (!disposed && !hasPlayableMedia && video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+                    scheduleFullReload('首次加载超时', 0);
+                }
+            }, HLS_INITIAL_LOAD_TIMEOUT_MS);
             return hls;
         }
 
@@ -1395,11 +1520,14 @@
                         }
                     },
                     m3u8: function (video, videoUrl) {
-                        if (canUseNativeHls(video)) {
-                            video.src = videoUrl;
-                        } else if (window.Hls && window.Hls.isSupported()) {
+                        // Chromium on Windows may report `maybe` for HLS MIME types even
+                        // though assigning an m3u8 URL directly to <video> fails. Prefer
+                        // hls.js whenever MSE is available and reserve native playback for
+                        // platforms such as iOS Safari where hls.js cannot be used.
+                        if (window.Hls?.isSupported?.()) {
                             attachStableHls(video, videoUrl, isLiveContent);
                         } else {
+                            cleanupAttachedHls(video);
                             video.src = videoUrl;
                         }
                     }
@@ -1419,11 +1547,14 @@
 
                 removeInput();
                 setTimeout(removeInput, 500);
-                nextArt.on('timeupdate', (currentTime) => {
+                const syncTimelinePosition = () => {
                     if (typeof syncDanmuHighlight === 'function') {
-                        syncDanmuHighlight(currentTime);
+                        syncDanmuHighlight(Number(nextArt.currentTime) || 0);
                     }
-                });
+                };
+                nextArt.on('video:timeupdate', syncTimelinePosition);
+                nextArt.on('video:seeked', syncTimelinePosition);
+                syncTimelinePosition();
                 nextArt.play();
             });
         }
@@ -1452,10 +1583,7 @@
                     currentArt.video.mpegts.destroy();
                     currentArt.video.mpegts = null;
                 }
-                if (currentArt.video.hls) {
-                    currentArt.video.hls.destroy();
-                    currentArt.video.hls = null;
-                }
+                cleanupAttachedHls(currentArt.video);
                 currentArt.destroy(true);
                 setArt(null);
             }
