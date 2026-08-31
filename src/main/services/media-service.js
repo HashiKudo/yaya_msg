@@ -1048,6 +1048,25 @@ function clipVod(event, { url, fileName, startTime, duration, taskId, savePath }
             return;
         }
 
+        let tempStats;
+        try {
+            tempStats = fs.statSync(tempTsPath);
+        } catch (error) {
+            tempStats = null;
+        }
+
+        if (!tempStats?.isFile() || tempStats.size <= 0) {
+            activeCommands.delete(taskId);
+            removeMediaFile(tempTsPath);
+            removeMediaFile(finalOutputPath);
+            event.reply('download-status', {
+                taskId,
+                msg: '所选时间段未读取到视频数据，请确认回放可播放到该位置后重试',
+                status: 'error'
+            });
+            return;
+        }
+
         event.reply('download-status', { taskId, msg: '截取完成，正在封装视频...', status: 'processing' });
 
         const command2 = ffmpeg(tempTsPath)
@@ -1101,6 +1120,7 @@ function clipVod(event, { url, fileName, startTime, duration, taskId, savePath }
 
     if (remoteHls) {
         inputOptions.push(
+            '-fflags', '+igndts',
             '-http_persistent', '1',
             '-http_multiple', '1',
             '-http_seekable', '1'
