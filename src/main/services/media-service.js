@@ -94,7 +94,7 @@ const DEFAULT_HTTP_PORT = 8888;
 const PROXY_START_TIMEOUT_MS = 8000;
 const CLIP_READ_TIMEOUT_US = 20_000_000;
 const CLIP_NO_PROGRESS_TIMEOUT_MS = 60_000;
-const HLS_SEEK_LEAD_IN_SECONDS = 15;
+const HLS_CLIP_PREROLL_SECONDS = 12;
 const LIVE_RECORD_DISK_CHECK_INTERVAL_MS = 30_000;
 const LIVE_RECORD_MIN_FREE_BYTES = 512 * 1024 * 1024;
 const LIVE_RECORD_FINALIZE_RESERVE_BYTES = 256 * 1024 * 1024;
@@ -304,6 +304,152 @@ function getClipErrorMessage(error, timedOut = false) {
 
 function isRemoteHlsUrl(url) {
     return /^https?:\/\//i.test(url) && /\.m3u8(?:$|[?#])/i.test(url);
+}
+
+function resolveHlsUrl(value, baseUrl) {
+    return new URL(String(value || '').trim(), baseUrl).href;
+}
+
+function absolutizeHlsTagUri(line, baseUrl) {
+    return String(line || '').replace(/URI=(?:"([^"]+)"|([^,\s]+))/i, (match, quoted, plain) => {
+        const absoluteUrl = resolveHlsUrl(quoted || plain, baseUrl);
+        return `URI="${absoluteUrl}"`;
+    });
+}
+
+async function resolveHlsMediaPlaylist(sourceUrl, depth = 0) {
+    if (depth > 3) {
+        throw new Error('HLS 播放列表嵌套层级过深');
+    }
+
+    const response = await axios.get(sourceUrl, {
+        responseType: 'text',
+        timeout: 20_000,
+        headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    const text = String(response.data || '');
+    if (!text.startsWith('#EXTM3U')) {
+        throw new Error('视频地址没有返回有效的 HLS 播放列表');
+    }
+
+    const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const variants = [];
+    for (let index = 0; index < lines.length; index += 1) {
+        if (!lines[index].startsWith('#EXT-X-STREAM-INF')) continue;
+        const bandwidth = Number(lines[index].match(/(?:^|,)BANDWIDTH=(\d+)/i)?.[1] || 0);
+        const uri = lines.slice(index + 1).find(line => line && !line.startsWith('#'));
+        if (uri) variants.push({ bandwidth, url: resolveHlsUrl(uri, sourceUrl) });
+    }
+
+    if (variants.length) {
+        variants.sort((left, right) => right.bandwidth - left.bandwidth);
+        return resolveHlsMediaPlaylist(variants[0].url, depth + 1);
+    }
+
+    return { url: sourceUrl, lines };
+}
+
+async function prepareHlsClipPlaylist(sourceUrl, clipStartTime, clipDuration) {
+    const resolved = await resolveHlsMediaPlaylist(sourceUrl);
+    const segments = [];
+    let cursor = 0;
+    let pendingDuration = null;
+    let pendingDiscontinuity = false;
+    let activeKeyLine = '';
+    let activeMapLine = '';
+    let pendingByteRange = '';
+    let targetDuration = 6;
+    let versionLine = '#EXT-X-VERSION:3';
+
+    for (const line of resolved.lines) {
+        if (line.startsWith('#EXT-X-VERSION:')) {
+            versionLine = line;
+        } else if (line.startsWith('#EXT-X-TARGETDURATION:')) {
+            targetDuration = Math.max(1, Number(line.split(':')[1]) || targetDuration);
+        } else if (line === '#EXT-X-DISCONTINUITY') {
+            pendingDiscontinuity = true;
+        } else if (line.startsWith('#EXT-X-KEY:')) {
+            activeKeyLine = absolutizeHlsTagUri(line, resolved.url);
+        } else if (line.startsWith('#EXT-X-MAP:')) {
+            activeMapLine = absolutizeHlsTagUri(line, resolved.url);
+        } else if (line.startsWith('#EXT-X-BYTERANGE:')) {
+            pendingByteRange = line;
+        } else if (line.startsWith('#EXTINF:')) {
+            pendingDuration = Number(line.slice('#EXTINF:'.length).split(',')[0]);
+        } else if (!line.startsWith('#')) {
+            const duration = Number.isFinite(pendingDuration) && pendingDuration > 0
+                ? pendingDuration
+                : targetDuration;
+            segments.push({
+                url: resolveHlsUrl(line, resolved.url),
+                duration,
+                start: cursor,
+                end: cursor + duration,
+                discontinuityBefore: pendingDiscontinuity,
+                keyLine: activeKeyLine,
+                mapLine: activeMapLine,
+                byteRangeLine: pendingByteRange
+            });
+            cursor += duration;
+            pendingDuration = null;
+            pendingDiscontinuity = false;
+            pendingByteRange = '';
+        }
+    }
+
+    if (!segments.length) {
+        throw new Error('HLS 播放列表没有视频分片');
+    }
+    if (segments.some(segment => segment.byteRangeLine)) {
+        throw new Error('暂不支持字节范围型 HLS 切片');
+    }
+
+    const clipEndTime = clipStartTime + clipDuration;
+    const windowStartTime = Math.max(0, clipStartTime - HLS_CLIP_PREROLL_SECONDS);
+    const firstIndex = segments.findIndex(segment => segment.end > windowStartTime);
+    const lastIndex = segments.findIndex(segment => segment.start >= clipEndTime + targetDuration);
+    const selected = segments.slice(
+        Math.max(0, firstIndex),
+        lastIndex < 0 ? segments.length : Math.max(firstIndex + 1, lastIndex)
+    );
+    if (!selected.length || clipStartTime < selected[0].start || clipStartTime >= selected[selected.length - 1].end) {
+        throw new Error('所选时间段没有对应的 HLS 分片');
+    }
+
+    const playlistLines = [
+        '#EXTM3U',
+        versionLine,
+        '#EXT-X-ALLOW-CACHE:NO',
+        `#EXT-X-TARGETDURATION:${Math.ceil(targetDuration)}`,
+        '#EXT-X-MEDIA-SEQUENCE:0'
+    ];
+    let emittedKeyLine = '';
+    let emittedMapLine = '';
+    for (const segment of selected) {
+        if (segment.keyLine && segment.keyLine !== emittedKeyLine) {
+            playlistLines.push(segment.keyLine);
+            emittedKeyLine = segment.keyLine;
+        }
+        if (segment.mapLine && segment.mapLine !== emittedMapLine) {
+            playlistLines.push(segment.mapLine);
+            emittedMapLine = segment.mapLine;
+        }
+        if (segment.discontinuityBefore) playlistLines.push('#EXT-X-DISCONTINUITY');
+        playlistLines.push(`#EXTINF:${segment.duration.toFixed(6)},`);
+        playlistLines.push(segment.url);
+    }
+    playlistLines.push('#EXT-X-ENDLIST');
+
+    const tempPlaylistPath = path.join(
+        app.getPath('temp'),
+        `yaya-clip-${crypto.randomBytes(8).toString('hex')}.m3u8`
+    );
+    fs.writeFileSync(tempPlaylistPath, playlistLines.join('\n'), 'utf8');
+    return {
+        inputUrl: tempPlaylistPath,
+        seekTime: Math.max(0, clipStartTime - selected[0].start),
+        tempPlaylistPath
+    };
 }
 
 function normalizeRemoteMediaUrl(value) {
@@ -1008,7 +1154,7 @@ function cancelDownload(event, { taskId }) {
     event.reply('download-status', { taskId, msg: '任务已取消', status: 'canceled' });
 }
 
-function clipVod(event, { url, fileName, startTime, duration, taskId, savePath }) {
+async function clipVod(event, { url, fileName, startTime, duration, taskId, savePath }) {
     const sourceUrl = String(url || '').trim();
     const clipStartTime = Number(startTime);
     const clipDuration = Number(duration);
@@ -1034,30 +1180,50 @@ function clipVod(event, { url, fileName, startTime, duration, taskId, savePath }
 
     const downloadFolder = resolveDownloadFolder(savePath);
     const finalOutputPath = path.join(downloadFolder, `${sanitizeFileName(fileName)}.mp4`);
-    const tempTsPath = path.join(app.getPath('temp'), `temp_${taskId}_${Date.now()}.ts`);
     const remoteHls = isRemoteHlsUrl(sourceUrl);
-    const seekLeadIn = remoteHls
-        ? Math.min(HLS_SEEK_LEAD_IN_SECONDS, clipStartTime)
-        : 0;
-    const inputSeekTime = Math.max(0, clipStartTime - seekLeadIn);
+    let clipInputUrl = sourceUrl;
+    let accurateOutputSeekTime = 0;
+    let tempPlaylistPath = '';
 
     console.log(`[切片任务] 目标路径: ${finalOutputPath}`);
 
-    const runPhase2Transcode = () => {
+    if (remoteHls) {
+        event.reply('download-status', {
+            taskId,
+            msg: '正在解析 HLS 分片时间轴...',
+            status: 'processing'
+        });
+        try {
+            const prepared = await prepareHlsClipPlaylist(sourceUrl, clipStartTime, clipDuration);
+            clipInputUrl = prepared.inputUrl;
+            accurateOutputSeekTime = prepared.seekTime;
+            tempPlaylistPath = prepared.tempPlaylistPath;
+        } catch (error) {
+            console.error('准备 HLS 切片时间轴失败:', error);
+            event.reply('download-status', {
+                taskId,
+                msg: getClipErrorMessage(error),
+                status: 'error'
+            });
+            return;
+        }
+    }
+
+    const finishClip = () => {
         if (!activeCommands.has(taskId)) {
             return;
         }
 
-        let tempStats;
+        let outputStats;
         try {
-            tempStats = fs.statSync(tempTsPath);
+            outputStats = fs.statSync(finalOutputPath);
         } catch (error) {
-            tempStats = null;
+            outputStats = null;
         }
 
-        if (!tempStats?.isFile() || tempStats.size <= 0) {
-            activeCommands.delete(taskId);
-            removeMediaFile(tempTsPath);
+        activeCommands.delete(taskId);
+        removeMediaFile(tempPlaylistPath);
+        if (!outputStats?.isFile() || outputStats.size <= 0) {
             removeMediaFile(finalOutputPath);
             event.reply('download-status', {
                 taskId,
@@ -1067,32 +1233,7 @@ function clipVod(event, { url, fileName, startTime, duration, taskId, savePath }
             return;
         }
 
-        event.reply('download-status', { taskId, msg: '截取完成，正在封装视频...', status: 'processing' });
-
-        const command2 = ffmpeg(tempTsPath)
-            .outputOptions(['-y', '-c copy', '-bsf:a aac_adtstoasc', '-movflags faststart'])
-            .output(finalOutputPath);
-
-        activeCommands.set(taskId, { command: command2, path: finalOutputPath, tempPath: tempTsPath });
-
-        command2
-            .on('end', () => {
-                activeCommands.delete(taskId);
-                removeMediaFile(tempTsPath);
-
-                event.reply('download-status', { taskId, msg: '切片完成', status: 'success' });
-            })
-            .on('error', (error) => {
-                console.error('切片转码失败:', error);
-                activeCommands.delete(taskId);
-                removeMediaFile(tempTsPath);
-                removeMediaFile(finalOutputPath);
-
-                if (!error.message.includes('SIGKILL')) {
-                    event.reply('download-status', { taskId, msg: '封装失败', status: 'error' });
-                }
-            })
-            .run();
+        event.reply('download-status', { taskId, msg: '切片完成', status: 'success' });
     };
 
     event.reply('download-status', {
@@ -1102,13 +1243,17 @@ function clipVod(event, { url, fileName, startTime, duration, taskId, savePath }
     });
 
     const remoteRtmp = /^rtmps?:\/\//i.test(sourceUrl);
+    const remoteHttp = /^https?:\/\//i.test(sourceUrl);
     const inputOptions = [
-        `-ss ${inputSeekTime}`,
         '-rw_timeout', String(CLIP_READ_TIMEOUT_US),
         '-protocol_whitelist', 'file,http,https,tcp,tls,crypto,rtmp,rtmps'
     ];
 
-    if (!remoteRtmp) {
+    if (!remoteHls) {
+        inputOptions.unshift(`-ss ${clipStartTime}`);
+    }
+
+    if (remoteHttp && !remoteRtmp && !remoteHls) {
         inputOptions.push(
             '-reconnect', '1',
             '-reconnect_streamed', '1',
@@ -1127,23 +1272,30 @@ function clipVod(event, { url, fileName, startTime, duration, taskId, savePath }
         );
     }
 
-    const outputOptions = [];
-    if (seekLeadIn > 0) {
-        outputOptions.push(`-ss ${seekLeadIn}`);
-    }
-    outputOptions.push(
+    const outputOptions = [
+        '-y',
+        ...(remoteHls ? [`-ss ${accurateOutputSeekTime}`] : []),
         `-t ${clipDuration}`,
-        '-c copy',
-        '-f mpegts',
+        '-map 0:v:0',
+        '-map 0:a:0?',
+        '-c:v libx264',
+        '-preset veryfast',
+        '-crf 20',
+        '-c:a aac',
+        '-b:a 128k',
+        '-af aresample=async=1:first_pts=0',
+        '-fps_mode vfr',
+        '-max_interleave_delta 0',
+        '-movflags +faststart',
         '-avoid_negative_ts make_zero'
-    );
+    ];
 
-    const command = ffmpeg(sourceUrl)
+    const command = ffmpeg(clipInputUrl)
         .inputOptions(inputOptions)
         .outputOptions(outputOptions)
-        .output(tempTsPath);
+        .output(finalOutputPath);
 
-    activeCommands.set(taskId, { command, path: finalOutputPath, tempPath: tempTsPath });
+    activeCommands.set(taskId, { command, path: finalOutputPath, tempPath: tempPlaylistPath });
 
     let phase1Finished = false;
     let timedOut = false;
@@ -1170,7 +1322,8 @@ function clipVod(event, { url, fileName, startTime, duration, taskId, savePath }
                 status: 'error'
             });
             stopCommand(command);
-            removeMediaFile(tempTsPath);
+            removeMediaFile(tempPlaylistPath);
+            removeMediaFile(finalOutputPath);
         }, CLIP_NO_PROGRESS_TIMEOUT_MS);
     };
 
@@ -1207,7 +1360,7 @@ function clipVod(event, { url, fileName, startTime, duration, taskId, savePath }
             if (phase1Finished) return;
             phase1Finished = true;
             clearNoProgressTimer();
-            runPhase2Transcode();
+            finishClip();
         })
         .on('error', (error) => {
             console.error('切片下载失败:', error);
@@ -1216,7 +1369,7 @@ function clipVod(event, { url, fileName, startTime, duration, taskId, savePath }
 
             phase1Finished = true;
             activeCommands.delete(taskId);
-            removeMediaFile(tempTsPath);
+            removeMediaFile(tempPlaylistPath);
             removeMediaFile(finalOutputPath);
 
             if (!timedOut && !error.message.includes('SIGKILL')) {
@@ -1509,6 +1662,7 @@ function cleanupMediaTasks() {
 }
 
 function downloadVod(event, { url, fileName, taskId, savePath }) {
+    const sourceUrl = String(url || '').trim();
     const downloadFolder = resolveDownloadFolder(savePath);
     const outputPath = path.join(downloadFolder, `${fileName}.mp4`);
 
@@ -1521,8 +1675,13 @@ function downloadVod(event, { url, fileName, taskId, savePath }) {
         return;
     }
 
-    const command = ffmpeg(url)
-        .inputOptions(['-protocol_whitelist', 'file,http,https,tcp,tls,crypto,rtmp,rtmps'])
+    // Let FFmpeg normalize HLS discontinuities into one continuous timeline.
+    // Preserving raw timestamps makes later epochs overlap earlier ones and can
+    // truncate the MP4 to only the final epoch.
+    const inputOptions = ['-protocol_whitelist', 'file,http,https,tcp,tls,crypto,rtmp,rtmps'];
+
+    const command = ffmpeg(sourceUrl)
+        .inputOptions(inputOptions)
         .outputOptions('-c copy');
 
     activeCommands.set(taskId, { command, path: outputPath });

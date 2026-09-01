@@ -111,6 +111,109 @@ html[data-platform="web"].web-mobile-device [data-clip-toolbar] {
     display: none !important;
 }
 
+html[data-platform="web"] .web-live-clip-toolbar-hidden {
+    display: none !important;
+}
+
+html[data-platform="web"] [data-clip-toolbar="bilibili-live"] {
+    display: none !important;
+}
+
+@media (min-width: 769px) {
+    html[data-platform="web"] #clip-toolbar > div {
+        position: relative !important;
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) 100px !important;
+        grid-template-rows: 14px 38px !important;
+        column-gap: 15px !important;
+        row-gap: 6px !important;
+        align-items: stretch !important;
+        min-height: 58px !important;
+        padding-right: 0 !important;
+        box-sizing: border-box !important;
+    }
+
+    html[data-platform="web"] #clip-toolbar > div > div:first-child {
+        grid-column: 1 !important;
+        grid-row: 1 / 3 !important;
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    html[data-platform="web"] #clip-toolbar > div > div:first-child > div > div {
+        align-items: center !important;
+    }
+
+    html[data-platform="web"] #clip-toolbar > div > div:first-child > div > span {
+        display: flex !important;
+        align-items: center !important;
+        height: 14px !important;
+        line-height: 14px !important;
+    }
+
+    html[data-platform="web"] #clip-toolbar > div > div:first-child button {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex: 0 0 64px !important;
+        width: 64px !important;
+        height: 38px !important;
+        min-height: 38px !important;
+        max-height: 38px !important;
+        line-height: 1 !important;
+        margin: 0 !important;
+    }
+
+    html[data-platform="web"] #clip-toolbar .web-clip-status-area {
+        position: static !important;
+        grid-column: 2 !important;
+        grid-row: 1 !important;
+        display: flex !important;
+        align-items: center !important;
+        width: 100px !important;
+        min-width: 100px !important;
+        max-width: 100px !important;
+        height: 14px !important;
+        line-height: 14px !important;
+        overflow: hidden !important;
+    }
+
+    html[data-platform="web"] #clip-toolbar .web-clip-action-area {
+        position: static !important;
+        grid-column: 2 !important;
+        grid-row: 2 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
+        width: 100px !important;
+        min-width: 100px !important;
+        max-width: 100px !important;
+        height: 38px !important;
+    }
+
+    html[data-platform="web"] #clip-duration-display {
+        display: block !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+    }
+
+    html[data-platform="web"] #btn-do-clip {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: none !important;
+        height: 38px !important;
+        min-height: 38px !important;
+        max-height: 38px !important;
+        line-height: 1 !important;
+        margin: 0 !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+        box-sizing: border-box !important;
+    }
+}
+
 html.web-secondary-route-boot #view-home {
     display: none !important;
     visibility: hidden !important;

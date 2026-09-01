@@ -123,6 +123,19 @@
             return typeof getCurrentMode === 'function' ? getCurrentMode() : 'live';
         }
 
+        function syncWebLiveClipToolbarVisibility() {
+            if (!IS_WEB_PLATFORM) return;
+
+            const mode = getClipMode();
+            const shouldHide = mode === 'live' || mode === 'meet-live';
+            const toolbar = getSafeCurrentViewName() === 'bilibili-live'
+                ? document.querySelector('[data-clip-toolbar="bilibili-live"]')
+                : document.getElementById('clip-toolbar');
+            if (toolbar) {
+                toolbar.classList.toggle('web-live-clip-toolbar-hidden', shouldHide);
+            }
+        }
+
         async function refreshLiveAnnouncement(btnElement) {
             const currentPlayingItem = typeof getCurrentPlayingItem === 'function' ? getCurrentPlayingItem() : null;
             if (!currentPlayingItem || !currentPlayingItem.liveId || !btnElement) return;
@@ -382,6 +395,8 @@
         }
 
         function updateClipUI() {
+            syncWebLiveClipToolbarVisibility();
+
             const startDisplay = getClipElement('start-display', 'clip-start-display');
             const endDisplay = getClipElement('end-display', 'clip-end-display');
             const durationDisplay = getClipElement('duration-display', 'clip-duration-display');
@@ -412,14 +427,14 @@
             if (clipStartTime !== null && clipEndTime !== null) {
                 const duration = clipEndTime - clipStartTime;
                 if (duration > 0) {
-                    if (durationDisplay) durationDisplay.textContent = `切片时长: ${duration.toFixed(2)}s`;
+                    if (durationDisplay) durationDisplay.textContent = `时长: ${duration.toFixed(2)}s`;
                     if (clipBtn) clipBtn.disabled = false;
                 } else {
-                    if (durationDisplay) durationDisplay.textContent = '切片时长: 无效';
+                    if (durationDisplay) durationDisplay.textContent = '时长: 无效';
                     if (clipBtn) clipBtn.disabled = true;
                 }
             } else {
-                if (durationDisplay) durationDisplay.textContent = '切片时长: 0s';
+                if (durationDisplay) durationDisplay.textContent = '时长: 0s';
                 if (clipBtn) clipBtn.disabled = true;
             }
         }

@@ -13,12 +13,31 @@
         } = deps;
 
         const COS_BASE_URL = `${DATA_BASE_URL}/subtitles`;
+        const DANMU_FOLLOW_STORAGE_KEY = 'yaya_danmu_follow_enabled';
+
+        function readDanmuFollowPreference() {
+            try {
+                return window.localStorage?.getItem(DANMU_FOLLOW_STORAGE_KEY) === '1';
+            } catch (error) {
+                console.warn('读取弹幕跟随设置失败:', error);
+                return false;
+            }
+        }
+
+        function saveDanmuFollowPreference(enabled) {
+            try {
+                window.localStorage?.setItem(DANMU_FOLLOW_STORAGE_KEY, enabled ? '1' : '0');
+            } catch (error) {
+                console.warn('保存弹幕跟随设置失败:', error);
+            }
+        }
 
         let currentDanmuList = [];
         let currentSubtitleList = [];
         let currentTimelineMode = 'danmu';
         let currentSubtitleUrl = '';
         let lastActiveIndex = -1;
+        let danmuFollowEnabled = readDanmuFollowPreference();
 
         function safeEscapeHtml(value) {
             if (typeof escapeHtml === 'function') return escapeHtml(value);
@@ -55,6 +74,29 @@
             if (!isMobileWebTimeline()) {
                 row.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
+        }
+
+        function clearTimelineHighlight() {
+            if (lastActiveIndex !== -1) {
+                const activeRow = document.getElementById(`dm-row-${lastActiveIndex}`);
+                if (activeRow) activeRow.classList.remove('active');
+            }
+            lastActiveIndex = -1;
+        }
+
+        function setDanmuFollowEnabled(enabled) {
+            danmuFollowEnabled = Boolean(enabled);
+            saveDanmuFollowPreference(danmuFollowEnabled);
+            const checkbox = document.getElementById('danmu-follow-checkbox');
+            if (checkbox && checkbox.checked !== danmuFollowEnabled) {
+                checkbox.checked = danmuFollowEnabled;
+            }
+
+            clearTimelineHighlight();
+            if (!danmuFollowEnabled) return;
+
+            const currentTime = Number(getArt()?.currentTime);
+            if (Number.isFinite(currentTime)) syncDanmuHighlight(currentTime);
         }
 
         function handleDanmuSearch(keyword) {
@@ -282,9 +324,20 @@
                 <div style="display: flex; flex: 1; align-items: center;">
                     <input type="text" id="danmu-search-input" class="input-control" placeholder="搜索内容 / 发送者" style="flex: 1; height: 26px; font-size: 12px; padding: 0 8px; margin-left: 10px;" oninput="handleDanmuSearch(this.value)">
                     <button id="btn-danmu-analysis" class="btn btn-secondary" onclick="openDanmuAnalysis()" style="height: 26px; padding: 0 10px; font-size: 12px; margin-left: 10px;">统计</button>
-                    <span id="danmu-count-display" style="font-weight:normal; font-size:12px; color:var(--text-sub); white-space: nowrap; margin-left: 10px;"></span>
+                    <label id="danmu-follow-control" class="danmu-follow-control" title="跟随播放时间定位当前弹幕">
+                        <input id="danmu-follow-checkbox" type="checkbox">
+                        <span>跟随</span>
+                    </label>
                 </div>
             `;
+
+            const followCheckbox = document.getElementById('danmu-follow-checkbox');
+            if (followCheckbox) {
+                followCheckbox.checked = danmuFollowEnabled;
+                followCheckbox.addEventListener('change', () => {
+                    setDanmuFollowEnabled(followCheckbox.checked);
+                });
+            }
 
             refreshTimelineListUI();
 
@@ -356,7 +409,6 @@
 
         function refreshTimelineListUI() {
             const container = document.getElementById('danmu-list-body');
-            const countDisplay = document.getElementById('danmu-count-display');
             const searchInput = document.getElementById('danmu-search-input');
             const wrapper = document.getElementById('danmu-timeline-wrapper');
             if (!container || !wrapper) return;
@@ -454,7 +506,7 @@
 
             container.replaceChildren();
             container.scrollTop = 0;
-            if (countDisplay) countDisplay.innerText = `共 ${list.length} 条`;
+            lastActiveIndex = -1;
 
             if (list.length === 0) {
                 container.innerHTML = `<div style="text-align: center; padding: 40px; color: var(--text-sub);">${currentTimelineMode === 'subtitle' ? '未在云端找到字幕文件' : '暂无弹幕数据'}</div>`;
@@ -516,9 +568,15 @@
                 fragment.appendChild(div);
             });
             container.appendChild(fragment);
+
+            if (danmuFollowEnabled) {
+                const currentTime = Number(getArt()?.currentTime);
+                if (Number.isFinite(currentTime)) syncDanmuHighlight(currentTime);
+            }
         }
 
         function syncDanmuHighlight(currentTime) {
+            if (!danmuFollowEnabled || !Number.isFinite(Number(currentTime))) return;
             const list = currentTimelineMode === 'danmu' ? currentDanmuList : currentSubtitleList;
             if (!list || !list.length) return;
 
@@ -549,8 +607,6 @@
             if (timelineWrapper) timelineWrapper.style.display = 'none';
             const danmuBody = document.getElementById('danmu-list-body');
             if (danmuBody) danmuBody.replaceChildren();
-            const danmuCount = document.getElementById('danmu-count-display');
-            if (danmuCount) danmuCount.textContent = '';
             lastActiveIndex = -1;
             currentDanmuList = [];
             currentSubtitleList = [];
@@ -566,6 +622,8 @@
         function openDanmuAnalysis() {
             const modal = document.getElementById('danmuAnalysisModal');
             const container = document.getElementById('danmuAnalysisList');
+            const modalTitle = modal?.querySelector('.modal-title');
+            if (modalTitle) modalTitle.textContent = `弹幕榜（共 ${currentDanmuList.length} 条）`;
 
             if (!currentDanmuList || currentDanmuList.length === 0) {
                 if (modal) modal.style.display = 'flex';

@@ -877,8 +877,11 @@
         return parsed.data;
     }
 
-    const FFMPEG_SCRIPT_URL = './src/renderer/vendor/ffmpeg/ffmpeg.min.js';
-    const FFMPEG_CORE_PATH = './src/renderer/vendor/ffmpeg/ffmpeg-core.js';
+    const FFMPEG_SCRIPT_URL = '/src/renderer/vendor/ffmpeg/ffmpeg.min.js';
+    const FFMPEG_CORE_PATH = new URL(
+        '/src/renderer/vendor/ffmpeg/ffmpeg-core.js',
+        window.location.origin
+    ).href;
     const WEB_CLIP_MAX_DURATION = 10 * 60;
     const WEB_CLIP_MAX_DIRECT_BYTES = 512 * 1024 * 1024;
     const WEB_CLIP_MAX_SEGMENTS = 120;
@@ -1135,6 +1138,7 @@
         let cursor = 0;
         let targetDuration = 6;
         let mapUrl = '';
+        let discontinuityBeforeNextSegment = false;
         for (const line of lines) {
             if (line.startsWith('#EXT-X-TARGETDURATION')) {
                 const parsed = Number(line.split(':')[1]);
@@ -1142,6 +1146,8 @@
             } else if (line.startsWith('#EXT-X-MAP')) {
                 const attrs = parseM3u8Attributes(line);
                 if (attrs.URI) mapUrl = resolveMediaUrl(attrs.URI, playlistUrl);
+            } else if (line === '#EXT-X-DISCONTINUITY') {
+                discontinuityBeforeNextSegment = true;
             } else if (line.startsWith('#EXTINF')) {
                 duration = Number(line.replace('#EXTINF:', '').split(',')[0]);
             } else if (!line.startsWith('#')) {
@@ -1150,10 +1156,12 @@
                     url: resolveMediaUrl(line, playlistUrl),
                     duration: segDuration,
                     start: cursor,
-                    end: cursor + segDuration
+                    end: cursor + segDuration,
+                    discontinuityBefore: discontinuityBeforeNextSegment
                 });
                 cursor += segDuration;
                 duration = null;
+                discontinuityBeforeNextSegment = false;
             }
         }
         return { segments, targetDuration, mapUrl };
@@ -1200,6 +1208,9 @@
             const progress = 20 + (i / Math.max(1, selected.length)) * 45;
             setDownloadTaskStatus(taskId, `正在下载分片 ${i + 1}/${selected.length}...`, progress);
             ffmpeg.FS('writeFile', name, await fetchBinaryMedia(segment.url, taskId, progress, 45 / Math.max(1, selected.length)));
+            if (i > 0 && segment.discontinuityBefore) {
+                localLines.push('#EXT-X-DISCONTINUITY');
+            }
             localLines.push(`#EXTINF:${segment.duration.toFixed(3)},`);
             localLines.push(name);
         }
@@ -1244,13 +1255,24 @@
                 ? await writeHlsClipInputs(ffmpeg, sourceUrl, startTime, duration, taskId)
                 : await writeDirectClipInput(ffmpeg, sourceUrl, taskId);
             const seekTime = input.localStartTime === null ? startTime : input.localStartTime;
-            setDownloadTaskStatus(taskId, '正在封装切片...', 70);
+            setDownloadTaskStatus(taskId, '正在精确定位并生成切片...', 70);
+            const seekArgs = input.localStartTime === null
+                ? ['-ss', String(Math.max(0, seekTime)), '-i', input.inputName]
+                : ['-i', input.inputName, '-ss', String(Math.max(0, seekTime))];
             await ffmpeg.run(
-                '-ss', String(Math.max(0, seekTime)),
-                '-i', input.inputName,
+                ...seekArgs,
                 '-t', String(duration),
-                '-c', 'copy',
-                '-movflags', 'faststart',
+                '-map', '0:v:0',
+                '-map', '0:a:0?',
+                '-c:v', 'libx264',
+                '-preset', 'ultrafast',
+                '-crf', '22',
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                '-af', 'aresample=async=1:first_pts=0',
+                '-vsync', '2',
+                '-movflags', '+faststart',
+                '-avoid_negative_ts', 'make_zero',
                 outputName
             );
             const output = ffmpeg.FS('readFile', outputName);
