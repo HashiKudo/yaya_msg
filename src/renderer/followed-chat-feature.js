@@ -74,6 +74,14 @@
             });
         }
 
+        function normalizeFollowedNextTime(nextTime, requestedNextTime = 0) {
+            const normalized = String(nextTime == null ? '' : nextTime).trim();
+            const requested = String(requestedNextTime == null ? '' : requestedNextTime).trim();
+            if (!normalized || normalized === '0') return 0;
+            if (requested && requested !== '0' && normalized === requested) return 0;
+            return nextTime;
+        }
+
         function escapeFollowedHtml(value) {
             return String(value == null ? '' : value)
                 .replace(/&/g, '&amp;')
@@ -2737,8 +2745,40 @@
             });
         }
 
+        function captureFollowedPrependAnchor(container) {
+            if (!container) return null;
+
+            const containerTop = container.getBoundingClientRect().top;
+            const messageItems = Array.from(container.querySelectorAll('.msg-item'));
+            const anchorEl = messageItems.find(item => item.getBoundingClientRect().bottom > containerTop + 1)
+                || messageItems[0];
+            const messageId = anchorEl?.dataset?.msgid;
+            if (!anchorEl || !messageId) return null;
+
+            return {
+                messageId: String(messageId),
+                offsetTop: anchorEl.getBoundingClientRect().top - containerTop
+            };
+        }
+
+        function restoreFollowedPrependAnchor(container, anchor) {
+            if (!container || !anchor) return false;
+
+            const anchorEl = Array.from(container.querySelectorAll('.msg-item'))
+                .find(item => String(item.dataset.msgid || '') === anchor.messageId);
+            if (!anchorEl) return false;
+
+            const containerTop = container.getBoundingClientRect().top;
+            const currentOffsetTop = anchorEl.getBoundingClientRect().top - containerTop;
+            const nextScrollTop = container.scrollTop + currentOffsetTop - anchor.offsetTop;
+            container.scrollTop = Math.max(1, nextScrollTop);
+            followedLastScrollTop = container.scrollTop;
+            return true;
+        }
+
         function scrollFollowedToBottom(msgBox, respectAutoScrollLock = false) {
             if (!msgBox) return;
+            if (respectAutoScrollLock && !canFollowedAutoScroll(msgBox)) return;
 
             const autoScrollTokenAtAppend = followedAutoScrollToken;
 
@@ -2805,6 +2845,7 @@
             if (isScrollingUp) {
                 followedStickToBottom = false;
                 followedUserScrollLockUntil = Number.MAX_SAFE_INTEGER;
+                invalidateFollowedAutoScrollJobs();
                 return;
             }
 
@@ -2862,6 +2903,15 @@
             if (!titleEl) return;
             titleEl.innerText = title;
             titleEl.style.visibility = 'visible';
+        }
+
+        function updateFollowedChatSubtitle(channelId) {
+            const subtitleEl = document.getElementById('followed-chat-subtitle');
+            if (!subtitleEl) return;
+
+            const normalizedChannelId = String(channelId || '--').trim() || '--';
+            subtitleEl.dataset.channelId = normalizedChannelId;
+            subtitleEl.innerText = `Channel ID: ${normalizedChannelId}`;
         }
 
         function updateFollowedChatTitleFromDetail(detail) {
@@ -2987,8 +3037,6 @@
         function openFollowedChat(ownerName, channelId, serverId, options = {}) {
             const requestRevision = ++followedChatRequestRevision;
             const refreshCycle = ++followedAutoRefreshCycle;
-            // A room switch must not be blocked by an in-flight refresh for the
-            // previous room. That request will be discarded by its revision.
             isFollowedChatLoading = false;
             const initialRoomType = options?.roomType === 'small' ? 'small' : 'big';
             const mainChannelId = String(options?.mainChannelId || channelId || '');
@@ -2999,6 +3047,9 @@
             activeFollowedMemberId = String(options?.memberId || '').trim();
             activeFollowedNextTime = 0;
             isFollowedSmallRoomMode = initialRoomType === 'small';
+            if (typeof window.syncWebRoomRoute === 'function') {
+                window.syncWebRoomRoute(channelId);
+            }
             followedStickToBottom = true;
             followedUserScrollLockUntil = 0;
             followedLastScrollTop = 0;
@@ -3045,7 +3096,7 @@
                 window.updateFollowedRoomNotificationButton(mainChannelId);
             }
             showFollowedChatTitle(getFollowedFallbackTitle(ownerName));
-            document.getElementById('followed-chat-subtitle').innerText = `Channel ID: ${channelId}`;
+            updateFollowedChatSubtitle(channelId);
             activeFollowedFallbackAvatarUrl = getFollowedMemberAvatarUrl(mainChannelId);
 
             if (activeFollowedServer) {
@@ -3094,6 +3145,9 @@
             if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
             const followedView = document.getElementById('view-followed-rooms');
             if (followedView) followedView.classList.remove('is-chat-open');
+            if (typeof window.syncWebRoomListRoute === 'function') {
+                window.syncWebRoomListRoute();
+            }
         }
 
         function openActiveFollowedRoomAlbum() {
@@ -3182,6 +3236,9 @@
                 isFollowedSmallRoomMode = false;
                 activeFollowedChannel = activeFollowedMainChannel;
             }
+            if (typeof window.syncWebRoomRoute === 'function') {
+                window.syncWebRoomRoute(activeFollowedChannel);
+            }
 
             const btn = document.getElementById('btn-toggle-room-type');
             if (isFollowedSmallRoomMode) {
@@ -3190,7 +3247,7 @@
                 btn.innerText = '大房间';
             }
 
-            document.getElementById('followed-chat-subtitle').innerText = `Channel ID: ${activeFollowedChannel} ${isFollowedSmallRoomMode ? '' : ''}`;
+            updateFollowedChatSubtitle(activeFollowedChannel);
             if (typeof window.autoConnectFollowedRoomRadio === 'function') {
                 window.autoConnectFollowedRoomRadio(
                     activeFollowedChannel,
@@ -3277,8 +3334,7 @@
             const requestFetchAll = isFollowedChatAllMode;
 
             const oldScrollHeight = msgBox.scrollHeight;
-            const shouldAutoScroll = canFollowedAutoScroll(msgBox);
-
+            const prependAnchor = isLoadMore ? captureFollowedPrependAnchor(msgBox) : null;
             try {
                 const fetchNextTime = isAutoRefresh ? 0 : activeFollowedNextTime;
                 if (!isAutoRefresh) {
@@ -3296,8 +3352,6 @@
                     fetchAll: requestFetchAll
                 });
 
-                // The user may have switched rooms while IPC was pending. Never
-                // let the old response mutate the newly selected room.
                 if (requestRevision !== followedChatRequestRevision) return;
 
                 if (res.success && res.data.content) {
@@ -3310,10 +3364,12 @@
                     if (!isAutoRefresh) console.log(`[关注房间] 消息列表长度=${list.length} nextTime=${content.nextTime}`);
 
                     if (!isAutoRefresh && !isLoadMore) {
-                        activeFollowedNextTime = content.nextTime;
+                        activeFollowedNextTime = normalizeFollowedNextTime(content.nextTime);
                         if (list.length === 0) activeFollowedNextTime = 0;
                     } else if (isLoadMore) {
-                        activeFollowedNextTime = content.nextTime;
+                        activeFollowedNextTime = list.length > 0
+                            ? normalizeFollowedNextTime(content.nextTime, fetchNextTime)
+                            : 0;
                     }
 
                     if (!isLoadMore && !isAutoRefresh) msgBox.replaceChildren();
@@ -3601,7 +3657,13 @@
                         return;
                     }
 
-                    if (isAutoRefresh && !shouldAutoScroll) {
+                    if (isLoadMore && !batchHtml) {
+                        activeFollowedNextTime = 0;
+                        return;
+                    }
+
+                    const shouldAutoScrollNow = !isAutoRefresh || canFollowedAutoScroll(msgBox);
+                    if (isAutoRefresh && !shouldAutoScrollNow) {
                         queueFollowedPendingBatch(batchHtml, batchMessageIds);
                         return;
                     }
@@ -3611,13 +3673,14 @@
 
                     if (isLoadMore) {
                         msgBox.prepend(fragment);
-                        const newScrollTop = msgBox.scrollHeight - oldScrollHeight;
-
-                        msgBox.scrollTop = newScrollTop <= 0 ? 1 : newScrollTop;
-                        followedLastScrollTop = msgBox.scrollTop;
+                        if (!restoreFollowedPrependAnchor(msgBox, prependAnchor)) {
+                            const newScrollTop = msgBox.scrollHeight - oldScrollHeight;
+                            msgBox.scrollTop = newScrollTop <= 0 ? 1 : newScrollTop;
+                            followedLastScrollTop = msgBox.scrollTop;
+                        }
                     } else {
                         msgBox.appendChild(fragment);
-                        if (!isAutoRefresh || shouldAutoScroll) {
+                        if (shouldAutoScrollNow) {
                             scrollFollowedToBottom(msgBox, isAutoRefresh);
                         }
                     }
@@ -3644,6 +3707,18 @@
                     if (!isAutoRefresh) {
                         msgBox.style.opacity = '1';
                         msgBox.style.pointerEvents = 'auto';
+                    }
+
+                    if (activeFollowedNextTime && msgBox.scrollTop < 100) {
+                        window.requestAnimationFrame(() => {
+                            if (requestRevision !== followedChatRequestRevision
+                                || isFollowedChatLoading
+                                || !activeFollowedNextTime) return;
+                            const currentMsgBox = document.getElementById('followed-chat-messages');
+                            if (currentMsgBox && currentMsgBox.scrollTop < 100) {
+                                loadFollowedChatPage(true, false, requestRevision);
+                            }
+                        });
                     }
                 }
             }

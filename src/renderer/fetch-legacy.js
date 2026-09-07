@@ -1532,7 +1532,6 @@ function scheduleAutoMessageFetch(delayMs) {
         pageCount += 1;
         nextTime = reachedPrevious ? 0 : Number(content.nextTime) || 0;
 
-                // 没有历史边界时只取最新一页，避免首次启用就抓完整个历史房间。
                 if (!previousBoundary || !Array.isArray(rawList) || rawList.length === 0) nextTime = 0;
                 if (nextTime > 0 && pageCount < AUTO_MESSAGE_FETCH_MAX_PAGES) await sleep(350);
             } while (nextTime > 0 && pageCount < AUTO_MESSAGE_FETCH_MAX_PAGES);
