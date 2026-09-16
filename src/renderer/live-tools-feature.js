@@ -187,11 +187,11 @@
 
                     btnElement.innerText = '✓';
                 } else {
-                    btnElement.innerText = '失败';
+                    btnElement.innerText = window.YayaRendererUtils.t('失败');
                 }
             } catch (e) {
                 console.error('刷新公告失败:', e);
-                btnElement.innerText = '失败';
+                btnElement.innerText = window.YayaRendererUtils.t('失败');
             }
 
             setTimeout(() => {
@@ -443,14 +443,14 @@
             if (clipStartTime !== null && clipEndTime !== null) {
                 const duration = clipEndTime - clipStartTime;
                 if (duration > 0) {
-                    if (durationDisplay) durationDisplay.textContent = `时长: ${duration.toFixed(2)}s`;
+                    if (durationDisplay) durationDisplay.textContent = window.YayaRendererUtils.t(`时长: ${duration.toFixed(2)}s`);
                     if (clipBtn) clipBtn.disabled = false;
                 } else {
-                    if (durationDisplay) durationDisplay.textContent = '时长: 无效';
+                    if (durationDisplay) durationDisplay.textContent = window.YayaRendererUtils.t('时长: 无效');
                     if (clipBtn) clipBtn.disabled = true;
                 }
             } else {
-                if (durationDisplay) durationDisplay.textContent = '时长: 0s';
+                if (durationDisplay) durationDisplay.textContent = window.YayaRendererUtils.t('时长: 0s');
                 if (clipBtn) clipBtn.disabled = true;
             }
         }
@@ -581,20 +581,20 @@
             if (button) {
                 button.classList.toggle('is-enabled', autoLiveRecordEnabled);
                 button.classList.toggle('is-recording', activeCount > 0);
-                button.textContent = activeCount > 0 ? `自动录制 ${activeCount}` : '自动录制';
+                button.textContent = window.YayaRendererUtils.t(activeCount > 0 ? `自动录制 ${activeCount}` : '自动录制');
                 button.title = autoLiveRecordEnabled
                     ? `已启用，监控 ${autoLiveRecordMembers.length} 位成员${activeCount ? `，正在录制 ${activeCount} 场` : ''}`
                     : '设置直播自动录制成员';
             }
             if (checkbox) checkbox.checked = autoLiveRecordEnabled;
-            if (count) count.textContent = `${autoLiveRecordMembers.length} 位`;
+            if (count) count.textContent = window.YayaRendererUtils.t(`${autoLiveRecordMembers.length} 位`);
             if (status) {
                 if (!autoLiveRecordEnabled) {
-                    status.textContent = '尚未启用';
+                    status.textContent = window.YayaRendererUtils.t('尚未启用');
                 } else if (autoLiveRecordMembers.length === 0) {
-                    status.textContent = '请先添加需要自动录制的成员';
+                    status.textContent = window.YayaRendererUtils.t('请先添加需要自动录制的成员');
                 } else {
-                    status.textContent = `正在监控 ${autoLiveRecordMembers.length} 位成员`;
+                    status.textContent = window.YayaRendererUtils.t(`正在监控 ${autoLiveRecordMembers.length} 位成员`);
                 }
             }
         }
@@ -602,14 +602,14 @@
         function renderAutoLiveRecordMembers() {
             const container = document.getElementById('auto-live-record-member-list');
             const count = document.getElementById('auto-live-record-member-count');
-            if (count) count.textContent = `${autoLiveRecordMembers.length} 位`;
+            if (count) count.textContent = window.YayaRendererUtils.t(`${autoLiveRecordMembers.length} 位`);
             if (!container) return;
             container.replaceChildren();
 
             if (autoLiveRecordMembers.length === 0) {
                 const empty = document.createElement('div');
                 empty.className = 'auto-live-record-member-empty';
-                empty.textContent = '还没有成员，请在上方搜索添加';
+                empty.textContent = window.YayaRendererUtils.t('还没有成员，请在上方搜索添加');
                 container.appendChild(empty);
                 return;
             }
@@ -624,7 +624,7 @@
                 name.textContent = member.name;
                 const detail = document.createElement('small');
                 const task = autoLiveRecordTasks.get(member.id);
-                detail.textContent = task ? '正在自动录制' : `ID ${member.id}`;
+                detail.textContent = window.YayaRendererUtils.t(task ? '正在自动录制' : `ID ${member.id}`);
                 copy.append(name, detail);
 
                 const actions = document.createElement('span');
@@ -641,7 +641,7 @@
                 const remove = document.createElement('button');
                 remove.type = 'button';
                 remove.className = 'auto-live-record-member-remove';
-                remove.textContent = '移除';
+                remove.textContent = window.YayaRendererUtils.t('移除');
                 remove.addEventListener('click', () => removeAutoLiveRecordMember(member.id));
                 actions.appendChild(remove);
                 item.append(copy, actions);
@@ -728,7 +728,7 @@
             if (matches.length === 0) {
                 const empty = document.createElement('div');
                 empty.className = 'suggestion-item';
-                empty.textContent = '没有匹配的成员';
+                empty.textContent = window.YayaRendererUtils.t('没有匹配的成员');
                 empty.style.cursor = 'default';
                 results.appendChild(empty);
             } else {
@@ -1032,7 +1032,7 @@
                 || data.status === 'canceled';
             if (!isTerminal) {
                 const startDisplay = getClipElement('start-display', 'clip-start-display');
-                if (startDisplay && data.msg) startDisplay.textContent = `状态: ${data.msg}`;
+                if (startDisplay && data.msg) startDisplay.textContent = window.YayaRendererUtils.t(`状态: ${data.msg}`);
                 return;
             }
 
@@ -1103,7 +1103,7 @@
                 );
 
                 const startDisplay = getClipElement('start-display', 'clip-start-display');
-                if (startDisplay) startDisplay.textContent = '状态: 正在录制...';
+                if (startDisplay) startDisplay.textContent = window.YayaRendererUtils.t('状态: 正在录制...');
                 if (dp) dp.notice('后台录制已开启');
                 return;
             }

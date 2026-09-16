@@ -4,6 +4,21 @@
         import { Search, Users, Upload, Heart, MapPin, Calendar, Hash, X, Layers, ChevronDown, Check, Cake, Trophy, FileText, Clock, ArrowUpCircle, LogOut, GraduationCap, Copy, Moon, Sun, List, UserSquare2, Sparkles, TrendingUp, TrendingDown, Minus, Music, Disc, AlertCircle, Mic2, Loader2, ExternalLink, ClipboardCopy, Star, Ruler, Droplet, UserCircle, CalendarDays, Activity } from 'lucide-react';
         const DEMO_DATA = [];
         const DATABASE_UI_STATE_KEY = 'yaya_database_ui_state_v1';
+        const t = (key, variables = {}) => window.YayaRendererUtils?.t?.(key, variables)
+            ?? Object.entries(variables).reduce(
+                (text, [name, value]) => text.replaceAll(`{${name}}`, String(value)),
+                String(key)
+            );
+
+        function useYayaLocale() {
+            const [locale, setLocale] = useState(() => window.YayaI18n?.locale || 'zh-CN');
+            useEffect(() => {
+                const refresh = () => setLocale(window.YayaI18n?.locale || 'zh-CN');
+                window.addEventListener('yaya:locale-change', refresh);
+                return () => window.removeEventListener('yaya:locale-change', refresh);
+            }, []);
+            return locale;
+        }
 
         const COS_BASE = 'https://data.gnz.hk';
         const LYRICS_REPO_URL = 'https://github.com/yk1z/yaya_data/tree/main/lyrics';
@@ -379,10 +394,10 @@
                     <div>
                         <div className={`flex items-start mb-2 ${isLeftCard ? 'md:flex-row-reverse justify-between' : 'justify-between'}`}>
                             <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${getTeamStyle(data.队伍)}`}>
-                                {data.队伍}
+                                {t(data.队伍)}
                             </span>
                             <span className={`text-xs font-mono text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-800 px-1.5 py-0.5 rounded border ${getGroupStyle(data.分团)}`}>
-                                {data.分团}
+                                {t(data.分团)}
                             </span>
                         </div>
                         <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-1 group-hover:text-pink-500 transition-colors">
@@ -422,10 +437,10 @@
                         <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
                                 <span className="text-[10px] px-1.5 py-0.5 rounded border border-black/10 dark:border-white/10 bg-white dark:bg-black/20 text-gray-700 dark:text-gray-300 font-bold">
-                                    {album.分团}
+                                    {t(album.分团)}
                                 </span>
                                 <span className="text-[10px] px-1.5 py-0.5 rounded border border-black/10 dark:border-white/10 bg-white dark:bg-black/10 text-gray-600 dark:text-gray-400">
-                                    {album.类型}
+                                    {t(album.类型)}
                                 </span>
                             </div>
                             <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-pink-600 dark:group-hover:text-pink-400 transition-colors">
@@ -434,7 +449,7 @@
                             <div className="flex items-center text-xs text-gray-600 dark:text-gray-400 mt-1">
                                 <Calendar className="w-3.5 h-3.5 mr-1" />
                                 {album.hasMultipleDates ? (
-                                    <span>多种日期 / 见详情</span>
+                                    <span>{t('多种日期 / 见详情')}</span>
                                 ) : (
                                     <span>{album.发行日期}</span>
                                 )}
@@ -461,7 +476,7 @@
                                         </div>
                                     </div>
                                     <div className="flex items-center text-gray-400 dark:text-gray-500 flex-shrink-0 group-hover/song:text-pink-500 dark:group-hover/song:text-pink-400">
-                                        <span className="text-[10px] mr-1 opacity-0 group-hover/song:opacity-100 transition-opacity">查看歌词</span>
+                                        <span className="text-[10px] mr-1 opacity-0 group-hover/song:opacity-100 transition-opacity">{t('查看歌词')}</span>
                                         <Mic2 className="w-3.5 h-3.5" />
                                     </div>
                                 </div>
@@ -473,7 +488,7 @@
                                 onClick={() => setIsExpanded(!isExpanded)}
                                 className="w-full mt-2 py-1.5 text-xs text-gray-600 hover:text-pink-600 dark:text-gray-400 dark:hover:text-pink-400 transition-colors flex items-center justify-center border-t border-black/5 dark:border-white/5"
                             >
-                                {isExpanded ? '收起' : `查看全部 ${album.songs.length} 首`}
+                                {isExpanded ? t('收起') : t('database.showAllSongs', { count: album.songs.length })}
                                 <ChevronDown className={`w-3 h-3 ml-1 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                             </button>
                         )}
@@ -602,7 +617,7 @@
                                     <button
                                         onClick={handleCopyLyrics}
                                         className="p-1.5 hover:bg-gray-100 rounded-full transition-colors text-gray-500 dark:text-gray-400 dark:hover:bg-gray-800 relative group"
-                                        title="复制歌词"
+                                        title={t('复制歌词')}
                                     >
                                         {copySuccess ? <Check className="w-5 h-5 text-green-500" /> : <ClipboardCopy className="w-5 h-5" />}
                                     </button>
@@ -615,15 +630,15 @@
                             {loading ? (
                                 <div className="flex flex-col items-center justify-center h-40">
                                     <Loader2 className="w-8 h-8 text-pink-500 animate-spin mb-2" />
-                                    <p className="text-gray-500 text-sm">正在加载歌词...</p>
+                                    <p className="text-gray-500 text-sm">{t('正在加载歌词...')}</p>
                                 </div>
                             ) : error ? (
                                 <div className="flex flex-col items-center justify-center h-40 text-gray-400">
                                     <FileText className="w-12 h-12 mb-2 opacity-50" />
-                                    <p>暂无歌词</p>
-                                    <p className="text-xs mt-2 text-gray-500 max-w-xs break-all">尝试路径: {fullUrl.split('/').pop()}</p>
+                                    <p>{t('暂无歌词')}</p>
+                                    <p className="text-xs mt-2 text-gray-500 max-w-xs break-all">{t('database.triedPath', { path: fullUrl.split('/').pop() })}</p>
                                     <a href={LYRICS_REPO_URL} target="_blank" rel="noopener noreferrer" className="mt-4 px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-full text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors flex items-center">
-                                        去仓库看看 <ExternalLink className="w-3 h-3 ml-1" />
+                                        {t('去仓库看看')} <ExternalLink className="w-3 h-3 ml-1" />
                                     </a>
                                 </div>
                             ) : (
@@ -631,7 +646,7 @@
                                     {parsedLyrics.length > 0 ? parsedLyrics.map((line, idx) => (
                                         <p key={idx} className="min-h-[1.5em]">{line}</p>
                                     )) : (
-                                        <p className="text-gray-400 italic">纯音乐或无歌词文本</p>
+                                        <p className="text-gray-400 italic">{t('纯音乐或无歌词文本')}</p>
                                     )}
                                 </div>
                             )}
@@ -705,15 +720,15 @@
                             </div>
                             <div className="flex gap-2 mt-1">
                                 {showEdition && (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-gray-200 bg-gray-100 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">{data.届数}选</span>
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-gray-200 bg-gray-100 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">{t('database.electionEdition', { edition: data.届数 })}</span>
                                 )}
-                                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${getGroupStyle(data.分团)}`}>{data.分团}</span>
-                                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${getTeamStyle(data.队伍)}`}>{data.队伍}</span>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${getGroupStyle(data.分团)}`}>{t(data.分团)}</span>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${getTeamStyle(data.队伍)}`}>{t(data.队伍)}</span>
                             </div>
                         </div>
                     </div>
                     <div className="text-right">
-                        <div className="text-xs text-gray-400 mb-0.5">得票数</div>
+                        <div className="text-xs text-gray-400 mb-0.5">{t('得票数')}</div>
                         <div className="font-mono font-bold text-pink-500 dark:text-pink-400 text-lg">
                             {data.得票数 ? parseFloat(data.得票数).toFixed(1) : '-'}
                         </div>
@@ -736,7 +751,7 @@
                 return () => document.removeEventListener('mousedown', handleClickOutside);
             }, []);
 
-            const selectedOption = options.find(opt => opt.value === value) || options[0] || { label: '加载中...', value: '' };
+            const selectedOption = options.find(opt => opt.value === value) || options[0] || { label: t('加载中...'), value: '' };
 
             return (
                 <div className="relative w-full sm:w-auto min-w-[120px]" ref={dropdownRef}>
@@ -796,7 +811,7 @@
             const InfoItem = ({ icon: Icon, label, value, colorClass = "text-gray-800", isCopyable = false }) => {
                 const [copied, setCopied] = useState(false);
                 const hasValue = value !== undefined && value !== null && value !== '';
-                const displayValue = typeof value === 'boolean' ? (value ? '是' : '否') : (hasValue ? String(value) : '-');
+                const displayValue = typeof value === 'boolean' ? t(value ? '是' : '否') : (hasValue ? String(value) : '-');
                 const handleCopy = (e) => {
                     if (!isCopyable || !hasValue) return;
                     e.stopPropagation();
@@ -811,7 +826,7 @@
                     <div onClick={handleCopy} className={`db-member-info-item bg-gray-50 p-3 rounded-lg border border-gray-100 transition-all relative overflow-hidden dark:bg-gray-800 dark:border-gray-700 ${isCopyable ? 'hover:bg-white hover:shadow-md cursor-pointer group dark:hover:bg-gray-750' : 'hover:bg-white hover:shadow-sm dark:hover:bg-gray-750'}`}>
                         <span className="text-xs text-gray-400 block mb-1.5 flex items-center justify-between dark:text-gray-500">
                             <span className="flex items-center"><Icon className="w-3 h-3 mr-1" />{label}</span>
-                            {isCopyable && <span className={`text-[10px] transition-opacity duration-300 ${copied ? 'text-green-500 opacity-100' : 'opacity-0 group-hover:opacity-100 text-gray-400 dark:text-gray-500'}`}>{copied ? '已复制' : '点击复制'}</span>}
+                            {isCopyable && <span className={`text-[10px] transition-opacity duration-300 ${copied ? 'text-green-500 opacity-100' : 'opacity-0 group-hover:opacity-100 text-gray-400 dark:text-gray-500'}`}>{t(copied ? '已复制' : '点击复制')}</span>}
                         </span>
                         <span className={`text-sm font-medium ${colorClass} break-words dark:text-gray-200`}>{displayValue}</span>
                         {copied && <div className="absolute inset-0 border-2 border-green-400 rounded-lg pointer-events-none animate-pulse"></div>}
@@ -832,11 +847,11 @@
                 return `${yyyy}.${mm}.${dd} ${hh}:${mi}`;
             };
             const photoEntries = [
-                ['头像', member.avatar],
-                ['全身照 1', member.fullPhoto1],
-                ['全身照 2', member.fullPhoto2],
-                ['全身照 3', member.fullPhoto3],
-                ['全身照 4', member.fullPhoto4]
+                [t('头像'), member.avatar],
+                [t('全身照 1'), member.fullPhoto1],
+                [t('全身照 2'), member.fullPhoto2],
+                [t('全身照 3'), member.fullPhoto3],
+                [t('全身照 4'), member.fullPhoto4]
             ].filter(([, url]) => !!url);
             const openPhotoPreview = (label, url) => {
                 if (typeof window.openImageModal === 'function') {
@@ -849,7 +864,7 @@
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-40 backdrop-blur-sm animate-backdrop" onClick={onClose}>
                     <div className="db-member-modal bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto custom-scrollbar transform transition-all scale-100 dark:bg-gray-900 dark:border dark:border-gray-800 animate-modal" onClick={(e) => e.stopPropagation()}>
                         <div className="db-member-modal-header flex justify-between items-center p-5 border-b border-gray-100 bg-white sticky top-0 z-10 dark:bg-gray-900 dark:border-gray-800">
-                            <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100">成员档案</h3>
+                            <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100">{t('成员档案')}</h3>
                             <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-full transition-colors text-gray-500 dark:text-gray-400 dark:hover:bg-gray-800"><X className="w-5 h-5" /></button>
                         </div>
                         <div className="db-member-modal-body p-6 space-y-8">
@@ -857,7 +872,7 @@
                                 <div>
                                     <h2 className="text-3xl font-bold text-gray-900 mb-2 flex items-center gap-3 dark:text-white">
                                         {member.ownerName}
-                                        {isActive ? <span className="bg-green-100 text-green-600 text-xs px-2.5 py-0.5 rounded-full border border-green-200 font-bold dark:bg-green-900/30 dark:text-green-400 dark:border-green-800">在团</span> : <span className="bg-gray-100 text-gray-500 text-xs px-2.5 py-0.5 rounded-full border border-gray-200 font-bold dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700">{member.gtime ? "已毕业" : "不在团"}</span>}
+                                        {isActive ? <span className="bg-green-100 text-green-600 text-xs px-2.5 py-0.5 rounded-full border border-green-200 font-bold dark:bg-green-900/30 dark:text-green-400 dark:border-green-800">{t('在团')}</span> : <span className="bg-gray-100 text-gray-500 text-xs px-2.5 py-0.5 rounded-full border border-gray-200 font-bold dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700">{t(member.gtime ? '已毕业' : '不在团')}</span>}
                                     </h2>
                                     <div className="flex items-center space-x-3">
                                         <span className="db-member-pinyin text-sm text-gray-500 tracking-wide font-mono bg-gray-50 px-2 py-0.5 rounded dark:bg-gray-800 dark:text-gray-400">{member.pinyin || '-'}</span>
@@ -870,49 +885,49 @@
                             </div>
 
                             <div className="animate-content" style={{ animationDelay: '0.05s' }}>
-                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center dark:text-gray-500"><Users className="w-3.5 h-3.5 mr-1.5" />个人资料</h4>
+                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center dark:text-gray-500"><Users className="w-3.5 h-3.5 mr-1.5" />{t('个人资料')}</h4>
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                                    {member.nickname && <InfoItem icon={UserCircle} label="昵称" value={member.nickname} />}
-                                    <InfoItem icon={Cake} label="生日" value={formatDate(member.birthday)} colorClass="text-pink-600 dark:text-pink-400" />
-                                    <InfoItem icon={MapPin} label="出生地" value={member.birthplace} />
-                                    {member.constellation && <InfoItem icon={Star} label="星座" value={member.constellation} />}
-                                    {member.height && <InfoItem icon={Ruler} label="身高" value={`${member.height} cm`} />}
-                                    {member.bloodType && <InfoItem icon={Droplet} label="血型" value={`${member.bloodType}型`} />}
+                                    {member.nickname && <InfoItem icon={UserCircle} label={t('昵称')} value={member.nickname} />}
+                                    <InfoItem icon={Cake} label={t('生日')} value={formatDate(member.birthday)} colorClass="text-pink-600 dark:text-pink-400" />
+                                    <InfoItem icon={MapPin} label={t('出生地')} value={member.birthplace} />
+                                    {member.constellation && <InfoItem icon={Star} label={t('星座')} value={member.constellation} />}
+                                    {member.height && <InfoItem icon={Ruler} label={t('身高')} value={`${member.height} cm`} />}
+                                    {member.bloodType && <InfoItem icon={Droplet} label={t('血型')} value={`${member.bloodType}型`} />}
                                 </div>
                                 {(member.hobbies || member.specialty) && (
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-                                        {member.hobbies && <InfoItem icon={Heart} label="爱好" value={member.hobbies} />}
-                                        {member.specialty && <InfoItem icon={Sparkles} label="特长" value={member.specialty} />}
+                                        {member.hobbies && <InfoItem icon={Heart} label={t('爱好')} value={member.hobbies} />}
+                                        {member.specialty && <InfoItem icon={Sparkles} label={t('特长')} value={member.specialty} />}
                                     </div>
                                 )}
                             </div>
 
                             <div className="animate-content" style={{ animationDelay: '0.1s' }}>
-                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center dark:text-gray-500"><Calendar className="w-3.5 h-3.5 mr-1.5" />生涯历程</h4>
+                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center dark:text-gray-500"><Calendar className="w-3.5 h-3.5 mr-1.5" />{t('生涯历程')}</h4>
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                    <InfoItem icon={Layers} label="期数" value={member.periodName} colorClass="text-blue-600 dark:text-blue-400" />
-                                    {member.rank && <InfoItem icon={Trophy} label="最高排名" value={member.rank} colorClass="text-amber-600 dark:text-amber-400" />}
-                                    {member.jtime && <InfoItem icon={CalendarDays} label="加入时间" value={formatDate(member.jtime)} colorClass="text-emerald-600 dark:text-emerald-400" />}
-                                    {member.ptime && <InfoItem icon={ArrowUpCircle} label="升格时间" value={formatDate(member.ptime)} colorClass="text-purple-600 dark:text-purple-400" />}
-                                    {member.gtime && <InfoItem icon={GraduationCap} label="毕业时间" value={formatDate(member.gtime)} colorClass="text-indigo-600 dark:text-indigo-400" />}
-                                    {member.qtime && <InfoItem icon={LogOut} label="退团时间" value={formatDate(member.qtime)} colorClass="text-red-500 dark:text-red-400" />}
+                                    <InfoItem icon={Layers} label={t('期数')} value={member.periodName} colorClass="text-blue-600 dark:text-blue-400" />
+                                    {member.rank && <InfoItem icon={Trophy} label={t('最高排名')} value={member.rank} colorClass="text-amber-600 dark:text-amber-400" />}
+                                    {member.jtime && <InfoItem icon={CalendarDays} label={t('加入时间')} value={formatDate(member.jtime)} colorClass="text-emerald-600 dark:text-emerald-400" />}
+                                    {member.ptime && <InfoItem icon={ArrowUpCircle} label={t('升格时间')} value={formatDate(member.ptime)} colorClass="text-purple-600 dark:text-purple-400" />}
+                                    {member.gtime && <InfoItem icon={GraduationCap} label={t('毕业时间')} value={formatDate(member.gtime)} colorClass="text-indigo-600 dark:text-indigo-400" />}
+                                    {member.qtime && <InfoItem icon={LogOut} label={t('退团时间')} value={formatDate(member.qtime)} colorClass="text-red-500 dark:text-red-400" />}
                                 </div>
                             </div>
 
                             <div className="animate-content" style={{ animationDelay: '0.15s' }}>
-                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center dark:text-gray-500"><Hash className="w-3.5 h-3.5 mr-1.5" />技术参数</h4>
+                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center dark:text-gray-500"><Hash className="w-3.5 h-3.5 mr-1.5" />{t('技术参数')}</h4>
                                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                    <InfoItem icon={Hash} label="口袋 ID" value={member.id} colorClass="font-mono text-gray-600 dark:text-gray-300" isCopyable={true} />
-                                    <InfoItem icon={Hash} label="服务器 ID" value={member.serverId} colorClass="font-mono text-gray-600 dark:text-gray-300" isCopyable={true} />
-                                    <InfoItem icon={Hash} label="大房间 ID" value={member.channelId} colorClass="font-mono text-gray-600 dark:text-gray-300" isCopyable={true} />
-                                    {member.yklzId && <InfoItem icon={Hash} label="小房间 ID" value={member.yklzId} colorClass="font-mono text-gray-600 dark:text-gray-300" isCopyable={true} />}
-                                    {member.wbName && <InfoItem icon={UserCircle} label="微博名" value={member.wbName} isCopyable={true} />}
-                                    {member.wbUid && <InfoItem icon={Hash} label="微博 UID" value={member.wbUid} colorClass="font-mono text-gray-600 dark:text-gray-300" isCopyable={true} />}
+                                    <InfoItem icon={Hash} label={t('口袋 ID')} value={member.id} colorClass="font-mono text-gray-600 dark:text-gray-300" isCopyable={true} />
+                                    <InfoItem icon={Hash} label={t('服务器 ID')} value={member.serverId} colorClass="font-mono text-gray-600 dark:text-gray-300" isCopyable={true} />
+                                    <InfoItem icon={Hash} label={t('大房间 ID')} value={member.channelId} colorClass="font-mono text-gray-600 dark:text-gray-300" isCopyable={true} />
+                                    {member.yklzId && <InfoItem icon={Hash} label={t('小房间 ID')} value={member.yklzId} colorClass="font-mono text-gray-600 dark:text-gray-300" isCopyable={true} />}
+                                    {member.wbName && <InfoItem icon={UserCircle} label={t('微博名')} value={member.wbName} isCopyable={true} />}
+                                    {member.wbUid && <InfoItem icon={Hash} label={t('微博 UID')} value={member.wbUid} colorClass="font-mono text-gray-600 dark:text-gray-300" isCopyable={true} />}
                                 </div>
                             </div>
                             {photoEntries.length > 0 && (
                                 <div className="animate-content" style={{ animationDelay: '0.18s' }}>
-                                    <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center dark:text-gray-500"><UserSquare2 className="w-3.5 h-3.5 mr-1.5" />公式照</h4>
+                                    <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center dark:text-gray-500"><UserSquare2 className="w-3.5 h-3.5 mr-1.5" />{t('公式照')}</h4>
                                     <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                                         {photoEntries.map(([label, url]) => (
                                             <button
@@ -935,7 +950,7 @@
                             )}
                             {member.note && (
                                 <div className="animate-content" style={{ animationDelay: '0.2s' }}>
-                                    <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 flex items-center dark:text-gray-500"><FileText className="w-3.5 h-3.5 mr-1.5" />备注</h4>
+                                    <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 flex items-center dark:text-gray-500"><FileText className="w-3.5 h-3.5 mr-1.5" />{t('备注')}</h4>
                                     <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100 text-sm text-yellow-800 leading-relaxed dark:bg-yellow-900/20 dark:border-yellow-900/30 dark:text-yellow-200">{member.note}</div>
                                 </div>
                             )}
@@ -1018,6 +1033,7 @@
         };
 
         function App() {
+            const currentLocale = useYayaLocale();
             const persistedUiState = useMemo(() => getInitialDatabaseUiState(), []);
             const [members, setMembers] = useState(DEMO_DATA);
             const [zxData, setZxData] = useState([]);
@@ -1155,7 +1171,7 @@
                         const data = await fetchJson(DATA_URLS.members);
                         const membersData = Array.isArray(data) ? data : (data.roomId || []);
                         if (!Array.isArray(membersData)) {
-                            throw new Error('成员数据格式不正确');
+                            throw new Error(t('成员数据格式不正确'));
                         }
                         if (cancelled) return;
                         setMembers(membersData);
@@ -1165,7 +1181,7 @@
                         console.error("Failed to fetch members data:", err);
                         if (cancelled) return;
                         setIsDataLoaded(true);
-                        setStatus('members', { status: 'error', error: err.message || '加载失败', count: 0 });
+                        setStatus('members', { status: 'error', error: err.message || t('加载失败'), count: 0 });
                     }
                 };
 
@@ -1174,7 +1190,7 @@
                         setStatus('elections', { status: 'loading', error: '' });
                         const data = await fetchJson(DATA_URLS.zx);
                         if (!Array.isArray(data)) {
-                            throw new Error('总选数据格式不正确');
+                            throw new Error(t('总选数据格式不正确'));
                         }
                         if (cancelled) return;
                         setZxData(data);
@@ -1187,7 +1203,7 @@
                     } catch (err) {
                         console.error("Failed to fetch election data:", err);
                         if (cancelled) return;
-                        setStatus('elections', { status: 'error', error: err.message || '加载失败', count: 0 });
+                        setStatus('elections', { status: 'error', error: err.message || t('加载失败'), count: 0 });
                     }
                 };
 
@@ -1196,7 +1212,7 @@
                         setStatus('stages', { status: 'loading', error: '' });
                         const data = await fetchJson(DATA_URLS.stages);
                         if (!Array.isArray(data)) {
-                            throw new Error('公演数据格式不正确');
+                            throw new Error(t('公演数据格式不正确'));
                         }
                         if (cancelled) return;
                         setStagesData(data);
@@ -1204,7 +1220,7 @@
                     } catch (err) {
                         console.error("Failed to fetch stages data:", err);
                         if (cancelled) return;
-                        setStatus('stages', { status: 'error', error: err.message || '加载失败', count: 0 });
+                        setStatus('stages', { status: 'error', error: err.message || t('加载失败'), count: 0 });
                     }
                 };
 
@@ -1213,7 +1229,7 @@
                         setStatus('albums', { status: 'loading', error: '' });
                         const data = await fetchJson(DATA_URLS.fxzp);
                         if (!Array.isArray(data)) {
-                            throw new Error('发行作品数据格式不正确');
+                            throw new Error(t('发行作品数据格式不正确'));
                         }
                         if (cancelled) return;
                         setFxzpData(data);
@@ -1223,7 +1239,7 @@
                         console.error("Failed to fetch albums data:", err);
                         if (cancelled) return;
                         setFxzpError(err.message);
-                        setStatus('albums', { status: 'error', error: err.message || '加载失败', count: 0 });
+                        setStatus('albums', { status: 'error', error: err.message || t('加载失败'), count: 0 });
                     }
                 };
 
@@ -1268,19 +1284,19 @@
                     if (indexB !== -1) return 1;
                     return a.localeCompare(b);
                 });
-                return [{ value: 'ALL', label: '所有分团' }, ...sortedGroups.map(g => ({ value: g, label: g }))];
-            }, [members]);
+                return [{ value: 'ALL', label: t('所有分团') }, ...sortedGroups.map(g => ({ value: g, label: t(g) }))];
+            }, [members, currentLocale]);
 
             const editionOptions = useMemo(() => {
                 const uniqueEditions = [...new Set(zxData.map(item => item.届数))];
                 uniqueEditions.sort((a, b) => parseInt(b) - parseInt(a));
-                return uniqueEditions.map(e => ({ value: e, label: `${e}选` }));
-            }, [zxData]);
+                return uniqueEditions.map(e => ({ value: e, label: t('database.electionEdition', { edition: e }) }));
+            }, [zxData, currentLocale]);
 
             const stageGroupOptions = useMemo(() => {
                 const uniqueGroups = [...new Set(stagesData.map(s => s.分团).filter(Boolean))];
-                return [{ value: 'ALL', label: '所有分团' }, ...uniqueGroups.map(g => ({ value: g, label: g }))];
-            }, [stagesData]);
+                return [{ value: 'ALL', label: t('所有分团') }, ...uniqueGroups.map(g => ({ value: g, label: t(g) }))];
+            }, [stagesData, currentLocale]);
 
             const stageTeamOptions = useMemo(() => {
                 let filteredStages = stagesData;
@@ -1288,8 +1304,8 @@
                     filteredStages = stagesData.filter(s => s.分团 === stageGroupFilter);
                 }
                 const uniqueTeams = [...new Set(filteredStages.map(s => s.队伍).filter(Boolean))];
-                return [{ value: 'ALL', label: '所有队伍' }, ...uniqueTeams.map(t => ({ value: t, label: t }))];
-            }, [stagesData, stageGroupFilter]);
+                return [{ value: 'ALL', label: t('所有队伍') }, ...uniqueTeams.map(team => ({ value: team, label: t(team) }))];
+            }, [stagesData, stageGroupFilter, currentLocale]);
 
             const albumGroupOptions = useMemo(() => {
                 const uniqueGroups = [...new Set(fxzpData.map(a => a.分团).filter(Boolean))];
@@ -1305,13 +1321,13 @@
                     return a.localeCompare(b);
                 });
 
-                return [{ value: 'ALL', label: '所有分团' }, ...sortedGroups.map(g => ({ value: g, label: g }))];
-            }, [fxzpData]);
+                return [{ value: 'ALL', label: t('所有分团') }, ...sortedGroups.map(g => ({ value: g, label: t(g) }))];
+            }, [fxzpData, currentLocale]);
 
             const albumTypeOptions = useMemo(() => {
                 const uniqueTypes = [...new Set(fxzpData.map(a => a.类型).filter(Boolean))];
-                return [{ value: 'ALL', label: '所有类型' }, ...uniqueTypes.sort().map(t => ({ value: t, label: t }))];
-            }, [fxzpData]);
+                return [{ value: 'ALL', label: t('所有类型') }, ...uniqueTypes.sort().map(type => ({ value: type, label: t(type) }))];
+            }, [fxzpData, currentLocale]);
 
 
             const categorizedMembers = useMemo(() => {
@@ -1387,7 +1403,7 @@
                         item.分团,
                         item.名称
                     ], electionSearch));
-                    name = `搜索 "${electionSearch}" 的结果`;
+                    name = t('database.searchResult', { query: electionSearch });
                 } else {
                     filtered = zxData.filter(item => {
                         const matchEdition = item.届数 === selectedEdition;
@@ -1424,7 +1440,7 @@
                 }
 
                 return { regularElectionData: regular, newcomerElectionData: newcomer, electionName: name, isSearchResult: isSearch };
-            }, [zxData, selectedEdition, electionSearch]);
+            }, [zxData, selectedEdition, electionSearch, currentLocale]);
 
             const filteredStages = useMemo(() => {
                 const filtered = stagesData.filter(stage => {
@@ -1506,7 +1522,7 @@
                                 >
                                     <div className="flex items-center justify-center gap-2">
                                         <UserSquare2 className="w-4 h-4" />
-                                        成员图鉴
+                                        {t('成员图鉴')}
                                     </div>
                                 </button>
                                 <button
@@ -1518,7 +1534,7 @@
                                 >
                                     <div className="flex items-center justify-center gap-2">
                                         <Trophy className="w-4 h-4" />
-                                        总选记录
+                                        {t('总选记录')}
                                     </div>
                                 </button>
                                 <button
@@ -1530,7 +1546,7 @@
                                 >
                                     <div className="flex items-center justify-center gap-2">
                                         <Music className="w-4 h-4" />
-                                        公演数据
+                                        {t('公演数据')}
                                     </div>
                                 </button>
                                 <button
@@ -1542,7 +1558,7 @@
                                 >
                                     <div className="flex items-center justify-center gap-2">
                                         <Disc className="w-4 h-4" />
-                                        发行作品
+                                        {t('发行作品')}
                                     </div>
                                 </button>
                             </div>
@@ -1556,15 +1572,15 @@
                                 {datasetStatus.members.status === 'loading' && members.length === 0 && (
                                     <DatabaseSectionPlaceholder
                                         icon={Users}
-                                        title="成员数据加载中"
-                                        detail="成员图鉴、在团状态和队伍信息正在同步。"
+                                        title={t('成员数据加载中')}
+                                        detail={t('成员图鉴、在团状态和队伍信息正在同步。')}
                                     />
                                 )}
                                 {datasetStatus.members.status === 'error' && members.length === 0 && (
                                     <DatabaseSectionPlaceholder
                                         icon={AlertCircle}
-                                        title="成员数据加载失败"
-                                        detail={datasetStatus.members.error || '请稍后重试'}
+                                        title={t('成员数据加载失败')}
+                                        detail={datasetStatus.members.error || t('请稍后重试')}
                                     />
                                 )}
                                 {datasetStatus.members.status !== 'loading' && datasetStatus.members.status !== 'error' && (
@@ -1577,7 +1593,7 @@
                                                     </div>
                                                     <input
                                                         type="text"
-                                                        placeholder="搜索成员姓名、拼音、首字母或期数..."
+                                                        placeholder={t('搜索成员姓名、拼音、首字母或期数...')}
                                                         className="w-full pl-10 pr-4 py-3 bg-gray-100 border-transparent text-gray-900 rounded-full focus:bg-white focus:ring-2 focus:ring-pink-300 focus:border-transparent focus:shadow-md outline-none transition-all duration-300 ease-in-out placeholder-gray-500 dark:bg-gray-800 dark:text-white dark:placeholder-gray-500 dark:focus:bg-gray-750 dark:focus:ring-pink-500"
                                                         value={searchTerm}
                                                         onChange={(e) => setSearchTerm(e.target.value)}
@@ -1586,12 +1602,12 @@
                                                 <div className="flex flex-col sm:flex-row gap-2">
                                                     <CustomSelect options={groupOptions} value={selectedGroup} onChange={setSelectedGroup} />
                                                     <div className="bg-gray-100 p-1 rounded-full flex sm:w-auto w-full dark:bg-gray-800">
-                                                        <button onClick={() => setSortBy('period')} className={`flex-1 sm:flex-none px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition-all duration-200 ${sortBy === 'period' ? 'bg-white shadow text-pink-600 dark:bg-gray-700 dark:text-pink-400' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'}`}>按期数</button>
-                                                        <button onClick={() => setSortBy('team')} className={`flex-1 sm:flex-none px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition-all duration-200 ${sortBy === 'team' ? 'bg-white shadow text-pink-600 dark:bg-gray-700 dark:text-pink-400' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'}`}>按队伍</button>
+                                                        <button onClick={() => setSortBy('period')} className={`flex-1 sm:flex-none px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition-all duration-200 ${sortBy === 'period' ? 'bg-white shadow text-pink-600 dark:bg-gray-700 dark:text-pink-400' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'}`}>{t('按期数')}</button>
+                                                        <button onClick={() => setSortBy('team')} className={`flex-1 sm:flex-none px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition-all duration-200 ${sortBy === 'team' ? 'bg-white shadow text-pink-600 dark:bg-gray-700 dark:text-pink-400' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'}`}>{t('按队伍')}</button>
                                                     </div>
                                                     <div className="bg-gray-100 p-1 rounded-full flex sm:w-auto w-full dark:bg-gray-800">
-                                                        <button onClick={() => setStatusFilter('ALL')} className={`flex-1 sm:flex-none px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition-all duration-200 ${statusFilter === 'ALL' ? 'bg-white shadow text-pink-600 dark:bg-gray-700 dark:text-pink-400' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'}`}>全部</button>
-                                                        <button onClick={() => setStatusFilter('ACTIVE')} className={`flex-1 sm:flex-none px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition-all duration-200 ${statusFilter === 'ACTIVE' ? 'bg-white shadow text-green-600 dark:bg-gray-700 dark:text-green-400' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'}`}>只看在团</button>
+                                                        <button onClick={() => setStatusFilter('ALL')} className={`flex-1 sm:flex-none px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition-all duration-200 ${statusFilter === 'ALL' ? 'bg-white shadow text-pink-600 dark:bg-gray-700 dark:text-pink-400' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'}`}>{t('全部')}</button>
+                                                        <button onClick={() => setStatusFilter('ACTIVE')} className={`flex-1 sm:flex-none px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition-all duration-200 ${statusFilter === 'ACTIVE' ? 'bg-white shadow text-green-600 dark:bg-gray-700 dark:text-green-400' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'}`}>{t('只看在团')}</button>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1603,9 +1619,9 @@
                                             <div key={groupData.groupName} className="animate-fadeIn">
                                                 <div className="flex items-center mb-6 pb-2 border-b border-gray-200 dark:border-gray-800">
                                                     <span className="w-2 h-8 rounded-full mr-3" style={{ backgroundColor: getGroupAccentColor(groupData.groupName) }}></span>
-                                                    <h2 className="text-2xl font-bold" style={{ color: getGroupAccentColor(groupData.groupName) }}>{groupData.groupName}</h2>
+                                                    <h2 className="text-2xl font-bold" style={{ color: getGroupAccentColor(groupData.groupName) }}>{t(groupData.groupName)}</h2>
                                                     <span className="ml-3 px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full font-medium dark:bg-gray-800 dark:text-gray-400">
-                                                        {groupData.subGroups.reduce((acc, p) => acc + p.members.length, 0)} 人
+                                                        {t('database.memberCount', { count: groupData.subGroups.reduce((acc, p) => acc + p.members.length, 0) })}
                                                     </span>
                                                 </div>
                                                 <div className="space-y-8 pl-0 md:pl-5">
@@ -1613,7 +1629,7 @@
                                                         <div key={subGroupData.name}>
                                                             <h3 className={`text-sm font-bold uppercase tracking-wider mb-3 flex items-center ${sortBy === 'team' ? getTeamStyle(subGroupData.name).split(' ')[0] : 'text-gray-500 dark:text-gray-400'}`}>
                                                                 {sortBy === 'period' && <Calendar className="w-4 h-4 mr-2 text-gray-400 dark:text-gray-500" />}
-                                                                {subGroupData.name}
+                                                                {t(subGroupData.name)}
                                                             </h3>
                                                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-3">
                                                                 {subGroupData.members.map(member => (
@@ -1629,8 +1645,8 @@
                                 ) : (
                                     <div className="text-center py-20 bg-white rounded-xl border border-dashed border-gray-300 dark:bg-gray-800 dark:border-gray-700">
                                         <Users className="w-12 h-12 text-gray-300 mx-auto mb-4 dark:text-gray-600" />
-                                        <h3 className="text-lg font-medium text-gray-900 dark:text-gray-200">未找到成员</h3>
-                                        <p className="text-gray-500 mt-1 dark:text-gray-400">尝试调整搜索词或筛选条件</p>
+                                        <h3 className="text-lg font-medium text-gray-900 dark:text-gray-200">{t('未找到成员')}</h3>
+                                        <p className="text-gray-500 mt-1 dark:text-gray-400">{t('尝试调整搜索词或筛选条件')}</p>
                                     </div>
                                 )}
                                     </>
@@ -1643,14 +1659,14 @@
                                 {datasetStatus.elections.status === 'loading' && zxData.length === 0 ? (
                                     <DatabaseSectionPlaceholder
                                         icon={Trophy}
-                                        title="总选数据加载中"
-                                        detail="历届总选和新人榜正在整理。"
+                                        title={t('总选数据加载中')}
+                                        detail={t('历届总选和新人榜正在整理。')}
                                     />
                                 ) : datasetStatus.elections.status === 'error' && zxData.length === 0 ? (
                                     <DatabaseSectionPlaceholder
                                         icon={AlertCircle}
-                                        title="总选数据加载失败"
-                                        detail={datasetStatus.elections.error || '请稍后重试'}
+                                        title={t('总选数据加载失败')}
+                                        detail={datasetStatus.elections.error || t('请稍后重试')}
                                     />
                                 ) : (
                                     <>
@@ -1662,7 +1678,7 @@
                                             </div>
                                             <input
                                                 type="text"
-                                                placeholder="搜索成员姓名、拼音或首字母..."
+                                                placeholder={t('搜索成员姓名、拼音或首字母...')}
                                                 className="w-full pl-10 pr-4 py-3 bg-gray-100 border-transparent text-gray-900 rounded-full focus:bg-white focus:ring-2 focus:ring-pink-300 focus:border-transparent focus:shadow-md outline-none transition-all duration-300 ease-in-out placeholder-gray-500 dark:bg-gray-800 dark:text-white dark:placeholder-gray-500 dark:focus:bg-gray-750 dark:focus:ring-pink-500"
                                                 value={electionSearch}
                                                 onChange={(e) => setElectionSearch(e.target.value)}
@@ -1685,7 +1701,7 @@
                                                 <div className="flex items-center gap-2">
                                                     <Trophy className="w-5 h-5 text-yellow-500" />
                                                     <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 whitespace-nowrap">
-                                                        {electionName ? `${electionName}` : `第 ${selectedEdition} 届总选结果`}
+                                                        {electionName || t('database.electionResult', { edition: selectedEdition })}
                                                     </h2>
                                                 </div>
                                             </div>
@@ -1702,7 +1718,7 @@
                                             <div className="flex items-center gap-2 mb-4 mt-8 pt-6 border-t border-gray-100 dark:border-gray-800">
                                                 <Sparkles className="w-5 h-5 text-pink-500" />
                                                 <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100">
-                                                    新人 TOP16
+                                                    {t('新人 TOP16')}
                                                 </h2>
                                             </div>
                                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1716,8 +1732,8 @@
                                     {regularElectionData.length === 0 && newcomerElectionData.length === 0 && (
                                         <div className="text-center py-20 bg-white rounded-xl border border-dashed border-gray-300 dark:bg-gray-800 dark:border-gray-700">
                                             <Trophy className="w-12 h-12 text-gray-300 mx-auto mb-4 dark:text-gray-600" />
-                                            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-200">无相关数据</h3>
-                                            <p className="text-gray-500 mt-1 dark:text-gray-400">请尝试切换届数或搜索其他关键词</p>
+                                            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-200">{t('无相关数据')}</h3>
+                                            <p className="text-gray-500 mt-1 dark:text-gray-400">{t('请尝试切换届数或搜索其他关键词')}</p>
                                         </div>
                                     )}
                                 </div>
@@ -1731,14 +1747,14 @@
                                 {datasetStatus.stages.status === 'loading' && stagesData.length === 0 ? (
                                     <DatabaseSectionPlaceholder
                                         icon={Music}
-                                        title="公演数据加载中"
-                                        detail="公演时间线和队伍场次正在同步。"
+                                        title={t('公演数据加载中')}
+                                        detail={t('公演时间线和队伍场次正在同步。')}
                                     />
                                 ) : datasetStatus.stages.status === 'error' && stagesData.length === 0 ? (
                                     <DatabaseSectionPlaceholder
                                         icon={AlertCircle}
-                                        title="公演数据加载失败"
-                                        detail={datasetStatus.stages.error || '请稍后重试'}
+                                        title={t('公演数据加载失败')}
+                                        detail={datasetStatus.stages.error || t('请稍后重试')}
                                     />
                                 ) : (
                                     <>
@@ -1750,7 +1766,7 @@
                                             </div>
                                             <input
                                                 type="text"
-                                                placeholder="搜索公演名称、拼音或首字母..."
+                                                placeholder={t('搜索公演名称、拼音或首字母...')}
                                                 className="w-full pl-10 pr-4 py-3 bg-gray-100 border-transparent text-gray-900 rounded-full focus:bg-white focus:ring-2 focus:ring-pink-300 focus:border-transparent focus:shadow-md outline-none transition-all duration-300 ease-in-out placeholder-gray-500 dark:bg-gray-800 dark:text-white dark:placeholder-gray-500 dark:focus:bg-gray-750 dark:focus:ring-pink-500"
                                                 value={stageSearch}
                                                 onChange={(e) => setStageSearch(e.target.value)}
@@ -1790,8 +1806,8 @@
                                     ) : (
                                         <div className="col-span-full text-center py-20 bg-white rounded-xl border border-dashed border-gray-300 dark:bg-gray-800 dark:border-gray-700 relative z-20 ml-10 md:ml-0">
                                             <Music className="w-12 h-12 text-gray-300 mx-auto mb-4 dark:text-gray-600" />
-                                            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-200">无相关公演</h3>
-                                            <p className="text-gray-500 mt-1 dark:text-gray-400">请尝试调整筛选条件</p>
+                                            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-200">{t('无相关公演')}</h3>
+                                            <p className="text-gray-500 mt-1 dark:text-gray-400">{t('请尝试调整筛选条件')}</p>
                                         </div>
                                     )}
                                 </div>
@@ -1805,8 +1821,8 @@
                                 {datasetStatus.albums.status === 'loading' && fxzpData.length === 0 ? (
                                     <DatabaseSectionPlaceholder
                                         icon={Disc}
-                                        title="发行作品加载中"
-                                        detail="专辑、单曲和歌词索引正在同步。"
+                                        title={t('发行作品加载中')}
+                                        detail={t('专辑、单曲和歌词索引正在同步。')}
                                     />
                                 ) : (
                                     <>
@@ -1818,7 +1834,7 @@
                                             </div>
                                             <input
                                                 type="text"
-                                                placeholder="搜索专辑、歌曲、拼音或首字母..."
+                                                placeholder={t('搜索专辑、歌曲、拼音或首字母...')}
                                                 className="w-full pl-10 pr-4 py-3 bg-gray-100 border-transparent text-gray-900 rounded-full focus:bg-white focus:ring-2 focus:ring-pink-300 focus:border-transparent focus:shadow-md outline-none transition-all duration-300 ease-in-out placeholder-gray-500 dark:bg-gray-800 dark:text-white dark:placeholder-gray-500 dark:focus:bg-gray-750 dark:focus:ring-pink-500"
                                                 value={albumSearch}
                                                 onChange={(e) => setAlbumSearch(e.target.value)}
@@ -1842,7 +1858,7 @@
                                         <div className="flex items-center p-4 mb-4 text-sm text-red-800 border border-red-300 rounded-lg bg-red-50 dark:bg-gray-800 dark:text-red-400 dark:border-red-800">
                                             <AlertCircle className="flex-shrink-0 inline w-4 h-4 mr-3" />
                                             <div>
-                                                <span className="font-medium">数据加载失败!</span> {fxzpError}. 请检查 JSON 文件格式。
+                                                 <span className="font-medium">{t('数据加载失败!')}</span> {fxzpError}. {t('请检查 JSON 文件格式。')}
                                             </div>
                                         </div>
                                     )}
@@ -1850,14 +1866,14 @@
                                     {albumSearch && (
                                         <div className="text-center mt-2 pb-2">
                                             <p className="text-xs text-gray-500 dark:text-gray-400">
-                                                想搜索歌词内容？
+                                                 {t('想搜索歌词内容？')}
                                                 <a
                                                     href={`${LYRICS_SEARCH_URL}${encodeURIComponent(albumSearch)}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
                                                     className="text-pink-500 hover:underline ml-1 inline-flex items-center"
                                                 >
-                                                    在歌词仓库中搜索 "{albumSearch}" <ExternalLink className="w-3 h-3 ml-0.5" />
+                                                     {t('database.searchLyricsRepo', { query: albumSearch })} <ExternalLink className="w-3 h-3 ml-0.5" />
                                                 </a>
                                             </p>
                                         </div>
@@ -1872,8 +1888,8 @@
                                     ) : (
                                         <div className="col-span-full text-center py-20 bg-white rounded-xl border border-dashed border-gray-300 dark:bg-gray-800 dark:border-gray-700">
                                             <Disc className="w-12 h-12 text-gray-300 mx-auto mb-4 dark:text-gray-600" />
-                                            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-200">无相关作品</h3>
-                                            <p className="text-gray-500 mt-1 dark:text-gray-400">请尝试搜索其他关键词或调整筛选</p>
+                                             <h3 className="text-lg font-medium text-gray-900 dark:text-gray-200">{t('无相关作品')}</h3>
+                                             <p className="text-gray-500 mt-1 dark:text-gray-400">{t('请尝试搜索其他关键词或调整筛选')}</p>
 
                                             {albumSearch && (
                                                 <a
@@ -1883,7 +1899,7 @@
                                                     className="mt-4 inline-flex items-center px-4 py-2 bg-pink-50 text-pink-600 rounded-full text-sm font-medium hover:bg-pink-100 transition-colors dark:bg-pink-900/30 dark:text-pink-300 dark:hover:bg-pink-900/50"
                                                 >
                                                     <Search className="w-4 h-4 mr-2" />
-                                                    去歌词库搜索
+                                                     {t('去歌词库搜索')}
                                                 </a>
                                             )}
                                         </div>

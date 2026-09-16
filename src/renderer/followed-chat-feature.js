@@ -44,6 +44,9 @@
         let followedPendingHtml = '';
         let followedPendingCount = 0;
         let followedPendingMessageIds = new Set();
+        let followedRoomEssenceMessages = [];
+        let followedRoomEssenceIndex = 0;
+        let followedRoomEssenceRequestRevision = 0;
         let followedGiftCacheSaveTimer = null;
         let activeFollowedFallbackAvatarUrl = '';
         let followedUserProfileRequestToken = 0;
@@ -56,6 +59,462 @@
         const followedProfileDynamicStatsRequests = new Map();
         const followedProfileDynamicCommentStateMap = new Map();
         const FOLLOWED_CHAT_REQUEST_TIMEOUT_MS = 20000;
+        const WEB_MEMBER_ROOM_RECONNECT_AFTER_MS = 9 * 60 * 1000;
+        let memberRoomConnectionId = '';
+        let memberRoomConnected = false;
+        let memberRoomConnectedAt = 0;
+        let memberRoomAccountId = '';
+        let memberRoomAccountName = '';
+        let memberRoomTargetServer = '';
+        let memberRoomTargetChannel = '';
+        let memberRoomConnectPromise = null;
+        let memberRoomComposerReconnectPromise = null;
+        let memberRoomConnectionGeneration = 0;
+        let memberRoomComposerSending = false;
+        let memberRoomReplyTarget = null;
+        let memberRoomContextMenu = null;
+        const memberRoomMessageActions = new Map();
+
+        function isMemberRoomSendingAvailable() {
+            return Boolean(ipcRenderer && typeof ipcRenderer.invoke === 'function');
+        }
+
+        function reconnectMemberRoomFromComposer() {
+            const webSessionNeedsRefresh = window.desktop?.platform === 'web'
+                && memberRoomConnected
+                && memberRoomConnectedAt > 0
+                && Date.now() - memberRoomConnectedAt >= WEB_MEMBER_ROOM_RECONNECT_AFTER_MS;
+            if ((memberRoomConnected && !webSessionNeedsRefresh) || memberRoomComposerReconnectPromise) return;
+            if (!activeFollowedServer || !activeFollowedChannel) return;
+            if (webSessionNeedsRefresh) memberRoomConnected = false;
+            memberRoomComposerReconnectPromise = Promise.resolve()
+                .then(() => ensureMemberRoomConnection())
+                .catch(error => {
+                    console.warn('[成员房间] 点击输入框重连失败:', formatMemberRoomError(error));
+                })
+                .finally(() => {
+                    memberRoomComposerReconnectPromise = null;
+                });
+        }
+
+        function getMemberRoomComposerElements() {
+            return {
+                form: document.getElementById('followed-room-composer'),
+                input: document.getElementById('followed-room-message-input'),
+                button: document.getElementById('followed-room-message-send'),
+                replyPreview: document.getElementById('followed-room-reply-preview'),
+                replyName: document.getElementById('followed-room-reply-name'),
+                replyText: document.getElementById('followed-room-reply-text')
+            };
+        }
+
+        function setMemberRoomComposerState(state, message) {
+            const elements = getMemberRoomComposerElements();
+            if (!elements.form) return;
+            elements.form.dataset.state = state;
+            const connectedMessage = '已连接';
+            if (elements.input) {
+                let inlineMessage = message || (state === 'connected'
+                    ? connectedMessage
+                    : (state === 'connecting' ? '正在连接成员房间' : '未连接'));
+                if (state === 'connected' && message === '正在发送') {
+                    inlineMessage = '正在发送';
+                } else if (state === 'connected' && message === '已发送') {
+                    inlineMessage = '已发送';
+                }
+                elements.input.placeholder = inlineMessage;
+                elements.input.setAttribute('aria-label', inlineMessage);
+            }
+            if (elements.button) {
+                elements.button.disabled = state !== 'connected' || memberRoomComposerSending;
+                elements.button.textContent = memberRoomComposerSending ? '发送中' : '发送';
+            }
+        }
+
+        function ensureMemberRoomComposer() {
+            if (!isMemberRoomSendingAvailable()) return null;
+            const existing = document.getElementById('followed-room-composer');
+            if (existing) return existing;
+            const messages = document.getElementById('followed-chat-messages');
+            if (!messages?.parentElement) return null;
+            const composerHost = messages.closest('.followed-chat-pane') || messages.parentElement;
+
+            const form = document.createElement('form');
+            form.id = 'followed-room-composer';
+            form.className = 'followed-room-composer';
+            form.style.display = 'none';
+            form.innerHTML = `
+                <div id="followed-room-reply-preview" class="followed-room-reply-preview" hidden>
+                    <div class="followed-room-reply-copy">
+                        <span id="followed-room-reply-name" class="followed-room-reply-name"></span>
+                        <span id="followed-room-reply-text" class="followed-room-reply-text"></span>
+                    </div>
+                    <button type="button" class="followed-room-reply-close" aria-label="取消回复">×</button>
+                </div>
+                <div class="followed-room-composer-row">
+                    <div class="followed-room-message-field">
+                        <textarea id="followed-room-message-input" class="followed-room-message-input"
+                            rows="2" autocomplete="off"
+                            placeholder="正在连接成员房间"></textarea>
+                    </div>
+                    <button id="followed-room-message-send" class="btn btn-primary followed-room-message-send"
+                        type="submit" disabled>发送</button>
+                </div>`;
+            composerHost.appendChild(form);
+            form.addEventListener('submit', event => {
+                event.preventDefault();
+                void sendActiveMemberRoomMessage();
+            });
+            const input = form.querySelector('.followed-room-message-input');
+            input?.addEventListener('pointerdown', reconnectMemberRoomFromComposer);
+            input?.addEventListener('focus', reconnectMemberRoomFromComposer);
+            form.querySelector('.followed-room-reply-close')?.addEventListener('click', clearMemberRoomReply);
+            return form;
+        }
+
+        function renderMemberRoomReplyTarget() {
+            const elements = getMemberRoomComposerElements();
+            if (!elements.replyPreview) return;
+            elements.replyPreview.hidden = !memberRoomReplyTarget;
+            if (!memberRoomReplyTarget) return;
+            elements.replyName.textContent = `回复 ${memberRoomReplyTarget.senderName || '用户'}`;
+            elements.replyText.textContent = memberRoomReplyTarget.text || '消息';
+        }
+
+        function clearMemberRoomReply() {
+            memberRoomReplyTarget = null;
+            renderMemberRoomReplyTarget();
+        }
+
+        function setMemberRoomReply(target) {
+            memberRoomReplyTarget = target;
+            renderMemberRoomReplyTarget();
+            getMemberRoomComposerElements().input?.focus();
+        }
+
+        function closeMemberRoomContextMenu() {
+            memberRoomContextMenu?.remove();
+            memberRoomContextMenu = null;
+        }
+
+        function getCurrentMemberRoomIdentityIds() {
+            return new Set([
+                getCurrentUserId(),
+                memberRoomAccountId
+            ].map(value => String(value || '').trim()).filter(Boolean));
+        }
+
+        function isOwnMemberRoomMessage(target) {
+            const currentIdentityIds = getCurrentMemberRoomIdentityIds();
+            const senderIdentityIds = Array.isArray(target?.senderIdentityIds)
+                ? target.senderIdentityIds
+                : [target?.senderUserId];
+            return senderIdentityIds
+                .map(value => String(value || '').trim())
+                .filter(Boolean)
+                .some(identityId => currentIdentityIds.has(identityId));
+        }
+
+        function openMemberRoomContextMenu(event, target) {
+            if (!isMemberRoomSendingAvailable()) return;
+            closeMemberRoomContextMenu();
+            const isOwnMessage = isOwnMemberRoomMessage(target);
+            const actions = [];
+            if (!isOwnMessage && target.canReplyEligible) {
+                actions.push({ label: '回复', run: () => setMemberRoomReply(target) });
+            }
+            if (isOwnMessage && target.canDeleteEligible) {
+                actions.push({ label: '删除', danger: true, run: () => confirmDeleteMemberRoomMessage(target) });
+            }
+            if (!actions.length) return;
+            event.preventDefault();
+            const menu = document.createElement('div');
+            menu.className = 'yaya-context-menu followed-room-message-menu';
+            menu.setAttribute('role', 'menu');
+            actions.forEach(action => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = action.danger
+                    ? 'yaya-context-menu-item yaya-context-menu-danger'
+                    : 'yaya-context-menu-item';
+                button.textContent = action.label;
+                button.addEventListener('click', () => {
+                    closeMemberRoomContextMenu();
+                    action.run();
+                });
+                menu.appendChild(button);
+            });
+            document.body.appendChild(menu);
+            const rect = menu.getBoundingClientRect();
+            menu.style.left = `${Math.max(8, Math.min(event.clientX, window.innerWidth - rect.width - 8))}px`;
+            menu.style.top = `${Math.max(8, Math.min(event.clientY, window.innerHeight - rect.height - 8))}px`;
+            memberRoomContextMenu = menu;
+        }
+
+        async function deleteActiveMemberRoomMessage(target) {
+            const result = await invokeMemberRoomWithReconnect('delete-member-room-message', {
+                channelId: activeFollowedChannel,
+                senderUserId: target.senderUserId,
+                msgIdClient: target.msgIdClient,
+                msgTime: target.msgTime
+            });
+            if (!result?.success) throw new Error(result?.msg || '删除失败');
+            document.querySelector(`.msg-item[data-message-key="${CSS.escape(target.messageKey)}"]`)?.remove();
+            memberRoomMessageActions.delete(target.messageKey);
+            showToast('消息已删除');
+            scheduleMemberRoomHistoryRefresh(activeFollowedServer, activeFollowedChannel, 350);
+        }
+
+        function confirmDeleteMemberRoomMessage(target) {
+            const performDelete = async () => {
+                try {
+                    await deleteActiveMemberRoomMessage(target);
+                } catch (error) {
+                    showToast(formatMemberRoomError(error, '删除失败'));
+                }
+            };
+            showConfirm('确定要删除这条消息吗？', () => { void performDelete(); });
+        }
+
+        function formatMemberRoomError(error, fallback, options = {}) {
+            const code = error?.code || error?.errorCode || error?.status;
+            const rawMessage = String(error?.message || error?.msg || fallback || '操作失败').trim();
+            if (options.sending && (code === 403 || code === 406 || code === 414)) {
+                return `当前账号没有在这个房间发言的权限（${code}）`;
+            }
+            return code ? `${rawMessage}（${code}）` : rawMessage;
+        }
+
+        function isRetryableDesktopMemberRoomConnectionError(error) {
+            if (window.desktop?.platform === 'web') return false;
+            const message = String(error?.message || error?.msg || '');
+            return /云信连接(?:已关闭|已断开|超时)|成员房间连接已断开|ECONNRESET|ETIMEDOUT|socket hang up/i.test(message);
+        }
+
+        async function destroyMemberRoomConnections() {
+            const connectionId = memberRoomConnectionId;
+            memberRoomConnectionId = '';
+            memberRoomConnected = false;
+            memberRoomConnectedAt = 0;
+            memberRoomAccountId = '';
+            memberRoomAccountName = '';
+            memberRoomTargetServer = '';
+            memberRoomTargetChannel = '';
+            clearMemberRoomReply();
+            closeMemberRoomContextMenu();
+            memberRoomConnectPromise = null;
+            memberRoomConnectionGeneration += 1;
+            if (connectionId) {
+                await ipcRenderer.invoke('disconnect-member-room', { connectionId }).catch(() => {});
+            }
+        }
+
+        function scheduleMemberRoomHistoryRefresh(serverId, channelId, delay = 500) {
+            setTimeout(() => {
+                if (String(activeFollowedServer || '') !== String(serverId || '')
+                    || String(activeFollowedChannel || '') !== String(channelId || '')) return;
+                void loadFollowedChatPage(false, true);
+            }, delay);
+        }
+
+        function isExpiredWebMemberRoomConnection(error) {
+            return window.desktop?.platform === 'web'
+                && (Number(error?.status) === 404
+                    || /连接已失效|重新连接/.test(String(error?.message || error?.msg || '')));
+        }
+
+        async function invokeMemberRoomWithReconnect(channel, payload = {}) {
+            let connectionId = await ensureMemberRoomConnection();
+            try {
+                return await ipcRenderer.invoke(channel, { ...payload, connectionId });
+            } catch (error) {
+                if (!isExpiredWebMemberRoomConnection(error)) throw error;
+                memberRoomConnected = false;
+                memberRoomConnectionId = '';
+                memberRoomConnectPromise = null;
+                connectionId = await ensureMemberRoomConnection();
+                return ipcRenderer.invoke(channel, { ...payload, connectionId });
+            }
+        }
+
+        async function ensureMemberRoomConnection() {
+            if (!isMemberRoomSendingAvailable()) throw new Error('当前环境不支持成员房间发言');
+            const pocketToken = String(getAppToken() || '').trim();
+            if (!pocketToken) {
+                await destroyMemberRoomConnections();
+                throw new Error('请先登录口袋48账号');
+            }
+            const serverId = String(activeFollowedServer || '');
+            const channelId = String(activeFollowedChannel || '');
+            if (memberRoomConnected
+                && memberRoomTargetServer === serverId
+                && memberRoomTargetChannel === channelId) {
+                setMemberRoomComposerState('connected', '已连接');
+                return memberRoomConnectionId;
+            }
+            if (memberRoomConnectPromise
+                && memberRoomTargetServer === serverId
+                && memberRoomTargetChannel === channelId) return memberRoomConnectPromise;
+            if (memberRoomConnectionId || memberRoomConnectPromise) {
+                await destroyMemberRoomConnections();
+            }
+
+            const generation = ++memberRoomConnectionGeneration;
+            const connectionId = `member-${Date.now()}-${generation}`;
+            memberRoomConnectionId = connectionId;
+            memberRoomTargetServer = serverId;
+            memberRoomTargetChannel = channelId;
+            setMemberRoomComposerState('connecting', '正在连接成员房间');
+            memberRoomConnectPromise = (async () => {
+                const retryDelays = [0, 500, 1200];
+                let result;
+                for (let attempt = 0; attempt < retryDelays.length; attempt += 1) {
+                    if (retryDelays[attempt] > 0) {
+                        setMemberRoomComposerState('connecting', '正在重新连接成员房间');
+                        await new Promise(resolve => setTimeout(resolve, retryDelays[attempt]));
+                    }
+                    if (generation !== memberRoomConnectionGeneration
+                        || serverId !== String(activeFollowedServer || '')
+                        || channelId !== String(activeFollowedChannel || '')) {
+                        throw new Error('成员房间连接已取消');
+                    }
+                    try {
+                        result = await ipcRenderer.invoke('connect-member-room', {
+                            connectionId,
+                            serverId,
+                            channelId,
+                            token: pocketToken
+                        });
+                        break;
+                    } catch (error) {
+                        if (!isRetryableDesktopMemberRoomConnectionError(error)
+                            || attempt === retryDelays.length - 1) {
+                            throw error;
+                        }
+                        console.warn(`[成员房间] 云信连接失败，准备第 ${attempt + 2} 次尝试`, {
+                            message: String(error?.message || error?.msg || '')
+                        });
+                    }
+                }
+                if (!result?.success) throw new Error(result?.msg || '成员房间连接失败');
+                if (generation !== memberRoomConnectionGeneration) throw new Error('成员房间连接已取消');
+                const resolvedConnectionId = String(result.connectionId || result.sessionId || connectionId);
+                memberRoomConnectionId = resolvedConnectionId;
+                memberRoomConnected = true;
+                memberRoomConnectedAt = Date.now();
+                memberRoomAccountId = String(
+                    result.accountId || result.account || result.accountName || ''
+                ).trim();
+                memberRoomAccountName = String(result.accountName || '口袋账号');
+                setMemberRoomComposerState('connected', '已连接');
+                return resolvedConnectionId;
+            })().catch(error => {
+                if (generation === memberRoomConnectionGeneration) {
+                    console.warn('[成员房间] 连接失败', JSON.stringify({
+                        code: error?.code || error?.errorCode || error?.status || '',
+                        message: String(error?.message || error?.msg || '')
+                    }));
+                    memberRoomConnected = false;
+                    memberRoomConnectedAt = 0;
+                    memberRoomConnectionId = '';
+                    memberRoomTargetServer = '';
+                    memberRoomTargetChannel = '';
+                    setMemberRoomComposerState('error', formatMemberRoomError(error, '成员房间连接失败'));
+                    memberRoomConnectPromise = null;
+                }
+                throw error;
+            }).finally(() => {
+                if (generation === memberRoomConnectionGeneration) memberRoomConnectPromise = null;
+            });
+            return memberRoomConnectPromise;
+        }
+
+        function activateMemberRoomComposer() {
+            const form = ensureMemberRoomComposer();
+            if (!form) return;
+            form.style.display = '';
+            form.dataset.serverId = String(activeFollowedServer || '');
+            form.dataset.channelId = String(activeFollowedChannel || '');
+            if (!activeFollowedServer || !activeFollowedChannel) {
+                setMemberRoomComposerState('error', '当前房间缺少发送目标');
+                return;
+            }
+            void ensureMemberRoomConnection().catch(error => {
+                console.warn('[成员房间] QChat 连接失败:', formatMemberRoomError(error));
+            });
+        }
+
+        function hideMemberRoomComposer() {
+            const form = document.getElementById('followed-room-composer');
+            if (form) form.style.display = 'none';
+            void destroyMemberRoomConnections();
+        }
+
+        async function sendActiveMemberRoomMessage() {
+            const elements = getMemberRoomComposerElements();
+            if (!elements.input || memberRoomComposerSending) return;
+            const serverId = String(activeFollowedServer || '');
+            const channelId = String(activeFollowedChannel || '');
+            try {
+                memberRoomComposerSending = true;
+                setMemberRoomComposerState('connected', '正在发送');
+                const result = await invokeMemberRoomWithReconnect('send-member-room-message', {
+                    serverId,
+                    channelId,
+                    text: elements.input.value,
+                    reply: memberRoomReplyTarget ? {
+                        msgIdClient: memberRoomReplyTarget.msgIdClient,
+                        senderName: memberRoomReplyTarget.senderName,
+                        text: memberRoomReplyTarget.text,
+                        giftInfo: memberRoomReplyTarget.giftInfo || null
+                    } : null
+                });
+                if (!result?.success) throw new Error(result?.msg || '发送失败');
+                elements.input.value = '';
+                clearMemberRoomReply();
+                setMemberRoomComposerState('connected', '已发送');
+                showToast('消息已发送到成员房间');
+                scheduleMemberRoomHistoryRefresh(serverId, channelId, 350);
+                scheduleMemberRoomHistoryRefresh(serverId, channelId, 1200);
+            } catch (error) {
+                if (/连接已失效|重新连接/.test(String(error?.message || error?.msg || ''))) {
+                    memberRoomConnected = false;
+                    memberRoomConnectionId = '';
+                }
+                const message = formatMemberRoomError(error, '发送失败', { sending: true });
+                setMemberRoomComposerState(memberRoomConnected ? 'connected' : 'error', message);
+                showToast(message);
+            } finally {
+                memberRoomComposerSending = false;
+                const state = memberRoomConnected ? 'connected' : 'error';
+                const currentMessage = getMemberRoomComposerElements().input?.placeholder || '';
+                setMemberRoomComposerState(state, currentMessage);
+            }
+        }
+
+        ipcRenderer?.on?.('member-room-status', (_event, payload = {}) => {
+            if (!payload.connectionId || payload.connectionId !== memberRoomConnectionId) return;
+            if (payload.status === 'connected') {
+                memberRoomConnected = true;
+                memberRoomConnectedAt = Date.now();
+                memberRoomAccountName = String(payload.accountName || memberRoomAccountName || '口袋账号');
+                setMemberRoomComposerState('connected', '已连接');
+                return;
+            }
+            memberRoomConnected = false;
+            memberRoomConnectedAt = 0;
+            setMemberRoomComposerState('disconnected', payload.message || '成员房间连接已断开');
+        });
+
+        ipcRenderer?.on?.('member-room-message', (_event, payload = {}) => {
+            if (!payload.connectionId || payload.connectionId !== memberRoomConnectionId) return;
+            const serverId = payload.message?.serverId;
+            const channelId = payload.message?.channelId;
+            if (String(serverId || '') === String(activeFollowedServer || '')
+                && String(channelId || '') === String(activeFollowedChannel || '')) {
+                scheduleMemberRoomHistoryRefresh(serverId, channelId, 200);
+            }
+        });
 
         function fetchFollowedRoomMessagesWithTimeout(payload) {
             let timeoutId = null;
@@ -79,6 +538,306 @@
             if (!normalized || normalized === '0') return 0;
             if (requested && requested !== '0' && normalized === requested) return 0;
             return nextTime;
+        }
+
+        function getFollowedRoomEssenceElements() {
+            return {
+                panel: document.getElementById('followed-room-essence'),
+                sender: document.getElementById('followed-room-essence-sender'),
+                text: document.getElementById('followed-room-essence-text'),
+                count: document.getElementById('followed-room-essence-count'),
+                previous: document.getElementById('followed-room-essence-prev'),
+                next: document.getElementById('followed-room-essence-next')
+            };
+        }
+
+        function parseFollowedRoomEssenceExt(value) {
+            if (value && typeof value === 'object') return value;
+            try {
+                const parsed = JSON.parse(String(value || '{}'));
+                return parsed && typeof parsed === 'object' ? parsed : {};
+            } catch (error) {
+                return {};
+            }
+        }
+
+        function parseFollowedRoomEssenceBody(message = {}) {
+            const source = message.bodys ?? message.msgContent ?? '';
+            if (source && typeof source === 'object') return source;
+            let value = String(source || '').trim();
+            for (let depth = 0; depth < 2 && /^[\[{]/.test(value); depth += 1) {
+                try {
+                    const parsed = JSON.parse(value);
+                    if (parsed && typeof parsed === 'object') return parsed;
+                    if (typeof parsed !== 'string') break;
+                    value = parsed.trim();
+                } catch (error) {
+                    break;
+                }
+            }
+            return null;
+        }
+
+        function getFollowedRoomEssenceImageUrl(message = {}) {
+            const messageType = String(message.msgType || '').toUpperCase();
+            if (messageType !== 'IMAGE' && messageType !== 'EXPRESSIMAGE') return '';
+            const body = parseFollowedRoomEssenceBody(message);
+            if (!body) return '';
+            const rawUrl = messageType === 'EXPRESSIMAGE'
+                ? (body.expressImgInfo?.emotionRemote || body.url || '')
+                : (body.url || body.imageUrl || body.imgUrl || '');
+            return normalizeFollowedPocketMediaUrl(rawUrl);
+        }
+
+        function getFollowedRoomEssenceVideo(message = {}) {
+            const messageType = String(message.msgType || '').toUpperCase();
+            if (messageType !== 'VIDEO') return { url: '', poster: '' };
+            const body = parseFollowedRoomEssenceBody(message);
+            if (!body) return { url: '', poster: '' };
+            const rawUrl = body.url || body.videoUrl || body.videoPath || '';
+            const rawPoster = body.coverUrl || body.cover || body.firstFrame || body.picUrl || '';
+            const url = /^https?:\/\//i.test(String(rawUrl))
+                ? String(rawUrl)
+                : (rawUrl ? `https://mp4.48.cn${String(rawUrl).startsWith('/') ? '' : '/'}${rawUrl}` : '');
+            return {
+                url,
+                poster: normalizeFollowedPocketMediaUrl(rawPoster)
+            };
+        }
+
+        function getFollowedRoomEssenceText(message = {}) {
+            const source = message.bodys ?? message.msgContent ?? '';
+            const rawBody = typeof source === 'string' ? source.trim() : '';
+            const messageType = String(message.msgType || '').toUpperCase();
+            if (!rawBody) return `[${messageType || '消息'}]`;
+            if (messageType === 'TEXT') return rawBody;
+
+            const body = parseFollowedRoomEssenceBody(message);
+            if (body) {
+                const text = body.text
+                    || body.content
+                    || body.replyText
+                    || body.message
+                    || body.title
+                    || body.giftName;
+                if (text) return String(text).trim();
+            }
+            if (!/^\s*[\[{]/.test(rawBody)) return rawBody;
+
+            const labels = {
+                IMAGE: '［图片消息］',
+                EXPRESSIMAGE: '［表情图片］',
+                AUDIO: '［语音消息］',
+                VIDEO: '［视频消息］',
+                GIFT: '［礼物消息］',
+                REPLY: '［回复消息］'
+            };
+            return labels[messageType] || `[${messageType || '消息'}]`;
+        }
+
+        function normalizeFollowedRoomEssenceMessage(message = {}) {
+            const ext = parseFollowedRoomEssenceExt(message.extInfo);
+            const user = ext.user || message.user || {};
+            const video = getFollowedRoomEssenceVideo(message);
+            return {
+                id: String(message.msgIdClient || message.msgIdServer || message.msgTime || ''),
+                userId: String(user.userId || user.id || message.senderUserId || message.senderId || ''),
+                sender: String(user.nickName || user.nickname || user.userName || message.senderName || '成员'),
+                avatarUrl: normalizeFollowedSourceUrl(user.avatar || user.avatarUrl || message.avatar || '') || './icon.png',
+                isMember: Number(user.roleId || user.role || 0) > 1,
+                text: getFollowedRoomEssenceText(message),
+                time: formatFollowedProfileDateTime(message.msgTime || message.sendTime || message.createTime || ''),
+                type: String(message.msgType || '').toUpperCase(),
+                imageUrl: getFollowedRoomEssenceImageUrl(message),
+                videoUrl: video.url,
+                videoPoster: video.poster
+            };
+        }
+
+        function closeFollowedRoomEssenceDetail() {
+            const modal = document.getElementById('followedRoomEssenceDetailModal');
+            modal?.querySelectorAll('video').forEach(video => video.pause());
+            if (modal) modal.style.display = 'none';
+        }
+
+        function openFollowedRoomEssenceDetail() {
+            const item = followedRoomEssenceMessages[followedRoomEssenceIndex];
+            if (!item) return;
+            const modal = document.getElementById('followedRoomEssenceDetailModal');
+            const userButton = document.getElementById('followed-room-essence-detail-user');
+            const avatar = document.getElementById('followed-room-essence-detail-avatar');
+            const sender = document.getElementById('followed-room-essence-detail-sender');
+            const time = document.getElementById('followed-room-essence-detail-time');
+            const text = document.getElementById('followed-room-essence-detail-text');
+            if (!modal) return;
+            if (userButton) userButton.disabled = !item.userId;
+            if (avatar) {
+                avatar.src = item.avatarUrl || './icon.png';
+                avatar.alt = item.sender;
+                avatar.onerror = () => {
+                    avatar.onerror = null;
+                    avatar.src = './icon.png';
+                };
+            }
+            if (sender) sender.textContent = item.sender;
+            if (time) time.textContent = item.time || '';
+            if (text) {
+                text.replaceChildren();
+                if (item.imageUrl) {
+                    const imageButton = document.createElement('button');
+                    imageButton.type = 'button';
+                    imageButton.className = 'followed-room-essence-detail-image';
+                    imageButton.title = '点击查看原图';
+                    imageButton.setAttribute('aria-label', '查看精华消息原图');
+                    const image = document.createElement('img');
+                    image.src = item.imageUrl;
+                    image.alt = `${item.sender}发送的精华图片`;
+                    image.loading = 'eager';
+                    image.addEventListener('error', () => {
+                        imageButton.replaceChildren();
+                        const failure = document.createElement('span');
+                        failure.textContent = '图片加载失败';
+                        imageButton.appendChild(failure);
+                    }, { once: true });
+                    imageButton.appendChild(image);
+                    imageButton.addEventListener('click', () => {
+                        if (typeof window.openImageModal === 'function') {
+                            window.openImageModal(item.imageUrl);
+                        }
+                    });
+                    text.appendChild(imageButton);
+                } else if (item.videoUrl) {
+                    const video = document.createElement('video');
+                    video.className = 'followed-room-essence-detail-video';
+                    video.src = item.videoUrl;
+                    video.controls = true;
+                    video.playsInline = true;
+                    video.preload = 'metadata';
+                    if (item.videoPoster) video.poster = item.videoPoster;
+                    video.addEventListener('error', () => {
+                        text.replaceChildren();
+                        const failure = document.createElement('div');
+                        failure.className = 'followed-room-essence-detail-media-failure';
+                        failure.textContent = '视频加载失败';
+                        text.appendChild(failure);
+                    }, { once: true });
+                    text.appendChild(video);
+                } else {
+                    text.textContent = item.text;
+                }
+            }
+            modal.style.display = 'flex';
+            modal.querySelector('.followed-room-essence-detail-close')?.focus();
+        }
+
+        function openFollowedRoomEssenceUserProfile() {
+            const item = followedRoomEssenceMessages[followedRoomEssenceIndex];
+            if (!item?.userId) return;
+            const profile = {
+                userId: item.userId,
+                sender: item.sender,
+                avatarUrl: item.avatarUrl,
+                isMember: item.isMember
+            };
+            closeFollowedRoomEssenceDetail();
+            window.setTimeout(() => {
+                openFollowedUserProfile(profile.userId, profile.sender, profile.avatarUrl, profile.isMember);
+            }, 0);
+        }
+
+        function renderFollowedRoomEssence() {
+            const elements = getFollowedRoomEssenceElements();
+            if (!elements.panel) return;
+            elements.panel.hidden = false;
+
+            if (!followedRoomEssenceMessages.length) {
+                if (elements.sender) elements.sender.textContent = '';
+                if (elements.text) elements.text.textContent = '暂无精华消息';
+                if (elements.count) elements.count.textContent = '';
+                if (elements.previous) elements.previous.disabled = true;
+                if (elements.next) elements.next.disabled = true;
+                return;
+            }
+
+            followedRoomEssenceIndex = Math.max(0, Math.min(
+                followedRoomEssenceIndex,
+                followedRoomEssenceMessages.length - 1
+            ));
+            const item = followedRoomEssenceMessages[followedRoomEssenceIndex];
+            if (elements.sender) elements.sender.textContent = item.sender;
+            if (elements.text) {
+                elements.text.textContent = item.text;
+                elements.text.title = item.text;
+            }
+            if (elements.count) {
+                elements.count.textContent = `${followedRoomEssenceIndex + 1}/${followedRoomEssenceMessages.length}`;
+            }
+            const hasMultiple = followedRoomEssenceMessages.length > 1;
+            if (elements.previous) elements.previous.disabled = !hasMultiple;
+            if (elements.next) elements.next.disabled = !hasMultiple;
+        }
+
+        function stepFollowedRoomEssence(direction) {
+            if (followedRoomEssenceMessages.length < 2) return;
+            const count = followedRoomEssenceMessages.length;
+            followedRoomEssenceIndex = (followedRoomEssenceIndex + Number(direction || 0) + count) % count;
+            renderFollowedRoomEssence();
+        }
+
+        function resetFollowedRoomEssence() {
+            followedRoomEssenceRequestRevision += 1;
+            followedRoomEssenceMessages = [];
+            followedRoomEssenceIndex = 0;
+            const elements = getFollowedRoomEssenceElements();
+            if (elements.panel) elements.panel.hidden = true;
+            closeFollowedRoomEssenceDetail();
+        }
+
+        async function loadFollowedRoomEssence(requestRevision = followedChatRequestRevision) {
+            const elements = getFollowedRoomEssenceElements();
+            if (!elements.panel) return;
+
+            const requestToken = ++followedRoomEssenceRequestRevision;
+            const requestChannelId = String(activeFollowedChannel || '');
+            const requestServerId = String(activeFollowedServer || '');
+            elements.panel.hidden = false;
+            if (elements.sender) elements.sender.textContent = '';
+            if (elements.text) elements.text.textContent = '正在加载精华消息...';
+            if (elements.count) elements.count.textContent = '';
+            if (elements.previous) elements.previous.disabled = true;
+            if (elements.next) elements.next.disabled = true;
+
+            try {
+                const response = await ipcRenderer.invoke('fetch-room-essence-messages', {
+                    token: getAppToken(),
+                    pa: window.getPA ? window.getPA() : null,
+                    channelId: requestChannelId,
+                    serverId: requestServerId,
+                    nextTime: 0,
+                    limit: 50
+                });
+                if (requestToken !== followedRoomEssenceRequestRevision
+                    || requestRevision !== followedChatRequestRevision
+                    || requestChannelId !== String(activeFollowedChannel || '')) return;
+
+                if (!response?.success) {
+                    throw new Error(response?.msg || '精华消息加载失败');
+                }
+                const content = response?.data?.content || response?.content || {};
+                const list = Array.isArray(content.essenceMessageList) ? content.essenceMessageList : [];
+                followedRoomEssenceMessages = list.map(normalizeFollowedRoomEssenceMessage);
+                followedRoomEssenceIndex = 0;
+                renderFollowedRoomEssence();
+            } catch (error) {
+                if (requestToken !== followedRoomEssenceRequestRevision
+                    || requestRevision !== followedChatRequestRevision) return;
+                followedRoomEssenceMessages = [];
+                followedRoomEssenceIndex = 0;
+                if (elements.sender) elements.sender.textContent = '';
+                if (elements.text) elements.text.textContent = '精华消息加载失败';
+                if (elements.count) elements.count.textContent = '';
+                console.warn('[成员房间] 获取精华消息失败:', error);
+            }
         }
 
         function escapeFollowedHtml(value) {
@@ -266,7 +1025,7 @@
 
             if (targetButton) {
                 targetButton.disabled = true;
-                targetButton.textContent = shouldUnfollow ? '取关中...' : '关注中...';
+                targetButton.textContent = window.YayaRendererUtils.t(shouldUnfollow ? '取关中...' : '关注中...');
             }
             if (typeof showToast === 'function') {
                 showToast(`正在${shouldUnfollow ? '取消关注' : '关注'} ${safeName}`);
@@ -285,7 +1044,7 @@
                     }
                 }
                 if (targetButton) {
-                    targetButton.textContent = shouldUnfollow ? '关注' : '已关注';
+                    targetButton.textContent = window.YayaRendererUtils.t(shouldUnfollow ? '关注' : '已关注');
                     targetButton.disabled = false;
                 }
                 if (typeof showToast === 'function') {
@@ -293,7 +1052,7 @@
                 }
             } catch (error) {
                 if (targetButton) {
-                    targetButton.textContent = currentText || '关注';
+                    targetButton.textContent = window.YayaRendererUtils.t(currentText || '关注');
                     targetButton.disabled = false;
                 }
                 if (typeof showToast === 'function') showToast(`操作失败: ${error.message}`);
@@ -1448,7 +2207,7 @@
             }
             if (button) {
                 button.disabled = true;
-                button.textContent = '发送中';
+                button.textContent = window.YayaRendererUtils.t('发送中');
             }
 
             try {
@@ -1501,7 +2260,7 @@
                 const nextButton = document.getElementById(`followed-profile-dynamic-comment-send-${normalizedPostId}`);
                 if (nextButton) {
                     nextButton.disabled = false;
-                    nextButton.textContent = '发送';
+                    nextButton.textContent = window.YayaRendererUtils.t('发送');
                 }
             }
         }
@@ -2583,12 +3342,12 @@
                 btn.style.display = 'inline-flex';
                 btn.style.alignItems = 'center';
                 btn.style.justifyContent = 'center';
-                btn.innerText = `有 ${followedPendingCount} 条新消息`;
+                btn.innerText = window.YayaRendererUtils.t(`有 ${followedPendingCount} 条新消息`);
                 return;
             }
 
             btn.style.display = 'none';
-            btn.innerText = '有新消息';
+            btn.innerText = window.YayaRendererUtils.t('有新消息');
         }
 
         function resetFollowedPendingMessages() {
@@ -2947,6 +3706,7 @@
             activeFollowedMemberId = String(options?.memberId || '').trim();
             activeFollowedNextTime = 0;
             isFollowedSmallRoomMode = initialRoomType === 'small';
+            activateMemberRoomComposer();
             if (typeof window.syncWebRoomRoute === 'function') {
                 window.syncWebRoomRoute(channelId);
             }
@@ -2981,7 +3741,7 @@
 
             const roomBtn = document.getElementById('btn-toggle-room-type');
             if (roomBtn) {
-                roomBtn.innerText = isFollowedSmallRoomMode ? "小房间" : "大房间";
+                roomBtn.innerText = window.YayaRendererUtils.t(isFollowedSmallRoomMode ? "小房间" : "大房间");
                 roomBtn.classList.remove('btn-primary');
                 roomBtn.classList.add('btn-secondary');
             }
@@ -3005,6 +3765,7 @@
             } else {
                 setFollowedChatAvatarUrl(activeFollowedFallbackAvatarUrl);
             }
+            void loadFollowedRoomEssence(requestRevision);
 
             const msgBox = document.getElementById('followed-chat-messages');
             msgBox.style.transition = 'opacity 0.2s';
@@ -3043,8 +3804,10 @@
 
         function backToFollowedRoomList(event) {
             if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+            hideMemberRoomComposer();
             const followedView = document.getElementById('view-followed-rooms');
             if (followedView) followedView.classList.remove('is-chat-open');
+            resetFollowedRoomEssence();
             if (typeof window.syncWebRoomListRoute === 'function') {
                 window.syncWebRoomListRoute();
             }
@@ -3140,12 +3903,13 @@
 
             const btn = document.getElementById('btn-toggle-room-type');
             if (isFollowedSmallRoomMode) {
-                btn.innerText = "小房间";
+                btn.innerText = window.YayaRendererUtils.t("小房间");
             } else {
-                btn.innerText = "大房间";
+                btn.innerText = window.YayaRendererUtils.t("大房间");
             }
 
             updateFollowedChatSubtitle(activeFollowedChannel);
+            activateMemberRoomComposer();
             if (typeof window.autoConnectFollowedRoomRadio === 'function') {
                 window.autoConnectFollowedRoomRadio(
                     activeFollowedChannel,
@@ -3162,6 +3926,7 @@
             }
             showFollowedChatTitle(getFollowedFallbackTitle());
             refreshFollowedChatTitle();
+            void loadFollowedRoomEssence(followedChatRequestRevision);
 
             activeFollowedNextTime = 0;
             followedStickToBottom = true;
@@ -3197,7 +3962,7 @@
             const btn = document.getElementById('btn-toggle-followed-mode');
             const msgBox = document.getElementById('followed-chat-messages');
 
-            btn.innerText = "切换中...";
+            btn.innerText = window.YayaRendererUtils.t("切换中...");
             btn.disabled = true;
 
             msgBox.style.transition = 'opacity 0.2s';
@@ -3215,7 +3980,7 @@
             resetFollowedPendingMessages();
 
             loadFollowedChatPage(false).finally(() => {
-                btn.innerText = isFollowedChatAllMode ? "全部消息" : "成员消息";
+                btn.innerText = window.YayaRendererUtils.t(isFollowedChatAllMode ? "全部消息" : "成员消息");
                 btn.disabled = false;
             });
         };
@@ -3264,7 +4029,10 @@
                             : 0;
                     }
 
-                    if (!isLoadMore && !isAutoRefresh) msgBox.replaceChildren();
+                    if (!isLoadMore && !isAutoRefresh) {
+                        msgBox.replaceChildren();
+                        memberRoomMessageActions.clear();
+                    }
                     const oldBtn = document.getElementById('btn-load-more-followed');
                     if (oldBtn) oldBtn.remove();
 
@@ -3281,7 +4049,8 @@
                     const batchMessageIds = [];
 
                     const batchHtml = reversedList.map(m => {
-                        const msgId = m.msgidClient || m.msgId || m.msgTime;
+                        const msgId = m.msgIdClient || m.msgidClient || m.msgIdServer || m.msgId || m.msgTime;
+                        const messageKey = `${String(msgId || 'message')}:${String(m.msgTime || '')}`;
 
                         if ((isAutoRefresh || isLoadMore) && existingIds.has(String(msgId))) {
                             return '';
@@ -3293,9 +4062,17 @@
                         let isMember = false;
                         let displayName = m.senderName || '未知用户';
                         let senderId = m.senderUserId || m.senderId || m.uid || '';
+                        const senderIdentityIds = new Set([
+                            m.senderUserId,
+                            m.senderId,
+                            m.uid
+                        ].map(value => String(value || '').trim()).filter(Boolean));
                         let avatarUrl = './icon.png';
                         let body = m.bodys || m.msgContent || '';
                         let extraHtml = '';
+                        let replyText = typeof body === 'string' ? body : '';
+                        let giftInfo = null;
+                        let actionType = String(m.msgType || '').toUpperCase();
 
                         const safeStr = (str) => String(str || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
                         const msgDate = new Date(m.msgTime);
@@ -3308,6 +4085,8 @@
                                 const ext = typeof safeExtInfo === 'string' ? JSON.parse(safeExtInfo) : safeExtInfo;
                                 if (ext && ext.user) {
                                     if (ext.user.roleId > 1) isMember = true;
+                                    const extUserId = String(ext.user.userId || ext.user.id || '').trim();
+                                    if (extUserId) senderIdentityIds.add(extUserId);
                                     if (!senderId) senderId = ext.user.userId || ext.user.id || '';
                                     if (ext.user.nickName) displayName = ext.user.nickName;
                                     if (ext.user.avatar) {
@@ -3331,8 +4110,10 @@
                             if (json) {
                                 const msgType = (m.msgType || '').toUpperCase();
                                 const jsonType = (json.messageType || '').toUpperCase();
+                                actionType = msgType || jsonType;
 
                                 if (msgType === 'TEXT') {
+                                    replyText = String(json.text || json.bodys || body || '');
                                     txt = `<p class="mb-2 template-pre">${safeStr(json.text || json.bodys || body)}</p>`;
                                 } else if (msgType === 'IMAGE') {
                                     const url = json.url.startsWith('http') ? json.url : `https://source3.48.cn${json.url}`;
@@ -3345,6 +4126,7 @@
                                     const rName = safeStr(info?.replyName || '用户');
                                     const rText = safeStr(info?.replyText || '消息');
                                     const myText = safeStr(info?.text || json.text || body);
+                                    replyText = String(info?.text || json.text || body || '');
                                     txt = `<p class="mb-2 template-pre">${myText}</p>
                                            <blockquote class="ml-2 mb-2 p-2" style="background: var(--blockquote-bg); border-left: 4px solid var(--border); color: var(--text-sub); border-radius: 0 4px 4px 0;">
                                                ${rName}：${rText}
@@ -3357,6 +4139,8 @@
                                     txt = `<div class="mb-2 preview-media-placeholder" data-type="video" data-src="${mediaUrl}"></div>`;
                                 } else if (jsonType === 'GIFT_TEXT' || msgType === 'GIFT_TEXT') {
                                     const info = json.giftInfo || json;
+                                    giftInfo = json.giftInfo || null;
+                                    replyText = String(json.giftText || info.giftText || info.giftName || '礼物消息');
                                     txt = renderFollowedPocketGiftCard(info);
                                 } else if (msgType.includes('FLIPCARD') || jsonType.includes('FLIPCARD')) {
                                     const possibleKeys = ['flipCardInfo', 'filpCardInfo', 'flipCardAudioInfo', 'filpCardAudioInfo', 'flipCardVideoInfo', 'filpCardVideoInfo'];
@@ -3495,8 +4279,39 @@
                             ? '#056de8'
                             : (isMember ? 'var(--msg-name-member)' : 'var(--msg-name-fan)');
 
+                        const currentIdentityIds = getCurrentMemberRoomIdentityIds();
+                        const isOwnMessage = [...senderIdentityIds]
+                            .some(identityId => currentIdentityIds.has(identityId));
+                        const matchedOwnIdentity = isOwnMessage
+                            ? [...senderIdentityIds].find(identityId => currentIdentityIds.has(identityId))
+                            : '';
+                        const canReplyEligible = Boolean(String(m.msgIdClient || '').trim())
+                            && ['TEXT', 'REPLY', 'GIFTREPLY', 'GIFT_TEXT'].includes(actionType)
+                            && Boolean(String(replyText || '').trim());
+                        const canDeleteEligible = Boolean(String(m.msgIdClient || '').trim())
+                            && Number(m.msgTime) > 0;
+                        memberRoomMessageActions.set(messageKey, {
+                            messageKey,
+                            msgIdClient: String(m.msgIdClient || ''),
+                            msgIdServer: String(m.msgIdServer || ''),
+                            msgTime: Number(m.msgTime),
+                            msgType: actionType,
+                            senderUserId: String(
+                                (isOwnMessage && String(getCurrentUserId() || '').trim())
+                                || matchedOwnIdentity
+                                || senderId
+                                || ''
+                            ),
+                            senderName: String(displayName || '用户'),
+                            text: String(replyText || '').trim(),
+                            giftInfo,
+                            senderIdentityIds: [...senderIdentityIds],
+                            canReplyEligible,
+                            canDeleteEligible
+                        });
+
                         return `
-    <div class="msg-item" data-msgid="${msgId}" style="display: flex; padding: 8px 0; border-bottom: 1px solid var(--border);">
+    <div class="msg-item" data-msgid="${escapeFollowedHtml(msgId)}" data-message-key="${escapeFollowedHtml(messageKey)}" style="display: flex; padding: 8px 0; border-bottom: 1px solid var(--border);">
         <button type="button" class="followed-message-avatar-btn" title="查看用户主页"
                 onclick="openFollowedUserProfile(${toFollowedInlineArg(senderId)}, ${toFollowedInlineArg(displayName)}, ${toFollowedInlineArg(avatarUrl)}, ${isMember ? 'true' : 'false'})">
             <img src="${avatarUrl}" class="avatar" alt="" onerror="this.src='./icon.png'">
@@ -3591,8 +4406,51 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
+            const essencePanel = document.getElementById('followed-room-essence');
+            const essencePrevious = document.getElementById('followed-room-essence-prev');
+            const essenceNext = document.getElementById('followed-room-essence-next');
+            const essenceDetailModal = document.getElementById('followedRoomEssenceDetailModal');
+            const essenceDetailUser = document.getElementById('followed-room-essence-detail-user');
+            essencePanel?.addEventListener('click', event => {
+                if (event.target.closest('.followed-room-essence-actions')) return;
+                openFollowedRoomEssenceDetail();
+            });
+            essencePanel?.addEventListener('keydown', event => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                openFollowedRoomEssenceDetail();
+            });
+            essencePrevious?.addEventListener('click', event => {
+                event.stopPropagation();
+                stepFollowedRoomEssence(-1);
+            });
+            essenceNext?.addEventListener('click', event => {
+                event.stopPropagation();
+                stepFollowedRoomEssence(1);
+            });
+            essenceDetailModal?.addEventListener('click', event => {
+                if (event.target === essenceDetailModal) closeFollowedRoomEssenceDetail();
+            });
+            essenceDetailModal?.querySelector('.followed-room-essence-detail-close')
+                ?.addEventListener('click', closeFollowedRoomEssenceDetail);
+            essenceDetailUser?.addEventListener('click', event => {
+                event.stopPropagation();
+                openFollowedRoomEssenceUserProfile();
+            });
+            document.addEventListener('keydown', event => {
+                if (event.key === 'Escape' && essenceDetailModal?.style.display === 'flex') {
+                    closeFollowedRoomEssenceDetail();
+                }
+            });
             const followedMsgBox = document.getElementById('followed-chat-messages');
             if (followedMsgBox) {
+                followedMsgBox.addEventListener('contextmenu', event => {
+                    const item = event.target.closest('.msg-item[data-message-key]');
+                    if (!item || !followedMsgBox.contains(item)) return;
+                    const target = memberRoomMessageActions.get(item.dataset.messageKey || '');
+                    if (target) openMemberRoomContextMenu(event, target);
+                });
+
                 followedMsgBox.addEventListener('wheel', function (event) {
                     if (event.deltaY < 0) {
                         lockFollowedAutoScroll();
@@ -3612,6 +4470,7 @@
                 }, { passive: true });
 
                 followedMsgBox.addEventListener('scroll', function () {
+                    closeMemberRoomContextMenu();
                     updateFollowedScrollStickState(this);
 
                     if (followedPendingCount > 0 && canFollowedAutoScroll(this)) {
@@ -3628,12 +4487,18 @@
             }
 
             document.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape') closeMemberRoomContextMenu();
                 const followedMsgBox = document.getElementById('followed-chat-messages');
                 const view = document.getElementById('view-followed-rooms');
                 if (!followedMsgBox || !view || view.style.display === 'none') return;
 
                 if (event.key === 'PageUp' || event.key === 'ArrowUp') {
                     lockFollowedAutoScroll();
+                }
+            });
+            document.addEventListener('pointerdown', event => {
+                if (memberRoomContextMenu && !memberRoomContextMenu.contains(event.target)) {
+                    closeMemberRoomContextMenu();
                 }
             });
         });

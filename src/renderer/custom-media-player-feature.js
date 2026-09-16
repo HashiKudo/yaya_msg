@@ -61,7 +61,7 @@
                 wrapper.classList.remove('playing');
                 icon.classList.remove('is-pause');
                 icon.classList.add('is-play');
-                if (!knownDuration) timeDisplay.innerText = '语音';
+                if (!knownDuration) timeDisplay.innerText = window.YayaRendererUtils.t('语音');
                 if (getCurrentPlayingAudio() === audio) setCurrentPlayingAudio(null);
             };
 
@@ -363,6 +363,27 @@
             video.dataset.contentCropApplied = '1';
         }
 
+        function resolveVideoProxyFallbackUrl(url, options = {}) {
+            const originalUrl = String(url || '').trim();
+            const isWeb = window.desktop?.platform === 'web'
+                || document.documentElement?.dataset?.platform === 'web';
+            if (!originalUrl || !isWeb || options.useWebMediaProxy !== true) {
+                return '';
+            }
+
+            try {
+                const targetUrl = new URL(originalUrl, window.location.href);
+                const hostname = targetUrl.hostname.toLowerCase();
+                const isPocketMediaHost = hostname === '48.cn' || hostname.endsWith('.48.cn');
+                if (!isPocketMediaHost || targetUrl.origin === window.location.origin) {
+                    return '';
+                }
+                return `/web-media-proxy?url=${encodeURIComponent(targetUrl.toString())}`;
+            } catch (error) {
+                return '';
+            }
+        }
+
         function createCustomVideoPlayer(url, options = {}) {
             const wrapper = document.createElement('div');
             wrapper.className = 'video-wrapper';
@@ -372,6 +393,8 @@
             wrapper.style.maxWidth = '100%';
             wrapper.style.background = 'transparent';
             const preferExternalPlayer = options.preferExternalPlayer === true;
+            const playbackUrl = String(url || '').trim();
+            const proxyFallbackUrl = resolveVideoProxyFallbackUrl(url, options);
 
             const uniqueId = 'v-' + Math.random().toString(36).substr(2, 9);
             wrapper.innerHTML = `
@@ -390,7 +413,9 @@
                     border: 0;
                     transition: transform 0.2s;
                 ">
-                    <video class="lazy-cover" data-src="${url}#t=0.1" muted playsinline crossorigin="anonymous"
+                    <video class="lazy-cover" data-src="${playbackUrl}#t=0.1"
+                        data-proxy-src="${proxyFallbackUrl ? `${proxyFallbackUrl}#t=0.1` : ''}"
+                        muted playsinline crossorigin="anonymous"
                         preload="none"
                         style="
                             position: absolute;
@@ -428,11 +453,55 @@
                     </div>
                 </div>`;
 
+            const placeholder = wrapper.querySelector('.video-placeholder');
             const coverVideo = wrapper.querySelector('.lazy-cover');
+            let pendingProxyPlayContext = null;
+
+            const switchToVideoProxyFallback = (video) => {
+                const proxySrc = video?.dataset?.proxySrc || '';
+                if (!proxySrc || video.dataset.proxyFallbackAttempted === '1') return false;
+
+                video.dataset.proxyFallbackAttempted = '1';
+                video.dataset.proxyLoadPending = '1';
+                video.dataset.src = proxySrc;
+                video.preload = 'auto';
+                video.src = proxySrc;
+                video.load();
+                return true;
+            };
+
+            const finishInlinePlaybackFailure = (video, error) => {
+                pendingProxyPlayContext = null;
+                delete video.dataset.resumeAfterProxy;
+                delete video.dataset.proxyPlaybackRetried;
+                restoreVideoCoverPresentation(video);
+                console.warn('Inline video playback failed:', error);
+                showToast('视频播放失败');
+            };
+
+            const retryPlaybackAfterProxy = (video) => {
+                if (!video || video.dataset.resumeAfterProxy !== '1') return;
+                const playContext = pendingProxyPlayContext;
+                pendingProxyPlayContext = null;
+                delete video.dataset.resumeAfterProxy;
+                video.dataset.proxyPlaybackRetried = '1';
+
+                if (!isPlaybackViewContextActive(playContext)) {
+                    restoreVideoCoverPresentation(video);
+                    return;
+                }
+
+                const retryPromise = video.play();
+                if (retryPromise && typeof retryPromise.catch === 'function') {
+                    retryPromise.catch(error => finishInlinePlaybackFailure(video, error));
+                }
+            };
+
             if (coverVideo) {
                 videoCoverObserver.observe(coverVideo);
 
                 coverVideo.onloadedmetadata = () => {
+                    delete coverVideo.dataset.proxyLoadPending;
                     const w = coverVideo.videoWidth;
                     const h = coverVideo.videoHeight;
                     if (w && h) {
@@ -467,12 +536,16 @@
                     }
                 });
 
+                coverVideo.addEventListener('canplay', () => {
+                    retryPlaybackAfterProxy(coverVideo);
+                });
+
                 coverVideo.onerror = () => {
+                    if (switchToVideoProxyFallback(coverVideo)) return;
                     releaseVideoCoverLoad(coverVideo);
                 };
             }
 
-            const placeholder = wrapper.querySelector('.video-placeholder');
             const playInline = () => {
                 if (!placeholder || placeholder.dataset.inlinePlaying === '1') {
                     return;
@@ -564,12 +637,19 @@
                     return;
                 }
 
+                delete cover.dataset.resumeAfterProxy;
+                delete cover.dataset.proxyPlaybackRetried;
                 const playPromise = cover.play();
                 if (playPromise && typeof playPromise.catch === 'function') {
                     playPromise.catch(error => {
-                        restoreVideoCoverPresentation(cover);
-                        console.warn('Inline video playback failed:', error);
-                        showToast('视频播放失败');
+                        if (cover.dataset.proxyFallbackAttempted === '1'
+                            && cover.dataset.proxyPlaybackRetried !== '1') {
+                            pendingProxyPlayContext = playContext;
+                            cover.dataset.resumeAfterProxy = '1';
+                            if (cover.readyState >= 3) retryPlaybackAfterProxy(cover);
+                            return;
+                        }
+                        finishInlinePlaybackFailure(cover, error);
                     });
                 }
                 setCurrentPlayingVideo(cover);

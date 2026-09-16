@@ -135,7 +135,7 @@
             const shouldShow = ENABLE_OPENLIVE_PARTICIPANTS && visible;
             if (buttonEl) {
                 buttonEl.style.display = shouldShow ? 'inline-flex' : 'none';
-                buttonEl.textContent = '参与成员';
+                buttonEl.textContent = window.YayaRendererUtils.t('参与成员');
             }
             if (statusEl) statusEl.textContent = text || '';
             if (listEl) listEl.replaceChildren();
@@ -274,9 +274,9 @@
             const listEl = document.getElementById('openlive-participants-modal-list');
             if (buttonEl) {
                 buttonEl.style.display = 'inline-flex';
-                buttonEl.textContent = '参与成员';
+                buttonEl.textContent = window.YayaRendererUtils.t('参与成员');
             }
-            if (statusEl) statusEl.textContent = `共 ${normalizedParticipants.length} 位成员`;
+            if (statusEl) statusEl.textContent = window.YayaRendererUtils.t(`共 ${normalizedParticipants.length} 位成员`);
             if (!listEl) return;
             listEl.replaceChildren();
             const fragment = document.createDocumentFragment();
@@ -322,7 +322,7 @@
                     });
                 } else {
                     chip.disabled = true;
-                    chip.title = '暂时没有获取到成员 ID';
+                    chip.title = window.YayaRendererUtils.t('暂时没有获取到成员 ID');
                 }
                 fragment.appendChild(chip);
             });
@@ -470,7 +470,7 @@
             if (isOpenLiveAutoLoading) {
                 isOpenLiveAutoLoading = false;
                 if (buttonEl) {
-                    buttonEl.innerText = '查询';
+                    buttonEl.innerText = window.YayaRendererUtils.t('查询');
                     buttonEl.style.background = '';
                     buttonEl.style.color = '';
                 }
@@ -485,7 +485,7 @@
 
             isOpenLiveAutoLoading = true;
             if (buttonEl) {
-                buttonEl.innerText = '停止查询';
+                buttonEl.innerText = window.YayaRendererUtils.t('停止查询');
                 buttonEl.style.background = '#ff4d4f';
                 buttonEl.style.color = 'white';
             }
@@ -509,7 +509,7 @@
 
             isOpenLiveAutoLoading = false;
             if (buttonEl) {
-                buttonEl.innerText = '查询';
+                buttonEl.innerText = window.YayaRendererUtils.t('查询');
                 buttonEl.style.background = '';
                 buttonEl.style.color = '';
             }
@@ -551,7 +551,7 @@
                 card.innerHTML = `
             <div class="vod-row-cover-container">
                 <img src="${cover}" class="vod-row-cover" loading="lazy"
-                     title="点击调用外部播放器播放"
+                     title="点击播放"
                      style="cursor: pointer;"
                      onclick="openOpenLiveInPotPlayer(event, '${liveId}')">
             </div>
@@ -668,10 +668,10 @@
             }
 
             const authorEl = document.getElementById('current-live-author');
-            if (authorEl) authorEl.textContent = nickname || '未知成员';
+            if (authorEl) authorEl.textContent = window.YayaRendererUtils.t(nickname || '未知成员');
 
             const sectionTitle = document.getElementById('live-view-title');
-            if (sectionTitle) sectionTitle.textContent = isLiveContent ? '公演直播' : '公演记录';
+            if (sectionTitle) sectionTitle.textContent = window.YayaRendererUtils.t(isLiveContent ? '公演直播' : '公演记录');
 
             const titleEl = document.getElementById('current-live-title');
             const dateEl = document.getElementById('current-live-date');
@@ -727,6 +727,12 @@
         }
 
         async function openOpenLiveInPotPlayer(event, liveId) {
+            // Mobile web uses the card's normal click handler and stays in the
+            // site player. Desktop keeps the external-player shortcut.
+            if (window.desktop?.platform === 'web'
+                && document.documentElement.classList.contains('web-mobile-device')) {
+                return false;
+            }
             event.stopPropagation();
 
             const imageEl = event.target;

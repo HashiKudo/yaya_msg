@@ -148,7 +148,7 @@
         function updateLoadState() {
             const sentinel = document.getElementById('community-load-sentinel');
             if (!sentinel) return;
-            sentinel.textContent = isLoading && hasLoadedOnce ? '加载中' : '';
+            sentinel.textContent = window.YayaRendererUtils.t(isLoading && hasLoadedOnce ? '加载中' : '');
             sentinel.classList.toggle('is-visible', Boolean(sentinel.textContent));
         }
 
@@ -303,7 +303,7 @@
             }
             if (sendButton) {
                 sendButton.disabled = true;
-                sendButton.textContent = '发布中';
+                sendButton.textContent = window.YayaRendererUtils.t('发布中');
             }
 
             try {
@@ -334,7 +334,7 @@
                 const nextButton = document.getElementById('community-compose-send');
                 if (nextButton) {
                     nextButton.disabled = false;
-                    nextButton.textContent = '发布';
+                    nextButton.textContent = window.YayaRendererUtils.t('发布');
                 }
             }
         }
@@ -688,7 +688,7 @@
             }
             if (button) {
                 button.disabled = true;
-                button.textContent = '发送中';
+                button.textContent = window.YayaRendererUtils.t('发送中');
             }
 
             try {
@@ -736,7 +736,7 @@
                 const nextButton = document.getElementById(`community-comment-send-${postId}`);
                 if (nextButton) {
                     nextButton.disabled = false;
-                    nextButton.textContent = '发送';
+                    nextButton.textContent = window.YayaRendererUtils.t('发送');
                 }
             }
         }
@@ -1043,6 +1043,9 @@
 
         function switchCommunityFeedMode(mode) {
             const nextMode = mode === 'newest' ? 'newest' : 'recommend';
+            if (typeof window.syncWebCommunityFeedRoute === 'function') {
+                window.syncWebCommunityFeedRoute({ replace: viewMode === 'topic' });
+            }
             if (viewMode === 'feed' && feedMode === nextMode && hasLoadedOnce) return Promise.resolve();
             viewMode = 'feed';
             currentTopic = null;
@@ -1056,9 +1059,12 @@
             return loadCommunityFeed({ reset: true });
         }
 
-        function openCommunityTopic(topicId, topicName = '') {
+        function openCommunityTopic(topicId, topicName = '', options = {}) {
             const id = String(topicId || '').trim();
             if (!id) return Promise.resolve();
+            if (options.syncRoute !== false && typeof window.syncWebCommunityTopicRoute === 'function') {
+                window.syncWebCommunityTopicRoute(id);
+            }
             viewMode = 'topic';
             currentTopic = {
                 id,
@@ -1086,7 +1092,10 @@
             return loadCommunityTopicPosts({ reset: true });
         }
 
-        function backToCommunityFeed() {
+        function backToCommunityFeed(options = {}) {
+            if (options.syncRoute !== false && typeof window.syncWebCommunityFeedRoute === 'function') {
+                window.syncWebCommunityFeedRoute({ replace: true });
+            }
             viewMode = 'feed';
             currentTopic = null;
             nextId = 0;
@@ -1100,6 +1109,19 @@
 
         function ensureCommunityFeedLoaded() {
             bindCommunityAutoLoad();
+            const routeTopicId = typeof window.getWebCommunityRouteTopicId === 'function'
+                ? String(window.getWebCommunityRouteTopicId() || '').trim()
+                : '';
+            if (routeTopicId) {
+                if (viewMode === 'topic' && currentTopic?.id === routeTopicId && hasLoadedOnce) {
+                    setTimeout(maybeAutoLoadCommunityFeed, 0);
+                    return Promise.resolve();
+                }
+                return openCommunityTopic(routeTopicId, '', { syncRoute: false });
+            }
+            if (viewMode === 'topic') {
+                return backToCommunityFeed({ syncRoute: false });
+            }
             updateFeedTabs();
             updateFeedTabsVisibility();
             if (!hasLoadedOnce) {

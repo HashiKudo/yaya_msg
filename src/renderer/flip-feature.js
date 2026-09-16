@@ -283,7 +283,7 @@
         function formatFlipSevenDayRemaining(expireAt, now = Date.now()) {
             const remainingMs = Number(expireAt) - Number(now);
             if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
-                return '七天悲';
+                return window.YayaRendererUtils.t('七天悲');
             }
 
             const totalSeconds = Math.floor(remainingMs / 1000);
@@ -297,7 +297,7 @@
             if (minutes > 0 || parts.length > 0) parts.push(`${minutes}分`);
             parts.push(`${seconds}秒`);
 
-            return `距离七天乐还有 ${parts.join('')}`;
+            return window.YayaRendererUtils.t(`距离七天乐还有 ${parts.join('')}`);
         }
 
         function formatFlipDurationFull(durationMs) {
@@ -344,8 +344,9 @@
         }
 
         function createFlipCardDOM(item) {
+            const t = window.YayaRendererUtils.t;
             const card = document.createElement('div');
-            card.className = 'Box-row';
+            card.className = 'Box-row flip-history-card';
             card.style.marginBottom = '12px';
             card.style.transition = 'all 0.2s';
             card.id = `flip-card-${item.questionId}`;
@@ -357,43 +358,44 @@
             let actionBtnHtml = '';
 
             if (item.status === 1) {
-                statusHtml = `<span style="color:#faad14; border-color:#faad14; ${tagStyle}">待回答</span>`;
-                actionBtnHtml = `<span class="btn-text-danger" onclick="executeDeleteFlip('${item.questionId}', true)">撤回</span>`;
+                statusHtml = `<span style="color:#faad14; border-color:#faad14; ${tagStyle}">${t('待回答')}</span>`;
+                actionBtnHtml = `<span class="btn-text-danger" onclick="executeDeleteFlip('${item.questionId}', true)">${t('撤回')}</span>`;
             } else if (item.status === 2) {
-                statusHtml = `<span style="color:#52c41a; border-color:#52c41a; ${tagStyle}">已翻牌</span>`;
-                actionBtnHtml = `<span class="btn-text-gray" onclick="executeDeleteFlip('${item.questionId}', false)">删除</span>`;
+                statusHtml = `<span style="color:#52c41a; border-color:#52c41a; ${tagStyle}">${t('已翻牌')}</span>`;
+                actionBtnHtml = `<span class="btn-text-gray" onclick="executeDeleteFlip('${item.questionId}', false)">${t('删除')}</span>`;
             } else if (item.status === 3) {
-                statusHtml = `<span style="color:#ff4d4f; border-color:#ff4d4f; ${tagStyle}">已退款</span>`;
-                actionBtnHtml = `<span class="btn-text-gray" onclick="executeDeleteFlip('${item.questionId}', false)">删除</span>`;
+                statusHtml = `<span style="color:#ff4d4f; border-color:#ff4d4f; ${tagStyle}">${t('已退款')}</span>`;
+                actionBtnHtml = `<span class="btn-text-gray" onclick="executeDeleteFlip('${item.questionId}', false)">${t('删除')}</span>`;
             } else if (item.status === 5) {
-                statusHtml = `<span style="color:#1890ff; border-color:#1890ff; ${tagStyle}">翻牌中</span>`;
-                actionBtnHtml = `<span class="btn-text-danger" onclick="executeDeleteFlip('${item.questionId}', true)">撤回</span>`;
+                statusHtml = `<span style="color:#1890ff; border-color:#1890ff; ${tagStyle}">${t('翻牌中')}</span>`;
+                actionBtnHtml = `<span class="btn-text-danger" onclick="executeDeleteFlip('${item.questionId}', true)">${t('撤回')}</span>`;
             } else {
-                statusHtml = `<span style="color:#8c8c8c; border-color:#8c8c8c; ${tagStyle}">状态${item.status}</span>`;
-                actionBtnHtml = `<span class="btn-text-gray" onclick="executeDeleteFlip('${item.questionId}', false)">删除</span>`;
+                statusHtml = `<span style="color:#8c8c8c; border-color:#8c8c8c; ${tagStyle}">${t(`状态${item.status}`)}</span>`;
+                actionBtnHtml = `<span class="btn-text-gray" onclick="executeDeleteFlip('${item.questionId}', false)">${t('删除')}</span>`;
             }
 
             let answerTypeHtml = '';
-            if (item.answerType === 1) answerTypeHtml = `<span style="color:#1890ff; border-color:#1890ff; ${tagStyle}">文字</span>`;
-            else if (item.answerType === 2) answerTypeHtml = `<span style="color:#722ed1; border-color:#722ed1; ${tagStyle}">语音</span>`;
-            else if (item.answerType === 3) answerTypeHtml = `<span style="color:#eb2f96; border-color:#eb2f96; ${tagStyle}">视频</span>`;
-            else answerTypeHtml = `<span style="color:#8c8c8c; border-color:#8c8c8c; ${tagStyle}">未知</span>`;
+            if (item.answerType === 1) answerTypeHtml = `<span style="color:#1890ff; border-color:#1890ff; ${tagStyle}">${t('文字')}</span>`;
+            else if (item.answerType === 2) answerTypeHtml = `<span style="color:#722ed1; border-color:#722ed1; ${tagStyle}">${t('语音')}</span>`;
+            else if (item.answerType === 3) answerTypeHtml = `<span style="color:#eb2f96; border-color:#eb2f96; ${tagStyle}">${t('视频')}</span>`;
+            else answerTypeHtml = `<span style="color:#8c8c8c; border-color:#8c8c8c; ${tagStyle}">${t('未知')}</span>`;
 
             let privacyHtml = '';
-            if (item.type === 1) privacyHtml = `<span style="color:#13c2c2; border-color:#13c2c2; ${tagStyle}">公开</span>`;
-            else if (item.type === 2) privacyHtml = `<span style="color:#f5222d; border-color:#f5222d; ${tagStyle}">私密</span>`;
-            else if (item.type === 3) privacyHtml = `<span style="color:#595959; border-color:#595959; ${tagStyle}">匿名</span>`;
+            if (item.type === 1) privacyHtml = `<span style="color:#13c2c2; border-color:#13c2c2; ${tagStyle}">${t('公开')}</span>`;
+            else if (item.type === 2) privacyHtml = `<span style="color:#f5222d; border-color:#f5222d; ${tagStyle}">${t('私密')}</span>`;
+            else if (item.type === 3) privacyHtml = `<span style="color:#595959; border-color:#595959; ${tagStyle}">${t('匿名')}</span>`;
 
-            const costHtml = `<span style="color:#fa8c16; border-color:#fa8c16; ${tagStyle}">${item.cost}鸡腿</span>`;
+            const costHtml = `<span style="color:#fa8c16; border-color:#fa8c16; ${tagStyle}">${t(`${item.cost}鸡腿`)}</span>`;
 
             const headerDiv = document.createElement('div');
+            headerDiv.className = 'flip-history-card-header';
             headerDiv.style.cssText = 'display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px dashed var(--border); padding-bottom:8px;';
 
             headerDiv.innerHTML = `
-        <span style="font-size:14px; font-weight:bold; color:var(--text);">${qTimeStr}</span>
-        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+        <span class="flip-history-card-time" style="font-size:14px; font-weight:bold; color:var(--text);">${qTimeStr}</span>
+        <div class="flip-history-card-tags" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
             ${answerTypeHtml} ${privacyHtml} ${costHtml} ${statusHtml}
-            <div style="width: 1px; height: 16px; background: var(--border); margin: 0 4px;"></div>
+            <div class="flip-history-card-divider" style="width: 1px; height: 16px; background: var(--border); margin: 0 4px;"></div>
             ${actionBtnHtml}
         </div>`;
             card.appendChild(headerDiv);
@@ -409,7 +411,7 @@
                 const durationText = getFlipDuration(item);
                 if (durationText >= 0) {
                     const timeCostStr = formatFlipDurationFull(durationText);
-                    questionSideHtml = `<span class="flip-seven-day-countdown flip-answer-duration-side">耗时 ${timeCostStr}</span>`;
+                    questionSideHtml = `<span class="flip-seven-day-countdown flip-answer-duration-side">${t(`耗时 ${timeCostStr}`)}</span>`;
                 }
             }
 
@@ -418,7 +420,7 @@
             questionDiv.innerHTML = `
         <div class="flip-question-row" style="margin-bottom:6px; display:flex; align-items:center; justify-content:space-between; gap:12px;">
             <div class="flip-question-title-wrap" style="display:flex; align-items:center; min-width:0;">
-                <span class="flip-label question-tag" style="margin-right:8px; margin-top:0; margin-bottom:0; transform:none;">翻牌提问</span>
+                <span class="flip-label question-tag" style="margin-right:8px; margin-top:0; margin-bottom:0; transform:none;">${t('翻牌提问')}</span>
                 <span class="flip-question-title" style="font-size:14px; color:var(--text); line-height: 20px; min-width:0;">向 <strong style="color:var(--primary);">${memberName}</strong> 提问</span>
             </div>
             ${questionSideHtml ? `<div class="flip-question-side-inline">${questionSideHtml}</div>` : ''}
@@ -441,9 +443,9 @@
                 answerDiv.innerHTML = `
             <div class="flip-answer-row" style="margin-bottom:8px; display:flex; align-items:center; justify-content:space-between; gap:12px;">
                 <div class="flip-answer-title-wrap" style="display:flex; align-items:center; flex-wrap:wrap; min-width:0;">
-                    <span class="flip-label answer-tag" style="margin-right:8px; margin-top:0; margin-bottom:0; transform:none;">翻牌回答</span>
-                    <span class="flip-answer-title" style="font-size:14px; color:var(--text); line-height: 20px;"><strong style="color:var(--primary);">${memberName}</strong> 的回复</span>
-                    <span class="flip-answer-time" style="font-size:12px; color:var(--text-sub); margin-left:10px;">翻牌时间：${formattedAnswerTime}</span>
+                    <span class="flip-label answer-tag" style="margin-right:8px; margin-top:0; margin-bottom:0; transform:none;">${t('翻牌回答')}</span>
+                    <span class="flip-answer-title" style="font-size:14px; color:var(--text); line-height: 20px;"><strong style="color:var(--primary);">${memberName}</strong>${t('的回复')}</span>
+                    <span class="flip-answer-time" style="font-size:12px; color:var(--text-sub); margin-left:10px;">${t(`翻牌时间：${formattedAnswerTime}`)}</span>
                 </div>
             </div>`;
 
@@ -476,7 +478,7 @@
                             const downloadBtn = document.createElement('button');
                             downloadBtn.className = 'btn btn-secondary';
                             downloadBtn.style.cssText = 'width: 38px; height: 38px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 8px;';
-                            downloadBtn.title = '下载语音';
+                            downloadBtn.title = window.YayaRendererUtils.t('下载语音');
 
                             const downloadIcon = `
                                 <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
@@ -507,7 +509,9 @@
                             videoRow.style.cssText = 'display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap;';
 
                             if (typeof createCustomVideoPlayer === 'function') {
-                                videoRow.appendChild(createCustomVideoPlayer(url));
+                                videoRow.appendChild(createCustomVideoPlayer(url, {
+                                    useWebMediaProxy: true
+                                }));
                             } else {
                                 const video = document.createElement('video');
                                 video.src = url;
@@ -519,7 +523,7 @@
                             const downloadBtn = document.createElement('button');
                             downloadBtn.className = 'btn btn-secondary';
                             downloadBtn.style.cssText = 'width: 38px; height: 38px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; margin: 8px 0;';
-                            downloadBtn.title = '下载视频';
+                            downloadBtn.title = window.YayaRendererUtils.t('下载视频');
                             const downloadIcon = `
                                 <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
                                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -548,7 +552,7 @@
                 } catch (e) {
                     const errDiv = document.createElement('div');
                     errDiv.style.color = '#ff4d4f';
-                    errDiv.innerText = '无法解析回答内容';
+                    errDiv.innerText = window.YayaRendererUtils.t('无法解析回答内容');
                     answerDiv.appendChild(errDiv);
                 }
                 if (questionSideHtml) {
@@ -656,7 +660,7 @@
 
             const year = flipDatePickerState.displayYear;
             const month = flipDatePickerState.displayMonth;
-            label.textContent = `${year}年${padFlipDatePart(month + 1)}月`;
+            label.textContent = window.YayaRendererUtils.t(`${year}年${padFlipDatePart(month + 1)}月`);
 
             const firstDay = new Date(year, month, 1);
             const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -1259,7 +1263,7 @@
                     sidebarBtn.disabled = true;
                     sidebarBtn.style.opacity = '0.5';
                     sidebarBtn.style.cursor = 'not-allowed';
-                    sidebarBtn.title = '暂无数据，请先在翻牌记录页刷新数据';
+                    sidebarBtn.title = window.YayaRendererUtils.t('暂无数据，请先在翻牌记录页刷新数据');
                 }
             }
 
@@ -1279,7 +1283,7 @@
                 headerBtn.disabled = true;
                 headerBtn.style.opacity = '0.5';
                 headerBtn.style.cursor = 'not-allowed';
-                headerBtn.title = '暂无数据，请先点击右侧“刷新”按钮获取数据';
+                headerBtn.title = window.YayaRendererUtils.t('暂无数据，请先点击右侧“刷新”按钮获取数据');
             }
 
             statusText.appendChild(headerBtn);
@@ -1322,7 +1326,7 @@
 
             const firstBtn = document.createElement('button');
             firstBtn.className = 'pagination-btn';
-            firstBtn.innerText = '首页';
+            firstBtn.innerText = window.YayaRendererUtils.t('首页');
             firstBtn.disabled = (currentPage === 0);
             if (firstBtn.disabled) firstBtn.style.opacity = '0.5';
             firstBtn.onclick = () => renderLocalPage(0);
@@ -1330,7 +1334,7 @@
 
             const prevBtn = document.createElement('button');
             prevBtn.className = 'pagination-btn';
-            prevBtn.innerText = '上一页';
+            prevBtn.innerText = window.YayaRendererUtils.t('上一页');
             prevBtn.disabled = (currentPage === 0);
             if (prevBtn.disabled) prevBtn.style.opacity = '0.5';
             prevBtn.onclick = () => changeFlipPage(-1);
@@ -1349,7 +1353,7 @@
 
             const nextBtn = document.createElement('button');
             nextBtn.className = 'pagination-btn';
-            nextBtn.innerText = '下一页';
+            nextBtn.innerText = window.YayaRendererUtils.t('下一页');
             nextBtn.disabled = (currentPage >= totalPages - 1);
             if (nextBtn.disabled) nextBtn.style.opacity = '0.5';
             nextBtn.onclick = () => changeFlipPage(1);
@@ -1357,7 +1361,7 @@
 
             const lastBtn = document.createElement('button');
             lastBtn.className = 'pagination-btn';
-            lastBtn.innerText = '尾页';
+            lastBtn.innerText = window.YayaRendererUtils.t('尾页');
             lastBtn.disabled = (currentPage >= totalPages - 1);
             if (lastBtn.disabled) lastBtn.style.opacity = '0.5';
             lastBtn.onclick = () => renderLocalPage(totalPages - 1);
@@ -1447,6 +1451,16 @@
             if (priceLoading) priceLoading.style.display = 'block';
             if (sendMsg) sendMsg.innerText = '';
 
+            const isMobileWeb = window.desktop?.platform === 'web'
+                && window.matchMedia?.('(max-width: 768px)').matches;
+            if (isMobileWeb) {
+                memberInput?.blur();
+                window.requestAnimationFrame(() => {
+                    const sendFlipView = document.getElementById('view-send-flip');
+                    if (sendFlipView) sendFlipView.scrollTop = 0;
+                });
+            }
+
             if (id && typeof window.syncWebFlipSendRoute === 'function') {
                 window.syncWebFlipSendRoute(id);
             }
@@ -1484,7 +1498,7 @@
 
             const token = getSafeToken();
             if (!token) {
-                balanceEl.innerText = '未登录';
+                balanceEl.innerText = window.YayaRendererUtils.t('未登录');
                 return;
             }
 
@@ -1524,13 +1538,13 @@
                     renderFlipOptions();
                     if (configArea) configArea.style.display = 'block';
                 } else if (msgDiv) {
-                    msgDiv.innerText = `无法获取配置: ${res.msg || '未知错误'}`;
+                    msgDiv.innerText = window.YayaRendererUtils.t(`无法获取配置: ${res.msg || '未知错误'}`);
                     msgDiv.style.color = 'red';
                 }
             } catch (e) {
                 if (loading) loading.style.display = 'none';
                 if (msgDiv) {
-                    msgDiv.innerText = `错误: ${e.message}`;
+                    msgDiv.innerText = window.YayaRendererUtils.t(`错误: ${e.message}`);
                     msgDiv.style.color = 'red';
                 }
             }
@@ -1623,10 +1637,10 @@
             if (currentVal < minPrice) {
                 input.value = minPrice;
                 if (msgDiv) {
-                msgDiv.innerText = `鸡腿数不能低于底价 ${minPrice} 🍗`;
+                msgDiv.innerText = window.YayaRendererUtils.t(`鸡腿数不能低于底价 ${minPrice} 🍗`);
                     msgDiv.style.color = '#fa8c16';
                     setTimeout(() => {
-                        if (msgDiv.innerText.includes('不能低于底价')) msgDiv.innerText = '';
+                        if (msgDiv.innerText.includes('不能低于底价')) msgDiv.innerText = window.YayaRendererUtils.t('');
                     }, 3000);
                 }
             }
@@ -1689,25 +1703,25 @@
             msgDiv.style.color = '#ff4d4f';
 
             if (!memberId) {
-                msgDiv.innerText = '请先选择成员';
+                msgDiv.innerText = window.YayaRendererUtils.t('请先选择成员');
                 return;
             }
             if (!content) {
-                msgDiv.innerText = '请输入提问内容';
+                msgDiv.innerText = window.YayaRendererUtils.t('请输入提问内容');
                 return;
             }
             if (content.length > 200) {
-                msgDiv.innerText = '翻牌内容不能超过 200 字';
+                msgDiv.innerText = window.YayaRendererUtils.t('翻牌内容不能超过 200 字');
                 return;
             }
             if (!answerTypeVal || !costText) {
-                msgDiv.innerText = '请选择有效的回答类型并确认鸡腿数';
+                msgDiv.innerText = window.YayaRendererUtils.t('请选择有效的回答类型并确认鸡腿数');
                 return;
             }
 
             const cost = parseInt(costText, 10);
             if (cost < minPrice) {
-                msgDiv.innerText = `发送失败：您填写的鸡腿数不能低于官方设定的 ${minPrice} 🍗`;
+                msgDiv.innerText = window.YayaRendererUtils.t(`发送失败：您填写的鸡腿数不能低于官方设定的 ${minPrice} 🍗`);
                 if (costInput) costInput.value = String(minPrice);
                 return;
             }
@@ -1716,8 +1730,8 @@
             const type = parseInt(privacyTypeVal, 10);
 
             btn.disabled = true;
-            btn.innerText = '发送中...';
-            msgDiv.innerText = '正在提交请求...';
+            btn.innerText = window.YayaRendererUtils.t('发送中...');
+            msgDiv.innerText = window.YayaRendererUtils.t('正在提交请求...');
             msgDiv.style.color = '#666';
 
             try {
@@ -1736,7 +1750,7 @@
                 });
 
                 if (res.success) {
-                    msgDiv.innerText = '发送成功！2秒后将自动跳转到翻牌记录';
+                    msgDiv.innerText = window.YayaRendererUtils.t('发送成功！2秒后将自动跳转到翻牌记录');
                     msgDiv.style.color = '#28a745';
 
                     const contentInput = document.getElementById('flip-content-input');
@@ -1753,22 +1767,22 @@
                         switchView('flip');
 
                         btn.disabled = false;
-                        btn.innerText = '提问';
+                        btn.innerText = window.YayaRendererUtils.t('提问');
                         msgDiv.innerText = '';
 
                         void updateLatestFlips();
                     }, 2000);
                 } else {
-                    msgDiv.innerText = `发送失败: ${res.msg}`;
+                    msgDiv.innerText = window.YayaRendererUtils.t(`发送失败: ${res.msg}`);
                     msgDiv.style.color = '#ff4d4f';
                     btn.disabled = false;
-                    btn.innerText = '提问';
+                    btn.innerText = window.YayaRendererUtils.t('提问');
                 }
             } catch (e) {
-                msgDiv.innerText = `出错: ${e.message}`;
+                msgDiv.innerText = window.YayaRendererUtils.t(`出错: ${e.message}`);
                 msgDiv.style.color = '#ff4d4f';
                 btn.disabled = false;
-                btn.innerText = '提问';
+                btn.innerText = window.YayaRendererUtils.t('提问');
             }
         }
 

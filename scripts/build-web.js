@@ -270,6 +270,90 @@ function configureWebDocumentBase(indexHtml) {
     return indexHtml.replace(headTag, `${headTag}\n    <base href="/">`);
 }
 
+function configureSolidWebBackground(indexHtml) {
+    const defaultBackgroundSource = ' src="https://data.gnz.hk/assets/default-background.jpg?v=20260829"';
+    const rendererThemeTag = '    <script src="./src/renderer/theme-init.js?v=__YAYA_BUILD_VERSION__"></script>';
+    const webThemeTag = '    <script src="./src/web/solid-background.js?v=__YAYA_BUILD_VERSION__"></script>';
+    if (!indexHtml.includes(defaultBackgroundSource) || !indexHtml.includes(rendererThemeTag)) {
+        throw new Error('Web background bootstrap anchors not found');
+    }
+    return indexHtml
+        .replace(defaultBackgroundSource, '')
+        .replace(rendererThemeTag, webThemeTag);
+}
+
+function configureWebFeedbackContentSecurityPolicy(indexHtml) {
+    const originalPolicy = "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' file: https: data: blob:; media-src 'self' file: https: http: data: blob:; connect-src 'self' file: https: http: ws: wss: data: blob:; font-src 'self' data:;";
+    const feedbackPolicy = "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: https://*.tawk.to https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://*.tawk.to https://fonts.googleapis.com https://cdn.jsdelivr.net; img-src 'self' file: https: data: blob:; media-src 'self' file: https: http: data: blob:; connect-src 'self' file: https: http: ws: wss: data: blob:; font-src 'self' data: https://*.tawk.to https://fonts.gstatic.com; frame-src https://*.tawk.to; form-action 'self' https://*.tawk.to;";
+    if (!indexHtml.includes(originalPolicy)) {
+        throw new Error('Web Content Security Policy block not found');
+    }
+    return indexHtml.replace(originalPolicy, feedbackPolicy);
+}
+
+function configureEarlyWebLocale(indexHtml) {
+    const titleTag = '    <title>牙牙消息</title>';
+    if (!indexHtml.includes(titleTag)) {
+        throw new Error('Web document title tag not found');
+    }
+    const bootstrap = `    <title></title>
+    <script>
+        (() => {
+            const normalizeLocale = (value) => {
+                const locale = String(value || '').trim().replace('_', '-');
+                if (/^zh-(?:Hant-)?(?:HK|MO)$/i.test(locale)) return 'zh-HK';
+                if (/^zh-(?:Hant-)?TW$/i.test(locale) || /^zh-Hant/i.test(locale)) return 'zh-TW';
+                if (/^zh/i.test(locale)) return 'zh-CN';
+                if (/^en/i.test(locale)) return 'en';
+                if (/^ko/i.test(locale)) return 'ko';
+                if (/^ja/i.test(locale)) return 'ja';
+                return '';
+            };
+            let urlLocale = '';
+            let storedLocale = '';
+            try {
+                urlLocale = normalizeLocale(new URL(window.location.href).searchParams.get('lang'));
+                storedLocale = normalizeLocale(window.localStorage.getItem('yaya_web_locale_v1'));
+            } catch (_) {
+                // Storage can be unavailable in restricted browsing modes.
+            }
+            const locale = urlLocale
+                || storedLocale
+                || normalizeLocale(document.documentElement.dataset.geoLocale)
+                || normalizeLocale(navigator.languages?.[0] || navigator.language)
+                || 'zh-CN';
+            const titles = {
+                'zh-CN': '牙牙消息',
+                'zh-HK': '牙牙消息',
+                'zh-TW': '牙牙訊息',
+                en: 'yaya msg',
+                ko: 'yaya msg',
+                ja: 'yaya msg'
+            };
+            document.documentElement.dataset.initialLocale = locale;
+            document.documentElement.lang = locale;
+            if (locale !== 'zh-CN') document.documentElement.classList.add('web-i18n-pending');
+            document.title = titles[locale] || titles['zh-CN'];
+        })();
+    </script>`;
+    return indexHtml.replace(titleTag, bootstrap);
+}
+
+function configureWebLocalePacks(indexHtml) {
+    const shellTag = '    <script src="./src/web/web-shell.js?v=__YAYA_BUILD_VERSION__"></script>';
+    const homeTag = '    <script src="./src/web/pocket-home.js?v=__YAYA_BUILD_VERSION__"></script>';
+    if (!indexHtml.includes(shellTag) || !indexHtml.includes(homeTag)) {
+        throw new Error('Web locale script anchors not found');
+    }
+    const packTags = ['zh-CN', 'zh-TW', 'zh-HK', 'en', 'ko', 'ja']
+        .map((locale) => `    <script src="./src/web/i18n/${locale}.js?v=__YAYA_BUILD_VERSION__"></script>`)
+        .join('\n');
+    const translatorTag = '    <script src="./src/web/i18n/page-translator.js?v=__YAYA_BUILD_VERSION__"></script>';
+    return indexHtml
+        .replace(shellTag, `${packTags}\n${shellTag}`)
+        .replace(homeTag, `${homeTag}\n${translatorTag}`);
+}
+
 function versionWebIndexAssets(indexHtml, fallbackVersion) {
     const versionedReference = /((?:src|href)="\.\/|(?:src|href)=")([^"?]+)\?v=__YAYA_BUILD_VERSION__(")/g;
     const withPerFileVersions = indexHtml.replace(versionedReference, (match, prefix, assetPath, suffix) => {
@@ -318,6 +402,10 @@ async function buildWebAssets() {
     const indexPath = path.join(outputDir, 'index.html');
     let indexHtml = fs.readFileSync(indexPath, 'utf8');
     indexHtml = configureWebDocumentBase(indexHtml);
+    indexHtml = configureSolidWebBackground(indexHtml);
+    indexHtml = configureWebFeedbackContentSecurityPolicy(indexHtml);
+    indexHtml = configureEarlyWebLocale(indexHtml);
+    indexHtml = configureWebLocalePacks(indexHtml);
     indexHtml = configureLazyWebMediaVendors(indexHtml);
     indexHtml = await bundleRenderer(indexHtml);
     indexHtml = versionWebIndexAssets(indexHtml, buildVersion);

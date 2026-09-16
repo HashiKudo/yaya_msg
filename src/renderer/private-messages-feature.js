@@ -91,12 +91,12 @@
                 btn.style.display = 'inline-flex';
                 btn.style.alignItems = 'center';
                 btn.style.justifyContent = 'center';
-                btn.innerText = `有 ${count} 条新消息`;
+                btn.innerText = window.YayaRendererUtils.t(`有 ${count} 条新消息`);
                 return;
             }
 
             btn.style.display = 'none';
-            btn.innerText = '有 0 条新消息';
+            btn.innerText = window.YayaRendererUtils.t('有 0 条新消息');
         }
 
         function resetPrivateMessagePendingMessages() {
@@ -197,7 +197,7 @@
             const viewEl = document.getElementById('view-private-messages');
 
             if (headerEl) headerEl.style.visibility = 'hidden';
-            if (titleEl) titleEl.textContent = '私信详情';
+            if (titleEl) titleEl.textContent = window.YayaRendererUtils.t('私信详情');
             if (subtitleEl) subtitleEl.textContent = '--';
             if (avatarEl) {
                 avatarEl.src = './icon.png';
@@ -497,7 +497,7 @@
 
             if (deleteButton) {
                 deleteButton.disabled = !msgId || deletingPrivateMessageIds.has(msgId);
-                deleteButton.textContent = deletingPrivateMessageIds.has(msgId) ? '删除中' : '删除';
+                deleteButton.textContent = window.YayaRendererUtils.t(deletingPrivateMessageIds.has(msgId) ? '删除中' : '删除');
             }
 
             menu.style.display = 'block';
@@ -956,7 +956,7 @@
                 costInput.disabled = true;
             }
             if (sendButton && !privateMessageDetailState.sending) {
-                sendButton.textContent = '发送';
+                sendButton.textContent = window.YayaRendererUtils.t('发送');
             }
             setPrivateMessageFlipStatus('');
             setPrivateMessageFlipPanelVisible(false);
@@ -974,7 +974,7 @@
                 item.className = 'suggestion-item';
                 item.style.color = '#999';
                 item.style.cursor = 'default';
-                item.textContent = '未开通';
+                item.textContent = window.YayaRendererUtils.t('未开通');
                 answerDropdown.appendChild(item);
                 if (answerType) answerType.value = '';
                 if (answerDisplay) {
@@ -1139,7 +1139,7 @@
                 if (privacyDropdown) privacyDropdown.style.display = 'none';
             }
             if (sendButton && !privateMessageDetailState.sending) {
-                sendButton.textContent = isEnabled ? '发送翻牌' : '发送';
+                sendButton.textContent = window.YayaRendererUtils.t(isEnabled ? '发送翻牌' : '发送');
             }
             const imageBtn = document.getElementById('btn-send-private-message-image');
             const imageInput = document.getElementById('private-message-image-file');
@@ -1233,7 +1233,7 @@
             if (reset) {
                 privateMessageDetailRequestGeneration += 1;
                 privateMessageDetailState.targetUserId = String(targetUserId || '');
-                privateMessageDetailState.title = title || '私信详情';
+                privateMessageDetailState.title = window.YayaRendererUtils.t(title || '私信详情');
                 privateMessageDetailState.avatar = avatar || './icon.png';
                 privateMessageDetailState.cursor = 0;
                 privateMessageDetailState.items = [];

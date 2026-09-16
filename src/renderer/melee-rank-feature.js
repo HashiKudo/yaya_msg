@@ -117,7 +117,7 @@
         currentMeleeRankMode = mode;
         const button = getEl('btn-query-person-melee-rank');
         if (button) {
-            button.textContent = mode === 'person' ? '成员榜' : '总榜';
+            button.textContent = window.YayaRendererUtils.t(mode === 'person' ? '成员榜' : '总榜');
             button.classList.toggle('active', mode === 'person');
         }
     }
@@ -126,14 +126,14 @@
         const button = getEl('btn-query-melee-rank');
         if (!button) return;
         button.disabled = !!loading;
-        button.textContent = loading ? '查询中' : '查询';
+        button.textContent = window.YayaRendererUtils.t(loading ? '查询中' : '查询');
     }
 
     function setPersonMeleeLoading(loading) {
         const button = getEl('btn-query-person-melee-rank');
         if (!button) return;
         button.disabled = !!loading;
-        button.textContent = loading ? '读取中' : (currentMeleeRankMode === 'person' ? '成员榜' : '总榜');
+        button.textContent = window.YayaRendererUtils.t(loading ? '读取中' : (currentMeleeRankMode === 'person' ? '成员榜' : '总榜'));
     }
 
     async function queryMeleeRankCurrentMode() {

@@ -171,7 +171,7 @@ function createPocketAndroidHeaders(token, pa) {
     const headers = createHeaders(token, pa);
     headers.appInfo = JSON.stringify({
         IMEI: deviceId,
-        appBuild: '26070701',
+        appBuild: '26082801',
         appName: 'pocket48',
         appVersion: '7.1.43',
         deviceId,
@@ -182,7 +182,7 @@ function createPocketAndroidHeaders(token, pa) {
         phoneSystemVersion: '12',
         vendor: 'Samsung'
     });
-    headers['User-Agent'] = 'PocketFans201807/7.1.43_26070701 (SM-G9730:Android 12;Samsung V417IR release-keys)';
+    headers['User-Agent'] = 'PocketFans201807/7.1.43_26082801 (SM-G9730:Android 12;Samsung V417IR release-keys)';
     headers['Content-Type'] = 'application/json; charset=UTF-8';
     return headers;
 }
@@ -493,11 +493,22 @@ async function postJson(url, payload, headers, options = {}) {
     const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
     let response;
     let text;
+    const rawNumericKeys = new Set(Array.isArray(options.rawNumericKeys) ? options.rawNumericKeys : []);
+    const rawNumericMarkers = [];
+    let requestBody = JSON.stringify(payload || {}, (key, value) => {
+        if (!rawNumericKeys.has(key) || !/^\d+$/.test(String(value || ''))) return value;
+        const marker = `__YAYA_RAW_JSON_INTEGER_${rawNumericMarkers.length}__`;
+        rawNumericMarkers.push({ marker, value: String(value) });
+        return marker;
+    });
+    rawNumericMarkers.forEach(({ marker, value }) => {
+        requestBody = requestBody.replace(JSON.stringify(marker), value);
+    });
     try {
         response = await fetch(url, {
             method: 'POST',
             headers,
-            body: JSON.stringify(payload || {}),
+            body: requestBody,
             ...(controller ? { signal: controller.signal } : {})
         });
         text = await response.text();
@@ -925,6 +936,47 @@ async function fetchOpenLivePublicList({ token, pa, groupId = 0, next = 0, recor
     );
     if (response.status === 200 && response.data?.status === 200) return { success: true, content: response.data.content };
     return apiError(response);
+}
+
+async function fetchRoomEssenceMessages({ channelId, serverId, token, pa, nextTime = 0, limit = 50 }) {
+    if (!token) return missingToken();
+    const headers = createHeaders(token, pa);
+    let finalServerId = serverId;
+    if (!finalServerId || finalServerId === 0) {
+        finalServerId = await resolveServerId(channelId, headers);
+    }
+    const response = await postJson(
+        'https://pocketapi.48.cn/im/api/v1/team/essence/message/list',
+        {
+            channelId: parseInt(channelId, 10),
+            serverId: parseInt(finalServerId, 10),
+            nextTime,
+            limit: Math.max(1, Math.min(100, Number(limit) || 50))
+        },
+        headers
+    );
+    if (response.status === 200 && response.data?.status === 200) {
+        return { success: true, data: response.data, usedServerId: finalServerId };
+    }
+    return apiError(response);
+}
+
+export async function deleteMemberRoomMessage({ token, pa, accId, msgIdClient, channelId, msgTime }) {
+    if (!token) return missingToken();
+    const response = await postJson(
+        'https://pocketapi.48.cn/im/api/v1/team/msg/delete',
+        {
+            accId: String(accId || '').trim(),
+            msgIdClient: String(msgIdClient || '').trim(),
+            channelId: String(channelId || '').trim(),
+            msgTime: Number(msgTime)
+        },
+        createFriendshipHeaders(token, pa)
+    );
+    if (response.status === 200 && (response.data?.success || response.data?.status === 200)) {
+        return { success: true, msg: response.data?.message || '删除成功' };
+    }
+    return apiError(response, '删除成员房间消息失败');
 }
 
 async function fetchSeinePerformanceList({ token, pa, groupId = 0, next = 0 } = {}) {
@@ -1589,10 +1641,35 @@ async function sendLiveGift({ token, pa, giftId, liveId, acceptUserId, giftNum }
         },
         createModernHeaders(token, pa)
     );
-    if (response.status === 200 && response.data?.status === 200) {
-        return { success: true, msg: response.data.message || '送礼成功', content: response.data.content };
+    const diagnostic = {
+        httpStatus: response.status,
+        apiStatus: response.data?.status ?? null,
+        apiSuccess: response.data?.success ?? null,
+        route: 'contribution-api',
+        hasPa: Boolean(pa),
+        contentKeys: response.data?.content && typeof response.data.content === 'object'
+            ? Object.keys(response.data.content).sort()
+            : [],
+        content: response.data?.content && typeof response.data.content === 'object'
+            ? {
+                giftNum: Number(response.data.content.giftNum ?? 0),
+                money: Number(response.data.content.money ?? 0),
+                userId: String(response.data.content.userId ?? '')
+            }
+            : null
+    };
+    const returnedGiftNum = Number(response.data?.content?.giftNum);
+    const explicitZeroGift = Number.isFinite(returnedGiftNum)
+        && Object.prototype.hasOwnProperty.call(response.data?.content || {}, 'giftNum')
+        && returnedGiftNum < 1;
+    if (response.status === 200 && response.data?.status === 200 && response.data?.success !== false && !explicitZeroGift) {
+        return { success: true, msg: response.data.message || '送礼成功', content: response.data.content, diagnostic };
     }
-    return { success: false, msg: response.data?.message || '送礼失败' };
+    return {
+        success: false,
+        msg: explicitZeroGift ? '官方接口未确认有效赠送，本次未扣款' : (response.data?.message || '送礼失败'),
+        diagnostic
+    };
 }
 
 async function fetchGiftList({ token, pa, liveId }) {
@@ -2475,6 +2552,7 @@ const pocketMethods = Object.freeze({
     checkIn,
     switchBigSmall,
     fetchRoomMessages,
+    fetchRoomEssenceMessages,
     fetchPrivateMessageList,
     fetchPrivateMessageInfo,
     deletePrivateMessage,

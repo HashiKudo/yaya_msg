@@ -585,14 +585,14 @@
                 metaEl.style.visibility = 'visible';
             }
             if (titleEl) {
-                titleEl.textContent = currentOpenLive?.title || info.title || roomConfig?.title || 'B站直播';
+                titleEl.textContent = window.YayaRendererUtils.t(currentOpenLive?.title || info.title || roomConfig?.title || 'B站直播');
             }
 
             if (upEl) {
                 if (currentOpenLive?.subTitle) {
                     upEl.textContent = currentOpenLive.subTitle;
                 } else {
-                    upEl.textContent = info.uname ? `UP 主：${info.uname}` : '信息暂不可用';
+                    upEl.textContent = window.YayaRendererUtils.t(info.uname ? `UP 主：${info.uname}` : '信息暂不可用');
                 }
             }
 

@@ -81,7 +81,7 @@ async function preparePayload(channel, payload) {
         }
     }
 
-    if ((channel === 'login-send-sms' || channel === 'login-by-code') && !prepared.pa) {
+    if ((channel === 'login-send-sms' || channel === 'login-by-code' || channel === 'send-live-gift') && !prepared.pa) {
         await ensureWasmLoaded();
         prepared.pa = generatePa() || '';
     }
@@ -100,6 +100,18 @@ async function invoke(channel, payload = {}) {
         return {
             success: false,
             msg: error?.message || 'Pocket API 请求失败'
+        };
+    }
+}
+
+async function deleteMemberRoomMessage(payload = {}) {
+    try {
+        const runtime = await loadPocketRuntime();
+        return await runtime.deleteMemberRoomMessage(payload);
+    } catch (error) {
+        return {
+            success: false,
+            msg: error?.message || '删除成员房间消息失败'
         };
     }
 }
@@ -157,5 +169,6 @@ async function fetchPocketApiPath({ path: apiPath, postData } = {}) {
 
 module.exports = {
     invoke,
+    deleteMemberRoomMessage,
     fetchPocketApiPath
 };

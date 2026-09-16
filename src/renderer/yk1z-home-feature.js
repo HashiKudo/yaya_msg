@@ -180,7 +180,7 @@
 
                 const descSpan = document.createElement('span');
                 descSpan.className = 'home-card-desc';
-                descSpan.textContent = button.desc || (button.type === 'view' ? '进入对应页面' : '打开外部链接');
+                descSpan.textContent = window.YayaRendererUtils.t(button.desc || (button.type === 'view' ? '进入对应页面' : '打开外部链接'));
                 buttonEl.appendChild(descSpan);
 
                 fragment.appendChild(buttonEl);

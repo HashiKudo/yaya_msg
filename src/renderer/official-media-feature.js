@@ -251,7 +251,7 @@
             const btn = document.getElementById('audio-play-mode-btn');
             if (!btn) return;
             btn.innerHTML = getPlayerModeIconSvg(currentAudioProgramPlayMode);
-            btn.title = `当前模式：${getPlayerModeLabel(currentAudioProgramPlayMode)}`;
+            btn.title = window.YayaRendererUtils.t(`当前模式：${getPlayerModeLabel(currentAudioProgramPlayMode)}`);
             btn.classList.toggle('active', currentAudioProgramPlayMode !== 'sequence');
         }
 
@@ -259,7 +259,7 @@
             const btn = document.getElementById('music-play-mode-btn');
             if (!btn) return;
             btn.innerHTML = getPlayerModeIconSvg(currentMusicPlayMode);
-            btn.title = `当前模式：${getPlayerModeLabel(currentMusicPlayMode)}`;
+            btn.title = window.YayaRendererUtils.t(`当前模式：${getPlayerModeLabel(currentMusicPlayMode)}`);
             btn.classList.toggle('active', currentMusicPlayMode !== 'sequence');
         }
 
@@ -326,7 +326,7 @@
             const countEl = document.getElementById('audio-player-queue-count');
             if (!listEl || !countEl) return;
 
-            countEl.innerText = `${audioProgramPlaylist.length} 首`;
+            countEl.innerText = window.YayaRendererUtils.t(`${audioProgramPlaylist.length} 首`);
 
             if (!audioProgramPlaylist.length) {
                 listEl.innerHTML = '<div class="empty-state" style="padding:20px;">暂无播放列表</div>';
@@ -526,7 +526,7 @@
             const countEl = document.getElementById('music-player-queue-count');
             if (!listEl || !countEl) return;
 
-            countEl.innerText = `${musicPlaylist.length} 首`;
+            countEl.innerText = window.YayaRendererUtils.t(`${musicPlaylist.length} 首`);
 
             if (!musicPlaylist.length) {
                 listEl.innerHTML = '<div class="empty-state" style="padding:20px;">暂无播放列表</div>';
@@ -870,7 +870,7 @@
                         const errorMsg = document.createElement('div');
                         errorMsg.className = 'empty-state';
                         errorMsg.style.cssText = 'grid-column: 1 / -1; color: #ff4d4f;';
-                        errorMsg.innerText = `加载中断: ${res ? res.message : '网络错误'}`;
+                        errorMsg.innerText = window.YayaRendererUtils.t(`加载中断: ${res ? res.message : '网络错误'}`);
                         container.appendChild(errorMsg);
                     }
                 }
@@ -878,7 +878,7 @@
                 const errorMsg = document.createElement('div');
                 errorMsg.className = 'empty-state';
                 errorMsg.style.cssText = 'grid-column: 1 / -1; color: #ff4d4f;';
-                errorMsg.innerText = `请求出错: ${e.message}`;
+                errorMsg.innerText = window.YayaRendererUtils.t(`请求出错: ${e.message}`);
                 container.appendChild(errorMsg);
             } finally {
                 if (startCtime === 0 && fetchedItems.length) {
@@ -934,7 +934,7 @@
                     document.getElementById('audio-player-cover').src = coverUrl;
                     document.getElementById('audio-player-title').innerText = title;
                     const subTitleEl = document.getElementById('audio-player-subtitle');
-                    subTitleEl.innerText = '正在解析地址...';
+                    subTitleEl.innerText = window.YayaRendererUtils.t('正在解析地址...');
 
                     const cleanPath = filePath.startsWith('/') ? filePath.substring(1) : filePath;
 
@@ -976,7 +976,7 @@
 
                     audioEl.onplaying = () => {
                         if (requestId !== currentAudioPlayRequestId) return;
-                        subTitleEl.innerText = subTitle || '正在播放';
+                        subTitleEl.innerText = window.YayaRendererUtils.t(subTitle || '正在播放');
 
                         if (coverEl) coverEl.classList.remove('vinyl-pause');
                     };
@@ -991,7 +991,7 @@
                         currentUrlIndex++;
                         if (currentUrlIndex < tryUrls.length) {
                             console.log(`[电台播放] 节点失效，尝试备用线路 (${currentUrlIndex + 1}/${tryUrls.length})`);
-                            subTitleEl.innerText = `切换线路 (${currentUrlIndex + 1}/${tryUrls.length})...`;
+                            subTitleEl.innerText = window.YayaRendererUtils.t(`切换线路 (${currentUrlIndex + 1}/${tryUrls.length})...`);
 
                             audioEl.src = tryUrls[currentUrlIndex];
                             if (shouldAutoplay) {
@@ -1001,7 +1001,7 @@
                             }
                         } else {
                             showToast('无法播放，该节目文件可能已在服务器下线');
-                            subTitleEl.innerText = '加载失败 (文件已失效)';
+                            subTitleEl.innerText = window.YayaRendererUtils.t('加载失败 (文件已失效)');
 
                             if (coverEl) coverEl.classList.add('vinyl-pause');
                         }
@@ -1021,7 +1021,7 @@
                         }
                         saveAudioProgramPlayerState({ currentTime: resumeTime });
                         if (!shouldAutoplay) {
-                            subTitleEl.innerText = subTitle || '已暂停';
+                            subTitleEl.innerText = window.YayaRendererUtils.t(subTitle || '已暂停');
                         }
                     };
                     if (audioEl.readyState >= 1) {
@@ -1404,9 +1404,9 @@
 
             if (titleEl) {
                 titleEl.classList.remove('is-scrolling');
-                titleEl.innerText = "未播放";
+                titleEl.innerText = window.YayaRendererUtils.t("未播放");
             }
-            if (subtitleEl) subtitleEl.innerText = "准备就绪";
+            if (subtitleEl) subtitleEl.innerText = window.YayaRendererUtils.t("准备就绪");
             if (coverEl) {
                 coverEl.src = "./icon.png";
                 coverEl.classList.add('vinyl-pause');
@@ -1902,7 +1902,7 @@
 
                         audioEl.src = fullUrl;
                         titleEl.innerText = title;
-                        subTitleEl.innerText = '正在加载音频...';
+                        subTitleEl.innerText = window.YayaRendererUtils.t('正在加载音频...');
                         coverEl.src = thumbPath ? `https://source.48.cn${thumbPath}` : './icon.png';
 
                         playerBar.style.display = 'flex';
@@ -1923,7 +1923,7 @@
 
                         audioEl.onplaying = () => {
                             if (requestId !== currentMusicPlayRequestId) return;
-                            subTitleEl.innerText = subTitle || '官方单曲';
+                            subTitleEl.innerText = window.YayaRendererUtils.t(subTitle || '官方单曲');
                             if (coverEl) coverEl.classList.remove('vinyl-pause');
                             if (dotEl) {
                                 dotEl.style.background = '#28a745';
@@ -1943,7 +1943,7 @@
                         audioEl.play().catch(e => {
                             if (requestId !== currentMusicPlayRequestId) return;
                             console.warn('自动播放拦截', e);
-                            subTitleEl.innerText = '已就绪，请点击播放 ▶';
+                            subTitleEl.innerText = window.YayaRendererUtils.t('已就绪，请点击播放 ▶');
                         });
 
                         document.querySelectorAll('.music-card').forEach(card => {
@@ -2108,7 +2108,7 @@
             renderVideoCategories(cache.categories);
             const loadingTip = ensureVideoLoadingTip(grid);
             loadingTip.style.display = 'none';
-            loadingTip.innerText = '— 已经到底啦 —';
+            loadingTip.innerText = window.YayaRendererUtils.t('— 已经到底啦 —');
             bucket.items.forEach(item => renderVideoCard(item, loadingTip));
             videoNextCtime = bucket.nextCtime || 0;
             videoHasMore = false;
@@ -2199,7 +2199,7 @@
 
                     if (data.length === 0) {
                         videoHasMore = false;
-                        loadingTip.innerText = '— 已经到底啦 —';
+                        loadingTip.innerText = window.YayaRendererUtils.t('— 已经到底啦 —');
                         upsertVideoCacheItems(videoCurrentTypeId, [], true);
                     } else {
                         data.forEach(item => {
@@ -2214,14 +2214,14 @@
                         const completed = data.length < 20;
                         if (data.length < 20) {
                             videoHasMore = false;
-                            loadingTip.innerText = '— 已经到底啦 —';
+                            loadingTip.innerText = window.YayaRendererUtils.t('— 已经到底啦 —');
                         }
                         upsertVideoCacheItems(videoCurrentTypeId, data, completed);
                     }
                 }
             } catch (e) {
                 console.error("加载失败", e);
-                if (loadingTip) loadingTip.innerText = '加载出错，请重试';
+                if (loadingTip) loadingTip.innerText = window.YayaRendererUtils.t('加载出错，请重试');
             } finally {
                 isVideoLoading = false;
             }

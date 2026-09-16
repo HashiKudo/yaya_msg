@@ -131,7 +131,7 @@
             const btn = document.getElementById('music-lyrics-toggle-btn');
             if (!btn) return;
             btn.classList.toggle('active', currentMusicLyricsVisible);
-            btn.title = currentMusicLyricsVisible ? '收起歌词' : '展开歌词';
+            btn.title = window.YayaRendererUtils.t(currentMusicLyricsVisible ? '收起歌词' : '展开歌词');
             btn.setAttribute('aria-label', currentMusicLyricsVisible ? '收起歌词' : '展开歌词');
         }
 
@@ -152,7 +152,7 @@
             linesEl.replaceChildren();
             scrollEl.style.display = 'none';
             emptyEl.style.display = 'block';
-            emptyEl.innerText = message || '当前歌曲暂无歌词';
+            emptyEl.innerText = window.YayaRendererUtils.t(message || '当前歌曲暂无歌词');
         }
 
         function renderMusicLyrics() {

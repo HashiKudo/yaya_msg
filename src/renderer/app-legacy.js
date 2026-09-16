@@ -710,12 +710,12 @@
                     const dataPanel = document.getElementById('sb-message-data');
                     const dataButtons = dataPanel ? dataPanel.querySelectorAll('button') : [];
                     if (dataButtons[1]) {
-                        dataButtons[1].textContent = '清空浏览器消息';
+                        dataButtons[1].textContent = window.YayaRendererUtils.t('清空浏览器消息');
                         dataButtons[1].onclick = () => clearWebMessageData();
                     }
 
                     const exportButton = document.getElementById('btn-export-jsonl');
-                    if (exportButton) exportButton.textContent = '保存到消息检索';
+                    if (exportButton) exportButton.textContent = window.YayaRendererUtils.t('保存到消息检索');
                 }
             }
         }
@@ -928,7 +928,7 @@
                         const clipButton = toolbar.querySelector('[data-clip-role="do-clip"]');
                         if (startDisplay) startDisplay.textContent = '';
                         if (endDisplay) endDisplay.textContent = '';
-                        if (durationDisplay) durationDisplay.textContent = '时长: 0s';
+                        if (durationDisplay) durationDisplay.textContent = window.YayaRendererUtils.t('时长: 0s');
                         if (clipButton) clipButton.disabled = true;
                         document.getElementById(definition.id)?.appendChild(toolbar);
                     }
@@ -1326,6 +1326,9 @@
             if (typeof showToast === 'function') {
                 showToast('请先登录账号');
             }
+            if (typeof window.rememberWebProtectedViewForLogin === 'function') {
+                window.rememberWebProtectedViewForLogin(viewName);
+            }
             switchView('login');
             return false;
         }
@@ -1487,7 +1490,7 @@
                     if (isLiveMediaMode(mode)) {
                         if (liveListContainer) liveListContainer.hidden = false;
                         if (vodListContainer) vodListContainer.hidden = true;
-                        titleEl.textContent = mode === 'meet-live' ? '海外直播' : '正在直播';
+                        titleEl.textContent = window.YayaRendererUtils.t(mode === 'meet-live' ? '海外直播' : '正在直播');
                         if (vodControls) vodControls.style.display = 'none';
                         if (vodPagination) vodPagination.style.display = 'none';
                         if (liveControls) liveControls.style.display = 'flex';
@@ -1495,7 +1498,7 @@
                     } else if (isVodMediaMode(mode)) {
                         if (liveListContainer) liveListContainer.hidden = true;
                         if (vodListContainer) vodListContainer.hidden = false;
-                        titleEl.textContent = mode === 'meet-vod' ? '海外回放' : '录播回放';
+                        titleEl.textContent = window.YayaRendererUtils.t(mode === 'meet-vod' ? '海外回放' : '录播回放');
                         if (vodControls) vodControls.style.display = 'flex';
                         if (vodPagination) vodPagination.style.display = 'flex';
                         if (liveControls) liveControls.style.display = 'none';
@@ -1637,6 +1640,9 @@
                     } else {
                         const panelInput = document.getElementById('panel-login');
                         const panelSuccess = document.getElementById('panel-logged-in');
+                        if (typeof window.setWebAccountAuthPending === 'function') {
+                            window.setWebAccountAuthPending(false);
+                        }
                         if (panelInput) panelInput.style.display = 'block';
                         if (panelSuccess) panelSuccess.style.display = 'none';
                     }
@@ -1685,6 +1691,9 @@
                             window.suppressNextFlipMemberAutofocus = false;
                             return;
                         }
+                        const isMobileWeb = window.desktop?.platform === 'web'
+                            && window.matchMedia?.('(max-width: 768px)').matches;
+                        if (isMobileWeb) return;
                         const input = document.getElementById('flip-send-member-input');
                         if (input) input.focus();
                     }, 100);
@@ -1934,7 +1943,7 @@
                     if (mainBtn) {
                         mainBtn.classList.remove('btn-downloading');
                         mainBtn.classList.remove('btn-success');
-                        mainBtn.innerText = '下载';
+                        mainBtn.innerText = window.YayaRendererUtils.t('下载');
                         mainBtn.disabled = false;
                         mainBtn.style.pointerEvents = 'auto';
                         mainBtn.style.opacity = '1';
@@ -2038,10 +2047,10 @@
                 console.log("启动软件：正在获取最新的成员列表...");
                 sessionStorage.setItem('member_updated_this_session', 'true');
                 await autoUpdateMemberData();
-                statusMsg.textContent = "成员映射表加载完成";
+                statusMsg.textContent = window.YayaRendererUtils.t("成员映射表加载完成");
             } catch (e) {
                 console.error("加载映射表失败:", e);
-                statusMsg.textContent = "映射表解析出错";
+                statusMsg.textContent = window.YayaRendererUtils.t("映射表解析出错");
             }
         }
         let bestNameMapForDisplay = new Map();
@@ -2133,7 +2142,7 @@
         window.seekMusicLyricLine = seekMusicLyricLine;
 
         async function autoUpdateMemberData() {
-            if (statusMsg) statusMsg.textContent = "正在更新完整成员列表...";
+            if (statusMsg) statusMsg.textContent = window.YayaRendererUtils.t("正在更新完整成员列表...");
 
             try {
                 let allMembers = [];
@@ -2160,10 +2169,10 @@
                     });
                 }
 
-                if (statusMsg) statusMsg.textContent = `成员列表更新完成 (${allMembers.length}人)`;
+                if (statusMsg) statusMsg.textContent = window.YayaRendererUtils.t(`成员列表更新完成 (${allMembers.length}人)`);
 
                 setTimeout(() => {
-                    if (statusMsg) statusMsg.textContent = "软件已就绪";
+                    if (statusMsg) statusMsg.textContent = window.YayaRendererUtils.t("软件已就绪");
                 }, 3000);
 
             } catch (err) {
@@ -2182,12 +2191,12 @@
                     isMemberDataLoaded = true;
                     window.isMemberDataLoaded = true;
                     buildMemberCollectionsFromList(cachedMembers);
-                    if (statusMsg) statusMsg.textContent = `成员列表更新失败，已使用缓存 (${cachedMembers.length}人)`;
+                    if (statusMsg) statusMsg.textContent = window.YayaRendererUtils.t(`成员列表更新失败，已使用缓存 (${cachedMembers.length}人)`);
                 } else if (Array.isArray(memberData) && memberData.length > 0) {
                     buildMemberCollectionsFromList(memberData);
-                    if (statusMsg) statusMsg.textContent = "成员列表更新失败，已使用当前内存数据";
+                    if (statusMsg) statusMsg.textContent = window.YayaRendererUtils.t("成员列表更新失败，已使用当前内存数据");
                 } else {
-                    if (statusMsg) statusMsg.textContent = "成员列表更新失败";
+                    if (statusMsg) statusMsg.textContent = window.YayaRendererUtils.t("成员列表更新失败");
                     throw err;
                 }
             }
@@ -2432,13 +2441,13 @@
                 } else {
                     vodState.isLoading = false;
                     vodState.hasMore = false;
-                    document.getElementById('vod-loading').textContent = '暂无录播数据';
+                    document.getElementById('vod-loading').textContent = window.YayaRendererUtils.t('暂无录播数据');
                     window.renderVODListUI();
                 }
             } catch (err) {
                 console.error('Fetch VOD List Error:', err);
                 vodState.isLoading = false;
-                document.getElementById('vod-loading').textContent = '录播列表加载失败，请检查网络或API';
+                document.getElementById('vod-loading').textContent = window.YayaRendererUtils.t('录播列表加载失败，请检查网络或API');
                 window.renderVODListUI();
             }
         }
@@ -2600,10 +2609,10 @@
 
             if (currentSortOrder === 'desc') {
                 currentSortOrder = 'asc';
-                btn.innerText = '当前：最早在前';
+                btn.innerText = window.YayaRendererUtils.t('当前：最早在前');
             } else {
                 currentSortOrder = 'desc';
-                btn.innerText = '当前：最新在前';
+                btn.innerText = window.YayaRendererUtils.t('当前：最新在前');
             }
 
             writeStoredStringSetting('msg_sort_order', currentSortOrder);
@@ -3500,6 +3509,7 @@
             initArtLiveDanmu,
             initDanmuForDPlayer
         } = window.YayaRendererFeatures.createNimChatroomFeature({
+            ipcRenderer,
             getDp: () => dp,
             getNimAuth: async () => {
                 const token = getCurrentAppToken();
@@ -3518,7 +3528,6 @@
             setNimInstance: value => { nimInstance = value; },
             showToast: (...args) => showToast(...args)
         }));
-
         ({
             closeDanmuAnalysis,
             filterDanmuByUser,
@@ -3752,11 +3761,13 @@
             updateLiveBalance
         } = window.YayaRendererFeatures.createLiveGiftFeature({
             getAppToken: () => getCurrentAppToken(),
+            getArt: () => art,
             getCurrentPlayingItem: () => currentPlayingItem,
             getDp: () => dp,
             getPocketGiftData: () => typeof POCKET_GIFT_DATA !== 'undefined' ? POCKET_GIFT_DATA : [],
             getSelectedLiveGiftId: () => selectedLiveGiftId,
             setSelectedLiveGiftId: value => { selectedLiveGiftId = value; },
+            showToast: (...args) => showToast(...args),
             ipcRenderer,
             switchView
         }));
@@ -3980,7 +3991,7 @@
             const queryToken = append ? webMessageQueryToken : ++webMessageQueryToken;
             pagedMessageLoadingMore = true;
             if (!append) {
-                statusMsg.textContent = '正在检索消息...';
+                statusMsg.textContent = window.YayaRendererUtils.t('正在检索消息...');
             }
 
             try {
@@ -4035,12 +4046,12 @@
                 if (queryToken !== webMessageQueryToken) return;
                 console.error('检索浏览器消息失败:', error);
                 if (append) {
-                    statusMsg.textContent = '继续加载消息失败，请稍后再试';
+                    statusMsg.textContent = window.YayaRendererUtils.t('继续加载消息失败，请稍后再试');
                 } else {
                     allPosts = [];
                     currentFilteredPosts = [];
                     webMessageHasMore = false;
-                    statusMsg.textContent = '消息检索失败';
+                    statusMsg.textContent = window.YayaRendererUtils.t('消息检索失败');
                     outputList.innerHTML = `<div class="placeholder-tip"><h3>消息检索失败</h3><p>${escapeHtml(error?.message || '未知错误')}</p></div>`;
                 }
             } finally {
@@ -4061,13 +4072,13 @@
             const store = getActiveMessageStore();
             const environmentName = isWebRuntime ? '浏览器' : '本地';
             setMessageIndexLoadingState(true, '正在读取消息', `正在准备${environmentName}消息索引`);
-            statusMsg.textContent = `正在读取${environmentName}消息索引...`;
+            statusMsg.textContent = window.YayaRendererUtils.t(`正在读取${environmentName}消息索引...`);
 
             if (!store || typeof store.getSummary !== 'function' || typeof store.queryPage !== 'function') {
                 allPosts = [];
                 currentFilteredPosts = [];
                 setMessageIndexLoadingState(false);
-                statusMsg.textContent = '消息索引不可用';
+                statusMsg.textContent = window.YayaRendererUtils.t('消息索引不可用');
                 outputList.innerHTML = '<div class="placeholder-tip"><h3>无法读取消息</h3><p>当前消息索引服务不可用。</p></div>';
                 return;
             }
@@ -4085,7 +4096,7 @@
                 setMessageIndexLoadingState(false);
                 initDateSelectors();
                 const sortBtn = document.getElementById('sortBtn');
-                if (sortBtn) sortBtn.innerText = currentSortOrder === 'asc' ? '当前：最早在前' : '当前：最新在前';
+                if (sortBtn) sortBtn.innerText = window.YayaRendererUtils.t(currentSortOrder === 'asc' ? '当前：最早在前' : '当前：最新在前');
                 const searchInput = document.getElementById('searchInput');
                 if (searchInput) searchInput.disabled = false;
                 if (analysisBtn) analysisBtn.disabled = false;
@@ -4103,7 +4114,7 @@
                 allPosts = [];
                 currentFilteredPosts = [];
                 setMessageIndexLoadingState(false);
-                statusMsg.textContent = '消息索引读取失败';
+                statusMsg.textContent = window.YayaRendererUtils.t('消息索引读取失败');
                 outputList.innerHTML = `<div class="placeholder-tip"><h3>消息读取失败</h3><p>${escapeHtml(error?.message || '未知错误')}</p></div>`;
             }
         }
@@ -4114,7 +4125,7 @@
             if (!store || typeof store.getAll !== 'function') return null;
 
             const originalStatus = statusMsg.textContent;
-            statusMsg.textContent = '正在准备完整统计数据...';
+            statusMsg.textContent = window.YayaRendererUtils.t('正在准备完整统计数据...');
             try {
                 const records = await store.getAll();
                 pagedAnalysisPosts = parseWebMessageRecords(records);
@@ -4219,7 +4230,7 @@
                 } else if (!fs || typeof fs.existsSync !== 'function') {
                     allPosts = [];
                     initUIWithData();
-                    statusMsg.textContent = "消息文件系统不可用";
+                    statusMsg.textContent = window.YayaRendererUtils.t("消息文件系统不可用");
                     outputList.innerHTML = '<div class="placeholder-tip"><h3>无法读取消息</h3><p>当前运行环境不支持消息文件系统。</p></div>';
                 } else {
                     await loadWebMessageData();
@@ -4364,7 +4375,7 @@
             currentFilteredPosts = [];
             resetMessageRenderState();
             outputList.innerHTML = '<div class="placeholder-tip"><h3>正在增量更新...</h3><p>正在比对文件变动，请稍候。</p></div>';
-            statusMsg.textContent = "正在分析新文件...";
+            statusMsg.textContent = window.YayaRendererUtils.t("正在分析新文件...");
 
             setTimeout(() => scanFiles(true), 100);
         }
@@ -4400,7 +4411,7 @@
         async function scanFiles(isIncremental = false) {
             if (isMessageDataScanRunning) {
                 pendingMessageDataScanMode = pendingMessageDataScanMode === false ? false : !!isIncremental;
-                statusMsg.textContent = "已有更新任务在进行，稍后继续处理...";
+                statusMsg.textContent = window.YayaRendererUtils.t("已有更新任务在进行，稍后继续处理...");
                 return;
             }
 
@@ -4420,7 +4431,7 @@
         async function scanFilesInternal(isIncremental = false) {
             if (!fs.existsSync(FIXED_PATH)) {
                 setMessageIndexLoadingState(false);
-                statusMsg.textContent = "路径不存在";
+                statusMsg.textContent = window.YayaRendererUtils.t("路径不存在");
                 outputList.innerHTML = `<div class="placeholder-tip"><h3>路径配置错误</h3><p>找不到文件夹：<br><b>${FIXED_PATH}</b></p></div>`;
                 return;
             }
@@ -4440,7 +4451,7 @@
 
             if (isIncremental && allPosts.some(post => !post || !post.sourcePath)) {
                 isIncremental = false;
-                statusMsg.textContent = "检测到旧版缓存，正在重建索引...";
+                statusMsg.textContent = window.YayaRendererUtils.t("检测到旧版缓存，正在重建索引...");
             }
 
             if (isIncremental) {
@@ -4469,7 +4480,7 @@
                         if (!realFilesOnDisk.has(cachedPath)) {
                             console.log(`检测到文件已删除: ${cachedPath}，将触发全量重扫`);
                             isIncremental = false;
-                            statusMsg.textContent = "发现文件变动，正在重置缓存...";
+                            statusMsg.textContent = window.YayaRendererUtils.t("发现文件变动，正在重置缓存...");
                             setMessageIndexLoadingState(true, '检测到文件变动', '正在重置缓存');
                             break;
                         }
@@ -4479,7 +4490,7 @@
                 }
             }
 
-            statusMsg.textContent = isIncremental ? "正在扫描新文件..." : "正在重建索引...";
+            statusMsg.textContent = window.YayaRendererUtils.t(isIncremental ? "正在扫描新文件..." : "正在重建索引...");
 
             if (!isIncremental) {
                 allPosts = [];
@@ -4538,7 +4549,7 @@
                             newParsedCount++;
 
                             if (newParsedCount % 5 === 0) {
-                                statusMsg.textContent = `正在解析... 已处理 ${newParsedCount} 个文件`;
+                                statusMsg.textContent = window.YayaRendererUtils.t(`正在解析... 已处理 ${newParsedCount} 个文件`);
                             }
                         }
                     } catch (e) {
@@ -4569,7 +4580,7 @@
                     return;
                 }
 
-                statusMsg.textContent = "正在整理数据...";
+                statusMsg.textContent = window.YayaRendererUtils.t("正在整理数据...");
                 await new Promise(resolve => setTimeout(resolve, 50));
 
                 const uniqueMap = new Map();
@@ -4605,7 +4616,7 @@
                     return;
                 }
 
-                statusMsg.textContent = "正在保存缓存...";
+                statusMsg.textContent = window.YayaRendererUtils.t("正在保存缓存...");
 
                 saveCacheOptimized(allPosts).then(() => {
                     saveManifest();
@@ -4617,7 +4628,7 @@
                     initUIWithData();
 
                 }).catch(e => {
-                    statusMsg.textContent = `缓存写入失败`;
+                    statusMsg.textContent = window.YayaRendererUtils.t(`缓存写入失败`);
                     setMessageIndexLoadingState(false);
                 });
 
@@ -4637,9 +4648,9 @@
             const sortBtn = document.getElementById('sortBtn');
             if (sortBtn) {
                 if (currentSortOrder === 'asc') {
-                    sortBtn.innerText = '当前：最早在前';
+                    sortBtn.innerText = window.YayaRendererUtils.t('当前：最早在前');
                 } else {
-                    sortBtn.innerText = '当前：最新在前';
+                    sortBtn.innerText = window.YayaRendererUtils.t('当前：最新在前');
                 }
             }
 
@@ -4921,7 +4932,7 @@
             if (isVodAutoLoading) {
                 isVodAutoLoading = false;
                 if (loadBtn) {
-                    loadBtn.textContent = '继续加载';
+                    loadBtn.textContent = window.YayaRendererUtils.t('继续加载');
                     loadBtn.style.background = '';
                     loadBtn.style.borderColor = '';
                 }
@@ -4930,7 +4941,7 @@
 
             if (!vodState.hasMore) {
                 if (loadBtn) {
-                    loadBtn.textContent = '加载完毕';
+                    loadBtn.textContent = window.YayaRendererUtils.t('加载完毕');
                     loadBtn.style.background = '#28a745';
                     loadBtn.style.borderColor = '#28a745';
                     loadBtn.disabled = true;
@@ -4940,7 +4951,7 @@
 
             isVodAutoLoading = true;
             if (loadBtn) {
-                loadBtn.textContent = '暂停加载';
+                loadBtn.textContent = window.YayaRendererUtils.t('暂停加载');
                 loadBtn.style.background = '#dc3545';
                 loadBtn.style.borderColor = '#dc3545';
             }
@@ -4977,7 +4988,7 @@
             if (!vodState.hasMore) {
                 isVodAutoLoading = false;
                 if (loadBtn) {
-                    loadBtn.textContent = '加载完毕';
+                    loadBtn.textContent = window.YayaRendererUtils.t('加载完毕');
                     loadBtn.style.background = '#28a745';
                     loadBtn.style.borderColor = '#28a745';
                     loadBtn.disabled = true;
@@ -4990,7 +5001,7 @@
 
             const loadBtn = document.getElementById('load-all-btn');
             if (loadBtn) {
-                loadBtn.textContent = '加载全部';
+                loadBtn.textContent = window.YayaRendererUtils.t('加载全部');
                 loadBtn.style.background = '';
                 loadBtn.style.borderColor = '';
                 loadBtn.disabled = false;
@@ -5002,7 +5013,7 @@
             if (!window.vodState) return;
             const btn = document.getElementById('refresh-btn');
             const originalText = btn.textContent;
-            btn.textContent = '正在刷新';
+            btn.textContent = window.YayaRendererUtils.t('正在刷新');
             btn.disabled = true;
 
             vodState.searchPageToken = 0;
@@ -5191,7 +5202,7 @@
             } catch (e) {
                 if (!isStaleVodRequest()) {
                     vodState.hasMore = false;
-                    document.getElementById('vod-loading').textContent = e?.message || '录播接口请求失败';
+                    document.getElementById('vod-loading').textContent = window.YayaRendererUtils.t(e?.message || '录播接口请求失败');
                 }
             }
             return 0;
@@ -5284,7 +5295,7 @@
                 return;
             }
             badge.hidden = false;
-            badge.title = `人气值 ${display}`;
+            badge.title = window.YayaRendererUtils.t(`人气值 ${display}`);
             const valueEl = badge.querySelector('span');
             if (valueEl) valueEl.textContent = display;
         }
@@ -5389,7 +5400,7 @@
                 }
                 card.innerHTML = `
                     <div class="vod-row-cover-container">
-                        <img src="${cover}" class="vod-row-cover" onclick="directToPotPlayer(event, '${item.liveId}', '${isMeetItem ? 'meet48' : 'pocket'}')" title="点击头像直接调用外部播放器播放">
+                        <img src="${cover}" class="vod-row-cover" onclick="directToPotPlayer(event, '${item.liveId}', '${isMeetItem ? 'meet48' : 'pocket'}')" title="点击播放">
                         <div class="vod-badge ${badgeClass}">${liveTypeLabel}</div>
                     </div>
                     <div class="vod-row-info">
@@ -5502,7 +5513,7 @@
             } catch (err) {
                 console.error(err);
                 vodLoading.style.display = 'none';
-                vodLoading.textContent = '获取失败，请检查网络';
+                vodLoading.textContent = window.YayaRendererUtils.t('获取失败，请检查网络');
             }
         }
 
@@ -5632,7 +5643,7 @@
                 }
                 card.innerHTML = `
                     <div class="live-badge ${typeClass}">${typeText}</div>
-                    <img src="${cover}" onclick="directToPotPlayer(event, '${item.liveId}', '${isMeetItem ? 'meet48' : 'pocket'}')" title="点击头像直接调用外部播放器播放" style="cursor: pointer;">
+                    <img src="${cover}" onclick="directToPotPlayer(event, '${item.liveId}', '${isMeetItem ? 'meet48' : 'pocket'}')" title="点击播放" style="cursor: pointer;">
                     <div class="name">${item.userInfo.nickname}</div>
                     <div class="title">${item.title}</div>
                 `;
@@ -6535,7 +6546,7 @@
                 `;
 
                 idTag.onclick = (e) => window.filterByUserId(post.userId);
-                idTag.title = "点击筛选此人的所有消息";
+                idTag.title = window.YayaRendererUtils.t("点击筛选此人的所有消息");
 
                 idTag.onmouseenter = () => {
                     idTag.style.borderColor = 'var(--primary)';
@@ -6583,7 +6594,7 @@
             const profileAvatar = header.querySelector('img.avatar, img.msg-avatar');
             if (profileAvatar && post.userId && String(post.userId) !== 'undefined') {
                 profileAvatar.classList.add('message-profile-avatar');
-                profileAvatar.title = '查看用户主页';
+                profileAvatar.title = window.YayaRendererUtils.t('查看用户主页');
                 profileAvatar.tabIndex = 0;
                 profileAvatar.setAttribute('role', 'button');
                 const openProfile = event => {
@@ -6848,11 +6859,11 @@
             if (fromValue && toValue) {
                 textEl.textContent = `${formatMessageDateDisplay(fromValue)} - ${formatMessageDateDisplay(toValue)}`;
             } else if (fromValue) {
-                textEl.textContent = `${formatMessageDateDisplay(fromValue)} 起`;
+                textEl.textContent = window.YayaRendererUtils.t(`${formatMessageDateDisplay(fromValue)} 起`);
             } else if (toValue) {
-                textEl.textContent = `至 ${formatMessageDateDisplay(toValue)}`;
+                textEl.textContent = window.YayaRendererUtils.t(`至 ${formatMessageDateDisplay(toValue)}`);
             } else {
-                textEl.textContent = '全部';
+                textEl.textContent = window.YayaRendererUtils.t('全部');
             }
         }
 
@@ -6897,7 +6908,7 @@
 
             const year = messageDatePickerState.displayYear;
             const month = messageDatePickerState.displayMonth;
-            label.textContent = `${year}年${padMessageDatePart(month + 1)}月`;
+            label.textContent = window.YayaRendererUtils.t(`${year}年${padMessageDatePart(month + 1)}月`);
 
             const firstDay = new Date(year, month, 1);
             const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -7327,10 +7338,10 @@
                 'live-record': '直播'
             };
             if (isPagedMessageRuntime) {
-                statusMsg.textContent = `[${names[filterType]}] 共 ${pagedMessageMatchedCount || 0} 条`;
+                statusMsg.textContent = window.YayaRendererUtils.t(`[${names[filterType]}] 共 ${pagedMessageMatchedCount || 0} 条`);
                 return;
             }
-            statusMsg.textContent = `[${names[filterType]}] 找到 ${currentFilteredPosts.length} 条`;
+            statusMsg.textContent = window.YayaRendererUtils.t(`[${names[filterType]}] 找到 ${currentFilteredPosts.length} 条`);
         }
         scrollContainer.addEventListener('scroll', () => {
             if (scrollContainer.scrollTop + scrollContainer.clientHeight < scrollContainer.scrollHeight - 300) return;
@@ -7457,7 +7468,7 @@
                 div.appendChild(content);
                 contextListContainer.appendChild(div);
             });
-            document.querySelector('#contextModal .modal-title').innerText = `上下文: ${targetPost.groupName}`;
+            document.querySelector('#contextModal .modal-title').innerText = window.YayaRendererUtils.t(`上下文: ${targetPost.groupName}`);
             contextModal.style.display = 'flex';
             setTimeout(() => {
                 const tEl = document.getElementById('target-message-scroll-anchor');
@@ -7470,7 +7481,7 @@
 
         function closeContextModal() {
             contextModal.style.display = 'none';
-            document.querySelector('#contextModal .modal-title').innerText = `消息上下文`;
+            document.querySelector('#contextModal .modal-title').innerText = window.YayaRendererUtils.t(`消息上下文`);
             if (currentPlayingAudio) {
                 currentPlayingAudio.pause();
                 currentPlayingAudio = null;
@@ -7931,7 +7942,7 @@
                 const name = userInfo.uname || 'B站用户';
                 const uid = userInfo.mid ? `UID: ${userInfo.mid}` : 'UID: --';
                 setBilibiliLoginStatus(`已登录：${name} (${uid})`, '#28a745');
-                if (loginBtn) loginBtn.textContent = '切换账号';
+                if (loginBtn) loginBtn.textContent = window.YayaRendererUtils.t('切换账号');
                 if (logoutBtn) logoutBtn.style.display = 'inline-flex';
                 setBilibiliLoginPanelVisible(false);
                 stopBilibiliLoginPolling();
@@ -7939,7 +7950,7 @@
             }
 
             setBilibiliLoginStatus((result && result.msg) || '未登录B站，登录后可降低直播接口被拦截的概率');
-            if (loginBtn) loginBtn.textContent = '登录账号';
+            if (loginBtn) loginBtn.textContent = window.YayaRendererUtils.t('登录账号');
             if (logoutBtn) logoutBtn.style.display = 'none';
         }
 
@@ -8050,7 +8061,7 @@
                 ['path-video', 'path-live', 'path-clip', 'path-room-radio', 'path-danmu', 'path-media', 'path-flip']
                     .forEach((id) => {
                         const input = document.getElementById(id);
-                        if (input) input.placeholder = `${defaultDownloadPath}（默认路径）`;
+                        if (input) input.placeholder = window.YayaRendererUtils.t(`${defaultDownloadPath}（默认路径）`);
                     });
             } catch (error) {
                 console.warn('读取默认下载路径失败:', error);
