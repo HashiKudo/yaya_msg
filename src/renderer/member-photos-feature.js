@@ -42,7 +42,7 @@
             if (isPhotosAutoLoading) {
                 isPhotosAutoLoading = false;
                 if (buttonEl) {
-                    buttonEl.innerText = '查询';
+                    buttonEl.innerText = window.YayaRendererUtils.t('查询');
                     buttonEl.style.background = '';
                     buttonEl.style.color = '';
                 }
@@ -51,7 +51,7 @@
 
             isPhotosAutoLoading = true;
             if (buttonEl) {
-                buttonEl.innerText = '停止查询';
+                buttonEl.innerText = window.YayaRendererUtils.t('停止查询');
                 buttonEl.style.background = '#ff4d4f';
                 buttonEl.style.color = 'white';
             }
@@ -71,7 +71,7 @@
 
             isPhotosAutoLoading = false;
             if (buttonEl) {
-                buttonEl.innerText = '查询';
+                buttonEl.innerText = window.YayaRendererUtils.t('查询');
                 buttonEl.style.background = '';
                 buttonEl.style.color = '';
             }
@@ -222,7 +222,7 @@
                     if (!isLoadMore) {
                         container.innerHTML = '<div class="empty-state">该成员暂无相册内容</div>';
                     }
-                    if (statusEl && !isPhotosAutoLoading) statusEl.innerText = '已到底部';
+                    if (statusEl && !isPhotosAutoLoading) statusEl.innerText = window.YayaRendererUtils.t('已到底部');
                     return;
                 }
 
@@ -235,9 +235,9 @@
 
                 const totalCount = container.querySelectorAll('.photo-nft-card').length;
                 if (list.length < 20) {
-                    if (statusEl && !isPhotosAutoLoading) statusEl.innerText = `共获取 ${totalCount} 条 (已到底部)`;
+                    if (statusEl && !isPhotosAutoLoading) statusEl.innerText = window.YayaRendererUtils.t(`共获取 ${totalCount} 条 (已到底部)`);
                 } else if (statusEl) {
-                    statusEl.innerText = `已获取 ${totalCount} 条...`;
+                    statusEl.innerText = window.YayaRendererUtils.t(`已获取 ${totalCount} 条...`);
                 }
             } catch (error) {
                 if (!isLoadMore) {

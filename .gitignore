@@ -19,6 +19,11 @@ tools/
 /.codex-work/
 /.codex-release-*/
 /.codex-hls-test/
+/.codex-data-work/
+/.codex-spreadsheet-work/
+/outputs/
+/migrations/
+/test/
 dist-next/
 .npmrc
 .env

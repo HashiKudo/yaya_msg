@@ -1248,7 +1248,7 @@
         const isAlbumView = state.viewMode === 'album';
         button.classList.remove('is-active');
         button.setAttribute('aria-pressed', String(isAlbumView));
-        button.title = isAlbumView ? '切换到歌曲列表' : '切换到专辑视图';
+        button.title = window.YayaRendererUtils.t(isAlbumView ? '切换到歌曲列表' : '切换到专辑视图');
         button.setAttribute('aria-label', button.title);
         button.innerHTML = isAlbumView
             ? `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.2"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.2"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.2"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.2"></rect></svg>`
@@ -2046,7 +2046,7 @@
         const isFavorite = isOfficialSiteTrackFavorite(track);
         button.classList.toggle('active', isFavorite);
         button.classList.toggle('is-favorite', isFavorite);
-        button.title = isFavorite ? '取消收藏当前歌曲' : '收藏当前歌曲';
+        button.title = window.YayaRendererUtils.t(isFavorite ? '取消收藏当前歌曲' : '收藏当前歌曲');
         button.setAttribute('aria-label', button.title);
     }
 
@@ -2065,7 +2065,7 @@
         if (button) {
             button.classList.toggle('is-play', !isPlaying);
             button.classList.toggle('is-pause', isPlaying);
-            button.title = isPlaying ? '暂停' : '播放';
+            button.title = window.YayaRendererUtils.t(isPlaying ? '暂停' : '播放');
             button.setAttribute('aria-label', isPlaying ? '暂停' : '播放');
         }
         if (cover) {
@@ -2241,7 +2241,7 @@
         const button = $('official-site-music-play-mode-btn');
         if (!button) return;
         button.innerHTML = getPlayerModeIconSvg(state.playMode);
-        button.title = `当前模式：${PLAYER_MODE_LABELS[state.playMode] || PLAYER_MODE_LABELS.sequence}`;
+        button.title = window.YayaRendererUtils.t(`当前模式：${PLAYER_MODE_LABELS[state.playMode] || PLAYER_MODE_LABELS.sequence}`);
         button.classList.remove('active');
     }
 
@@ -2305,7 +2305,7 @@
         const button = $('official-site-music-lyrics-toggle-btn');
         if (!button) return;
         button.classList.toggle('active', state.lyricsVisible);
-        button.title = state.lyricsVisible ? '收起歌词' : '展开歌词';
+        button.title = window.YayaRendererUtils.t(state.lyricsVisible ? '收起歌词' : '展开歌词');
         button.setAttribute('aria-label', state.lyricsVisible ? '收起歌词' : '展开歌词');
     }
 
@@ -2321,13 +2321,13 @@
         if (type === 'lines') {
             emptyEl.style.display = 'none';
             scrollEl.style.display = 'block';
-            subtitleEl.innerText = state.currentLyricMeta?.歌曲名 || '歌词';
+            subtitleEl.innerText = window.YayaRendererUtils.t(state.currentLyricMeta?.歌曲名 || '歌词');
             return;
         }
         linesEl.replaceChildren();
         scrollEl.style.display = 'none';
         emptyEl.style.display = 'block';
-        emptyEl.innerText = message || '当前歌曲暂无歌词';
+        emptyEl.innerText = window.YayaRendererUtils.t(message || '当前歌曲暂无歌词');
     }
 
     function renderOfficialSiteLyrics() {
@@ -2567,7 +2567,7 @@
         const cover = $('official-site-music-cover');
         const info = document.querySelector('.official-site-music-player-info');
         if (info) info.classList.toggle('has-track', Boolean(track));
-        if (title) title.textContent = track ? getOfficialSiteTrackDisplayTitle(track) : '未播放';
+        if (title) title.textContent = window.YayaRendererUtils.t(track ? getOfficialSiteTrackDisplayTitle(track) : '未播放');
         if (subtitle) {
             subtitle.textContent = getTrackSubtitle(track);
         }
@@ -2870,7 +2870,7 @@
 
         const queueTracks = getOfficialSiteMusicQueueTracks();
 
-        countEl.innerText = `${queueTracks.length} 首`;
+        countEl.innerText = window.YayaRendererUtils.t(`${queueTracks.length} 首`);
         if (clearButton) clearButton.disabled = queueTracks.length === 0;
         if (!queueTracks.length) {
             listEl.innerHTML = '<div class="empty-state" style="padding:20px;">暂无播放列表</div>';
@@ -3129,8 +3129,8 @@
         const isQueued = Boolean(trackKey && state.playQueueKeys.includes(trackKey));
         menu.dataset.trackId = track.id;
         addButton.disabled = false;
-        addButton.textContent = isQueued ? '移出播放列表' : '添加到播放列表';
-        favoriteButton.textContent = isOfficialSiteTrackFavorite(track) ? '取消收藏' : '收藏';
+        addButton.textContent = window.YayaRendererUtils.t(isQueued ? '移出播放列表' : '添加到播放列表');
+        favoriteButton.textContent = window.YayaRendererUtils.t(isOfficialSiteTrackFavorite(track) ? '取消收藏' : '收藏');
         menu.hidden = false;
         menu.style.left = '0px';
         menu.style.top = '0px';

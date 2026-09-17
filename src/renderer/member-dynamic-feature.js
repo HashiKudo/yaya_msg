@@ -542,7 +542,7 @@
             }
             if (button) {
                 button.disabled = true;
-                button.textContent = '发送中';
+                button.textContent = window.YayaRendererUtils.t('发送中');
             }
 
             try {
@@ -595,7 +595,7 @@
                 const nextButton = document.getElementById(`member-dynamic-comment-send-${normalizedPostId}`);
                 if (nextButton) {
                     nextButton.disabled = false;
-                    nextButton.textContent = '发送';
+                    nextButton.textContent = window.YayaRendererUtils.t('发送');
                 }
             }
         }
@@ -752,7 +752,7 @@
             const originalText = button?.innerText || '';
             if (button) {
                 button.disabled = true;
-                button.innerText = '加载中';
+                button.innerText = window.YayaRendererUtils.t('加载中');
             }
             currentDynamicNextTime = 0;
             dynamicCommentStateMap.clear();

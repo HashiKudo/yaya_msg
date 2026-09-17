@@ -157,7 +157,7 @@
             if (!modal) return;
 
             const headerEl = document.getElementById('notice-header-text');
-            if (headerEl) headerEl.textContent = data.header || '说点什么';
+            if (headerEl) headerEl.textContent = window.YayaRendererUtils.t(data.header || '说点什么');
 
             const titleEl = document.getElementById('notice-title');
             if (titleEl) {

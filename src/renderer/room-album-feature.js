@@ -65,7 +65,7 @@
             if (isRoomAlbumAutoLoading) {
                 isRoomAlbumAutoLoading = false;
                 if (buttonEl) {
-                    buttonEl.innerText = '加载全部';
+                    buttonEl.innerText = window.YayaRendererUtils.t('加载全部');
                     buttonEl.style.background = '';
                     buttonEl.style.color = '';
                 }
@@ -74,7 +74,7 @@
 
             isRoomAlbumAutoLoading = true;
             if (buttonEl) {
-                buttonEl.innerText = '停止加载';
+                buttonEl.innerText = window.YayaRendererUtils.t('停止加载');
                 buttonEl.style.background = '#ff4d4f';
                 buttonEl.style.color = 'white';
             }
@@ -100,7 +100,7 @@
 
             isRoomAlbumAutoLoading = false;
             if (buttonEl) {
-                buttonEl.innerText = '加载全部';
+                buttonEl.innerText = window.YayaRendererUtils.t('加载全部');
                 buttonEl.style.background = '';
                 buttonEl.style.color = '';
             }
@@ -123,7 +123,7 @@
 
             if (isBatchDownloadingRoom) {
                 isBatchDownloadingRoom = false;
-                if (buttonEl) buttonEl.innerText = '正在中止...';
+                if (buttonEl) buttonEl.innerText = window.YayaRendererUtils.t('正在中止...');
                 return;
             }
 
@@ -167,7 +167,7 @@
                 const url = singleButton.getAttribute('data-url');
                 const filename = singleButton.getAttribute('data-filename');
 
-                if (buttonEl) buttonEl.innerText = `点击停止 (${index + 1}/${allDownloadButtons.length})`;
+                if (buttonEl) buttonEl.innerText = window.YayaRendererUtils.t(`点击停止 (${index + 1}/${allDownloadButtons.length})`);
 
                 const isSuccess = await downloadMediaFileIconMode(url, filename, singleButton, singleButton.innerHTML, 'media', folderName);
                 if (isSuccess) successCount++;
@@ -185,10 +185,10 @@
 
             if (buttonEl) {
                 if (failCount === 0) {
-                    buttonEl.innerText = `结束 (共${successCount}个)`;
+                    buttonEl.innerText = window.YayaRendererUtils.t(`结束 (共${successCount}个)`);
                     buttonEl.style.background = '#52c41a';
                 } else {
-                    buttonEl.innerText = `结束 (成功${successCount}, 失败${failCount})`;
+                    buttonEl.innerText = window.YayaRendererUtils.t(`结束 (成功${successCount}, 失败${failCount})`);
                     buttonEl.style.background = '#fa8c16';
                 }
 
@@ -326,7 +326,7 @@
                     if (!isLoadMore) {
                         container.innerHTML = '<div class="empty-state">该房间暂无照片/视频记录</div>';
                     }
-                    if (statusEl && !isRoomAlbumAutoLoading) statusEl.innerText = '已到底部';
+                    if (statusEl && !isRoomAlbumAutoLoading) statusEl.innerText = window.YayaRendererUtils.t('已到底部');
                     return;
                 }
 
@@ -338,9 +338,9 @@
                 const totalCount = container.querySelectorAll('.photo-nft-card').length;
 
                 if (!currentRoomAlbumNextTime || currentRoomAlbumNextTime === 0) {
-                    if (statusEl && !isRoomAlbumAutoLoading) statusEl.innerText = `共获取 ${totalCount} 条 (已到底部)`;
+                    if (statusEl && !isRoomAlbumAutoLoading) statusEl.innerText = window.YayaRendererUtils.t(`共获取 ${totalCount} 条 (已到底部)`);
                 } else if (statusEl) {
-                    statusEl.innerText = `已获取 ${totalCount} 条...`;
+                    statusEl.innerText = window.YayaRendererUtils.t(`已获取 ${totalCount} 条...`);
                 }
             } catch (error) {
                 if (!isLoadMore) {

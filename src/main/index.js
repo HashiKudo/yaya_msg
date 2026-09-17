@@ -18,7 +18,11 @@ const { registerBilibiliIpc } = require('./ipc/bilibili-ipc');
 const { registerPocketIpc } = require('./ipc/pocket-ipc');
 const { registerSystemIpc } = require('./ipc/system-ipc');
 const { registerMessageIndexIpc } = require('./ipc/message-index-ipc');
+const { registerDanmakuIpc } = require('./ipc/danmaku-ipc');
+const { registerMemberRoomIpc } = require('./ipc/member-room-ipc');
 const { closeMessageIndex, startMessageIndexWatcher } = require('./services/message-index-service');
+const { closeAllLiveDanmakuConnections } = require('./services/danmaku-service');
+const { closeAllMemberRoomConnections } = require('./services/member-room-service');
 const { ensureStoragePaths } = require('../common/storage-paths');
 
 registerWindowIpc();
@@ -27,6 +31,8 @@ registerBilibiliIpc();
 registerPocketIpc();
 registerSystemIpc();
 registerMessageIndexIpc();
+registerDanmakuIpc();
+registerMemberRoomIpc();
 
 const MEDIA_KEY_SHORTCUTS = [
     ['MediaPlayPause', 'play-pause'],
@@ -57,6 +63,8 @@ function performFinalCleanup() {
     markAppQuitting();
     destroyTray();
     cleanupMediaTasks();
+    closeAllLiveDanmakuConnections();
+    closeAllMemberRoomConnections();
     closeMessageIndex();
 }
 

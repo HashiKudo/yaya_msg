@@ -426,7 +426,7 @@
             if (isWeiboAutoLoading) {
                 isWeiboAutoLoading = false;
                 if (button) {
-                    button.innerText = '加载全部';
+                    button.innerText = window.YayaRendererUtils.t('加载全部');
                     button.style.background = '';
                     button.style.color = '';
                 }
@@ -435,7 +435,7 @@
 
             isWeiboAutoLoading = true;
             if (button) {
-                button.innerText = '停止加载';
+                button.innerText = window.YayaRendererUtils.t('停止加载');
                 button.style.background = '#ff4d4f';
                 button.style.color = 'white';
             }
@@ -453,7 +453,7 @@
 
             isWeiboAutoLoading = false;
             if (button) {
-                button.innerText = '加载全部';
+                button.innerText = window.YayaRendererUtils.t('加载全部');
                 button.style.background = '';
                 button.style.color = '';
             }

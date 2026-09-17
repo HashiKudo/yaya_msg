@@ -66,7 +66,15 @@
             return content.playStreamPath || '';
         }
 
+        function isMobileWebDevice() {
+            return window.desktop?.platform === 'web'
+                && document.documentElement.classList.contains('web-mobile-device');
+        }
+
         async function directToPotPlayer(e, liveId, source = 'pocket') {
+            // On mobile web, let the cover click bubble to the card so it opens
+            // the built-in player instead of navigating to the raw stream URL.
+            if (isMobileWebDevice()) return false;
             if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
             const targetEl = (e && (e.currentTarget || e.target)) || null;
             if (targetEl) targetEl.style.cursor = 'wait';
@@ -79,11 +87,11 @@
             const isWeb = window.desktop && window.desktop.platform === 'web';
             let pendingWebWindow = null;
 
-            if (titleEl) titleEl.textContent = '⌛ 正在解析外部播放器地址...';
+            if (titleEl) titleEl.textContent = window.YayaRendererUtils.t('⌛ 正在解析外部播放器地址...');
             if (isWeb) {
                 pendingWebWindow = window.open('', '_blank');
                 if (pendingWebWindow) {
-                    pendingWebWindow.document.title = '正在解析播放地址';
+                    pendingWebWindow.document.title = window.YayaRendererUtils.t('正在解析播放地址');
                     pendingWebWindow.document.body.innerHTML = '<div style="font:16px system-ui,sans-serif;padding:24px;">正在解析播放地址...</div>';
                 }
             }
@@ -94,7 +102,7 @@
                     : await fetchPocketAPI('/live/api/v1/live/getLiveOne', JSON.stringify({ liveId }));
                 const streamUrl = getStreamUrlFromLiveResponse(res?.content, normalizedSource);
                 if (res && (res.status === 200 || res.success) && streamUrl) {
-                    if (titleEl) titleEl.textContent = `正在唤起 ${getPreferredExternalPlayerName()}...`;
+                    if (titleEl) titleEl.textContent = window.YayaRendererUtils.t(`正在唤起 ${getPreferredExternalPlayerName()}...`);
                     let opened = false;
                     if (pendingWebWindow) {
                         pendingWebWindow.location.href = streamUrl;
@@ -115,14 +123,14 @@
                 }
             } catch (err) {
                 if (pendingWebWindow) pendingWebWindow.close();
-                if (titleEl) titleEl.textContent = '网络请求失败';
+                if (titleEl) titleEl.textContent = window.YayaRendererUtils.t('网络请求失败');
                 showToast(`网络请求失败: ${err.message || err}`);
             } finally {
                 if (targetEl) targetEl.style.cursor = 'pointer';
                 if (titleEl) {
                     setTimeout(() => {
                         if (document.body.contains(titleEl)) {
-                            titleEl.textContent = originalTitle || (getCurrentMode() === 'live' ? '正在直播' : '录播回放');
+                            titleEl.textContent = window.YayaRendererUtils.t(originalTitle || (getCurrentMode() === 'live' ? '正在直播' : '录播回放'));
                         }
                     }, 2000);
                 }
@@ -236,7 +244,7 @@
             }
 
             if (!found && vodState && vodState.isSearchActive) {
-                if (loadingDiv) loadingDiv.innerText = `未找到匹配回放 (已搜索 ${pageCount} 页)`;
+                if (loadingDiv) loadingDiv.innerText = window.YayaRendererUtils.t(`未找到匹配回放 (已搜索 ${pageCount} 页)`);
                 renderVODListUI();
             }
 
@@ -252,7 +260,7 @@
 
             if (btn.disabled) return;
 
-            btn.textContent = '获取中...';
+            btn.textContent = window.YayaRendererUtils.t('获取中...');
             btn.disabled = true;
 
             const nickname = item.userInfo ? item.userInfo.nickname : (item.nickname || '未知成员');
@@ -281,7 +289,7 @@
                         danmuUrl = danmuUrl.replace('http://', 'https://');
                     }
 
-                    btn.textContent = '下载中...';
+                    btn.textContent = window.YayaRendererUtils.t('下载中...');
                     ipcRenderer.send('download-danmu', {
                         url: danmuUrl,
                         fileName,
@@ -311,7 +319,7 @@
             if (getDownloadStatus(liveId) === 'downloading' || getDownloadStatus(liveId) === 'success') return;
 
             setDownloadStatus(liveId, 'downloading');
-            btn.textContent = '下载中';
+            btn.textContent = window.YayaRendererUtils.t('下载中');
             btn.className = `btn btn-secondary btn-downloading vod-btn-${liveId}`;
             btn.disabled = true;
 
@@ -352,14 +360,14 @@
                     });
                 } else {
                     setDownloadStatus(liveId, 'error');
-                    btn.textContent = '视频下载';
+                    btn.textContent = window.YayaRendererUtils.t('视频下载');
                     btn.className = `btn btn-secondary vod-btn-${liveId}`;
                     btn.disabled = false;
                     showToast('无法获取下载地址');
                 }
             } catch (err) {
                 setDownloadStatus(liveId, 'error');
-                btn.textContent = '视频下载';
+                btn.textContent = window.YayaRendererUtils.t('视频下载');
                 btn.className = `btn btn-secondary vod-btn-${liveId}`;
                 btn.disabled = false;
             }
@@ -373,13 +381,13 @@
                 if (!window.lastDanmuBtn) return;
 
                 if (data.success) {
-                    window.lastDanmuBtn.textContent = '已保存';
+                    window.lastDanmuBtn.textContent = window.YayaRendererUtils.t('已保存');
                     window.lastDanmuBtn.classList.remove('btn-secondary');
                     window.lastDanmuBtn.classList.add('btn-primary');
 
                     setTimeout(() => {
                         if (window.lastDanmuBtn) {
-                            window.lastDanmuBtn.textContent = '弹幕下载';
+                            window.lastDanmuBtn.textContent = window.YayaRendererUtils.t('弹幕下载');
                             window.lastDanmuBtn.classList.add('btn-secondary');
                             window.lastDanmuBtn.classList.remove('btn-primary');
                             window.lastDanmuBtn.disabled = false;
@@ -387,7 +395,7 @@
                     }, 3000);
                 } else {
                     showToast(`下载失败: ${data.msg}`);
-                    window.lastDanmuBtn.textContent = window.lastDanmuBtnOriginalText || '弹幕下载';
+                    window.lastDanmuBtn.textContent = window.YayaRendererUtils.t(window.lastDanmuBtnOriginalText || '弹幕下载');
                     window.lastDanmuBtn.disabled = false;
                 }
             });
@@ -410,7 +418,7 @@
                     if (statusTextEl && data.msg) {
                         statusTextEl.textContent = data.msg;
                     } else if (statusTextEl && statusTextEl.textContent.includes('已下载时长')) {
-                        statusTextEl.textContent = '正在下载...';
+                        statusTextEl.textContent = window.YayaRendererUtils.t('正在下载...');
                     }
                 } else if (data.timemark) {
                     if (fillEl) {
@@ -419,7 +427,7 @@
                     }
                     if (textEl) textEl.textContent = '';
                     const cleanTime = data.timemark.split('.')[0];
-                    if (statusTextEl) statusTextEl.textContent = `已下载时长: ${cleanTime}`;
+                    if (statusTextEl) statusTextEl.textContent = window.YayaRendererUtils.t(`已下载时长: ${cleanTime}`);
                 } else if (statusTextEl && data.msg) {
                     statusTextEl.textContent = data.msg;
                 }
@@ -453,7 +461,7 @@
 
                 if (data.status === 'success') {
                     if (statusText) {
-                        statusText.textContent = data.msg || '完成';
+                        statusText.textContent = window.YayaRendererUtils.t(data.msg || '完成');
                         statusText.style.color = '#28a745';
                     }
                     const fillEl = taskEl.querySelector('.progress-fill');
@@ -465,7 +473,7 @@
                     if (percentEl) percentEl.textContent = '100%';
 
                     if (listBtn) {
-                        listBtn.textContent = '已完成';
+                        listBtn.textContent = window.YayaRendererUtils.t('已完成');
                         listBtn.className = `btn btn-success vod-btn-${liveId}`;
                         listBtn.disabled = true;
                         listBtn.style.opacity = '1';
@@ -485,7 +493,7 @@
                     }, 1000);
                 } else if (data.status === 'error' || data.status === 'canceled') {
                     if (listBtn) {
-                        listBtn.textContent = '视频下载';
+                        listBtn.textContent = window.YayaRendererUtils.t('视频下载');
                         listBtn.className = `btn btn-secondary vod-btn-${liveId}`;
                         listBtn.disabled = false;
                     }
@@ -494,7 +502,7 @@
                         taskEl.remove();
                     } else {
                         if (statusText) {
-                            statusText.textContent = data.msg || '下载失败';
+                            statusText.textContent = window.YayaRendererUtils.t(data.msg || '下载失败');
                             statusText.style.color = '#e81123';
                         }
                     }

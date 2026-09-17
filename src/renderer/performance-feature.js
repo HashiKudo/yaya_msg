@@ -36,7 +36,9 @@
             memberItems: null,
             memberLoading: false,
             memberRequestId: 0,
-            autoLoadPaused: false
+            autoLoadPaused: false,
+            renderLimit: 90,
+            visibleCount: 0
         };
 
         let autoLoadObserver = null;
@@ -47,6 +49,24 @@
         const FAST_SEARCH_PAGE_BATCH = 12;
         const MEMBER_RECORD_RENDER_BATCH = 4;
         const MEMBER_RECORD_PAGE_LIMIT = 200;
+        const PERFORMANCE_INITIAL_RENDER_LIMIT = 90;
+        const PERFORMANCE_RENDER_BATCH = 90;
+        const PERFORMANCE_SEARCH_DEBOUNCE_MS = 140;
+        const MEMBER_SEARCH_DEBOUNCE_MS = 120;
+        const performanceSearchIndexCache = new WeakMap();
+        const memberSearchIndexCache = new WeakMap();
+        const performanceTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+            timeZone: 'Asia/Shanghai',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            weekday: 'short',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        });
+        let performanceSearchTimer = 0;
+        let memberSearchTimer = 0;
         let memberSuggestionRequestId = 0;
         const GROUPS = Object.freeze({
             snh: 'SNH48',
@@ -94,6 +114,7 @@
             state.dateSearchItems = state.dateSearchCursor ? [] : null;
             state.dateSearchComplete = false;
             state.autoLoadPaused = false;
+            state.renderLimit = PERFORMANCE_INITIAL_RENDER_LIMIT;
         }
 
         function renderPerformanceMemberResults(matches) {
@@ -141,9 +162,21 @@
             resultBox.style.display = 'block';
         }
 
-        async function handlePerformanceMemberSearch(keyword) {
-            const value = String(keyword || '').trim();
-            const requestId = ++memberSuggestionRequestId;
+        function getPerformanceMemberSearchIndex(member) {
+            if (member && typeof member === 'object' && memberSearchIndexCache.has(member)) {
+                return memberSearchIndexCache.get(member);
+            }
+            const name = String(member?.ownerName || member?.name || '');
+            const pinyin = String(member?.pinyin || '').toLocaleLowerCase();
+            const initials = typeof getPinyinInitials === 'function'
+                ? String(getPinyinInitials(pinyin)).toLocaleLowerCase()
+                : '';
+            const index = { name, pinyin, initials };
+            if (member && typeof member === 'object') memberSearchIndexCache.set(member, index);
+            return index;
+        }
+
+        async function runPerformanceMemberSearch(value, requestId) {
             if (state.memberId && value !== state.memberName) {
                 resetPerformanceMemberSelection();
                 renderPerformanceList();
@@ -162,12 +195,10 @@
                 const lowerKeyword = value.toLocaleLowerCase();
                 const members = Array.isArray(getMemberData?.()) ? getMemberData() : [];
                 const matches = members.filter(member => {
-                    const name = String(member?.ownerName || member?.name || '');
-                    const pinyin = String(member?.pinyin || '');
-                    const initials = typeof getPinyinInitials === 'function' ? getPinyinInitials(pinyin) : '';
-                    return name.includes(value)
-                        || pinyin.toLocaleLowerCase().includes(lowerKeyword)
-                        || String(initials).toLocaleLowerCase().includes(lowerKeyword);
+                    const index = getPerformanceMemberSearchIndex(member);
+                    return index.name.includes(value)
+                        || index.pinyin.includes(lowerKeyword)
+                        || index.initials.includes(lowerKeyword);
                 });
                 if (typeof memberSortLogic === 'function') matches.sort(memberSortLogic);
                 renderPerformanceMemberResults(matches);
@@ -175,6 +206,25 @@
                 console.error('[公演列表] 成员搜索失败:', error);
                 hidePerformanceMemberResults();
             }
+        }
+
+        function handlePerformanceMemberSearch(keyword) {
+            const value = String(keyword || '').trim();
+            const requestId = ++memberSuggestionRequestId;
+            clearTimeout(memberSearchTimer);
+            if (!value) {
+                hidePerformanceMemberResults();
+                if (state.memberId) {
+                    resetPerformanceMemberSelection();
+                    renderPerformanceList();
+                    schedulePerformanceAutoLoad();
+                }
+                return;
+            }
+            memberSearchTimer = window.setTimeout(() => {
+                memberSearchTimer = 0;
+                void runPerformanceMemberSearch(value, requestId);
+            }, MEMBER_SEARCH_DEBOUNCE_MS);
         }
 
         function inferPerformanceGroup(item) {
@@ -289,16 +339,7 @@
             const value = Number(timestamp);
             if (!Number.isFinite(value) || value <= 0) return null;
             const date = new Date(value);
-            const parts = new Intl.DateTimeFormat('zh-CN', {
-                timeZone: 'Asia/Shanghai',
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                weekday: 'short',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false
-            }).formatToParts(date).reduce((result, part) => {
+            const parts = performanceTimeFormatter.formatToParts(date).reduce((result, part) => {
                 result[part.type] = part.value;
                 return result;
             }, {});
@@ -430,6 +471,7 @@
             state.dateSearchItems = null;
             state.dateSearchComplete = false;
             state.autoLoadPaused = false;
+            state.renderLimit = PERFORMANCE_INITIAL_RENDER_LIMIT;
             renderPerformanceList();
 
             try {
@@ -479,6 +521,8 @@
         function selectPerformanceMember(member) {
             const input = document.getElementById('performance-member-input');
             const name = String(member?.ownerName || member?.name || '').trim();
+            clearTimeout(memberSearchTimer);
+            memberSearchTimer = 0;
             memberSuggestionRequestId += 1;
             if (input) input.value = name;
             hidePerformanceMemberResults();
@@ -766,11 +810,17 @@
             if (state.group !== 'all' && inferPerformanceGroup(item) !== state.group) return false;
             if (state.team !== 'all' && inferPerformanceTeam(item) !== state.team) return false;
             if (!state.query) return true;
-            const searchableText = [
-                item?.title,
-                formatPerformanceTime(item?.startTime),
-                ...getPerformanceDateSearchTerms(item?.startTime)
-            ].map(value => String(value || '').toLocaleLowerCase()).join(' ');
+            let searchableText = item && typeof item === 'object'
+                ? performanceSearchIndexCache.get(item)
+                : '';
+            if (!searchableText) {
+                searchableText = [
+                    item?.title,
+                    formatPerformanceTime(item?.startTime),
+                    ...getPerformanceDateSearchTerms(item?.startTime)
+                ].map(value => String(value || '').toLocaleLowerCase()).join(' ');
+                if (item && typeof item === 'object') performanceSearchIndexCache.set(item, searchableText);
+            }
             return state.query.split(/\s+/).every(keyword => searchableText.includes(keyword));
         }
 
@@ -841,7 +891,7 @@
             const refreshButton = document.getElementById('performance-refresh');
             if (refreshButton) {
                 refreshButton.disabled = state.loading;
-                refreshButton.textContent = state.loading && state.items.length === 0 ? '加载中…' : '刷新列表';
+                refreshButton.textContent = window.YayaRendererUtils.t(state.loading && state.items.length === 0 ? '加载中…' : '刷新列表');
             }
 
             const loadMoreButton = document.getElementById('performance-load-more');
@@ -851,12 +901,12 @@
                     || !state.hasMore
                     || state.items.length === 0;
                 loadMoreButton.disabled = state.loading;
-                loadMoreButton.textContent = state.loading ? '加载中…' : '重新加载';
+                loadMoreButton.textContent = window.YayaRendererUtils.t(state.loading ? '加载中…' : '重新加载');
             }
 
             const loadSentinel = document.getElementById('performance-load-sentinel');
             if (loadSentinel) {
-                const visibleCount = getVisibleItems().length;
+                const visibleCount = state.visibleCount;
                 const countText = visibleCount > 0 ? `已找到 ${visibleCount} 场公演` : '';
                 const loadingText = state.memberLoading
                     ? `正在加载${state.memberName ? ` ${state.memberName} ` : ''}的公演…`
@@ -874,8 +924,10 @@
             const container = document.getElementById('performance-list');
             if (!container) return;
 
-            const list = getVisibleItems();
-            if (!list.length) {
+            const visibleItems = getVisibleItems();
+            state.visibleCount = visibleItems.length;
+            const list = visibleItems.slice(0, state.renderLimit);
+            if (!visibleItems.length) {
                 const searching = Boolean(state.query);
                 if (searching || state.memberLoading) {
                     container.replaceChildren();
@@ -944,12 +996,14 @@
 
         function canAutoLoadPerformanceList() {
             const view = document.getElementById('view-performance');
+            const hasHiddenLocalItems = state.visibleCount > state.renderLimit;
+            const canLoadRemoteItems = !Array.isArray(state.memberItems)
+                && (state.hasMore || Boolean(state.dateSearchCursor))
+                && !state.dateSearchComplete;
             return Boolean(
                 state.initialized
-                && state.items.length > 0
-                && !Array.isArray(state.memberItems)
-                && (state.hasMore || Boolean(state.dateSearchCursor))
-                && !state.dateSearchComplete
+                && getPerformanceSourceItems().length > 0
+                && (hasHiddenLocalItems || canLoadRemoteItems)
                 && !state.loading
                 && !state.autoLoadPaused
                 && view
@@ -970,6 +1024,15 @@
                 const viewRect = view.getBoundingClientRect();
                 const sentinelRect = sentinel.getBoundingClientRect();
                 if (sentinelRect.top <= viewRect.bottom + 280 && sentinelRect.bottom >= viewRect.top) {
+                    if (state.visibleCount > state.renderLimit) {
+                        state.renderLimit = Math.min(
+                            state.visibleCount,
+                            state.renderLimit + PERFORMANCE_RENDER_BATCH
+                        );
+                        renderPerformanceList();
+                        schedulePerformanceAutoLoad();
+                        return;
+                    }
                     void loadPerformanceList({ reset: false, automatic: true });
                 }
             });
@@ -1032,6 +1095,7 @@
                 state.next = '0';
                 state.hasMore = true;
                 state.autoLoadPaused = false;
+                state.renderLimit = PERFORMANCE_INITIAL_RENDER_LIMIT;
                 setPerformanceMessage('正在加载公演', '正在同步最新公演安排…');
             }
             syncPerformanceControls();
@@ -1052,6 +1116,8 @@
                     if (!result?.success || !result.content) {
                         throw new Error(result?.msg || '公演列表返回异常');
                     }
+
+                    if (state.searchRevision !== searchRevision && (directDateSearch || fastSearch)) break;
 
                     const list = Array.isArray(result.content.liveList) ? result.content.liveList : [];
                     if (directDateSearch) {
@@ -1122,6 +1188,7 @@
         function selectPerformanceGroup(group) {
             state.group = group === 'all' || Object.prototype.hasOwnProperty.call(GROUPS, group) ? group : 'all';
             state.team = 'all';
+            state.renderLimit = PERFORMANCE_INITIAL_RENDER_LIMIT;
             renderPerformanceList();
             schedulePerformanceAutoLoad();
         }
@@ -1130,19 +1197,30 @@
             const normalizedTeam = String(team || 'all');
             const teams = getAvailablePerformanceTeams();
             state.team = normalizedTeam === 'all' || teams.includes(normalizedTeam) ? normalizedTeam : 'all';
+            state.renderLimit = PERFORMANCE_INITIAL_RENDER_LIMIT;
             renderPerformanceList();
             schedulePerformanceAutoLoad();
         }
 
-        function searchPerformanceList(query) {
+        function applyPerformanceSearch(query) {
             state.query = String(query || '').trim().toLocaleLowerCase();
             state.searchRevision += 1;
             state.dateSearchCursor = state.memberId ? '' : getPerformanceDateSearchCursor(state.query);
             state.dateSearchItems = state.dateSearchCursor ? [] : null;
             state.dateSearchComplete = false;
             state.autoLoadPaused = false;
+            state.renderLimit = PERFORMANCE_INITIAL_RENDER_LIMIT;
             renderPerformanceList();
             schedulePerformanceAutoLoad();
+        }
+
+        function searchPerformanceList(query) {
+            const value = String(query || '');
+            clearTimeout(performanceSearchTimer);
+            performanceSearchTimer = window.setTimeout(() => {
+                performanceSearchTimer = 0;
+                applyPerformanceSearch(value);
+            }, PERFORMANCE_SEARCH_DEBOUNCE_MS);
         }
 
         return {

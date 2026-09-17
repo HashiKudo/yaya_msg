@@ -381,15 +381,18 @@ function syncWebAccountButton(profile = currentPocketProfile, loggedIn = !!curre
         }
     }
 
-    const nickname = String(profile?.nickname || '').trim();
-    const avatarUrl = profile?.avatarUrl || normalizeAccountAvatarUrl(profile?.avatar);
-    button.classList.toggle('is-logged-in', !!loggedIn);
-    button.setAttribute('aria-label', loggedIn ? `${nickname || '口袋用户'}，账号设置` : '登录账号');
-    button.title = loggedIn ? `${nickname || '口袋用户'} · 账号设置` : '登录账号';
-    label.textContent = '登录';
-    avatar.src = loggedIn ? avatarUrl || './web-icon.png' : './web-icon.png';
-    if (loggedIn) writeWebAccountProfileCache(profile);
-}
+            const nickname = String(profile?.nickname || '').trim();
+            const avatarUrl = profile?.avatarUrl || normalizeAccountAvatarUrl(profile?.avatar);
+            button.classList.toggle('is-logged-in', !!loggedIn);
+            button.setAttribute('aria-label', loggedIn ? `${nickname || '口袋用户'}，账号设置` : '登录账号');
+            button.title = window.YayaRendererUtils.t(loggedIn ? `${nickname || '口袋用户'} · 账号设置` : '登录账号');
+            label.textContent = window.YayaRendererUtils.t('登录');
+            avatar.src = loggedIn ? (avatarUrl || './web-icon.png') : './web-icon.png';
+            if (loggedIn) writeWebAccountProfileCache(profile);
+            if (typeof window.syncWebAccountRoute === 'function') {
+                window.syncWebAccountRoute(!!loggedIn);
+            }
+        }
 
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => syncWebAccountButton(), { once: true });
@@ -435,12 +438,12 @@ function setRenameCountDisplay(freeText, chickenText) {
     if (!countEl) return;
     countEl.replaceChildren();
 
-    const freeEl = document.createElement('span');
-    freeEl.textContent = `免费修改：${freeText}`;
-    const chickenEl = document.createElement('span');
-    chickenEl.textContent = `鸡腿修改：${chickenText}`;
-    countEl.append(freeEl, chickenEl);
-}
+            const freeEl = document.createElement('span');
+            freeEl.textContent = window.YayaRendererUtils.t(`免费修改：${freeText}`);
+            const chickenEl = document.createElement('span');
+            chickenEl.textContent = window.YayaRendererUtils.t(`鸡腿修改：${chickenText}`);
+            countEl.append(freeEl, chickenEl);
+        }
 
 function renderAccountRenameCount(content) {
     const countEl = document.getElementById('account-rename-count');
@@ -464,7 +467,7 @@ function renderAccountRenameCount(content) {
             const token = appToken || readStoredToken();
             if (!countEl) return;
             if (!token) {
-                countEl.innerText = '改名次数：--';
+                countEl.innerText = window.YayaRendererUtils.t('改名次数：--');
                 return;
             }
             const accountContext = capturePocketAccountContext(token);
@@ -501,7 +504,7 @@ function renderAccountChickenBalance(content) {
             }
             const accountContext = capturePocketAccountContext(token);
 
-            balanceEl.innerText = '读取中...';
+            balanceEl.innerText = window.YayaRendererUtils.t('读取中...');
             try {
                 const pa = window.getPA ? window.getPA() : null;
                 const res = await ipcRenderer.invoke('fetch-user-money', { token, pa });
@@ -512,7 +515,7 @@ function renderAccountChickenBalance(content) {
                 renderAccountChickenBalance(res.content);
             } catch (error) {
                 if (!isPocketAccountContextCurrent(accountContext)) return;
-                balanceEl.innerText = '读取失败';
+                balanceEl.innerText = window.YayaRendererUtils.t('读取失败');
             }
         }
 
@@ -1131,7 +1134,7 @@ function renderAutoMessageFetchUi(options = {}) {
             }
             if (runButton && !autoMessageFetchInFlight) {
                 runButton.disabled = autoMessageFetchDraftDirty;
-                runButton.title = autoMessageFetchDraftDirty ? '自动抓取设置正在保存' : '';
+                runButton.title = window.YayaRendererUtils.t(autoMessageFetchDraftDirty ? '自动抓取设置正在保存' : '');
             }
 
             if (list) {
@@ -1144,16 +1147,16 @@ function renderAutoMessageFetchUi(options = {}) {
             name.textContent = member.name;
             chip.appendChild(name);
 
-            const removeButton = document.createElement('button');
-            removeButton.type = 'button';
-            removeButton.title = `移除 ${member.name}`;
-            removeButton.setAttribute('aria-label', `移除 ${member.name}`);
-            removeButton.textContent = '×';
-            removeButton.addEventListener('click', () => removeAutoMessageFetchMember(member.serverId, member.channelId));
-            chip.appendChild(removeButton);
-            list.appendChild(chip);
-        }
-    }
+                    const removeButton = document.createElement('button');
+                    removeButton.type = 'button';
+                    removeButton.title = window.YayaRendererUtils.t(`移除 ${member.name}`);
+                    removeButton.setAttribute('aria-label', `移除 ${member.name}`);
+                    removeButton.textContent = '×';
+                    removeButton.addEventListener('click', () => removeAutoMessageFetchMember(member.serverId, member.channelId));
+                    chip.appendChild(removeButton);
+                    list.appendChild(chip);
+                }
+            }
 
     if (options.keepStatus || autoMessageFetchInFlight) return;
     if (autoMessageFetchDraftDirty) {
@@ -1646,12 +1649,12 @@ async function runAutoMessageFetchNow(options = {}) {
         return { success: false, skipped: true, reason: 'manual-fetch-busy' };
     }
 
-    autoMessageFetchInFlight = true;
-    const runButton = document.getElementById('btn-auto-fetch-now');
-    if (runButton) {
-        runButton.disabled = true;
-        runButton.textContent = '抓取中...';
-    }
+            autoMessageFetchInFlight = true;
+            const runButton = document.getElementById('btn-auto-fetch-now');
+            if (runButton) {
+                runButton.disabled = true;
+                runButton.textContent = window.YayaRendererUtils.t('抓取中...');
+            }
 
     let addedCount = 0;
     let changedMemberCount = 0;
@@ -1733,8 +1736,8 @@ async function runAutoMessageFetchNow(options = {}) {
                     autoMessageFetchInFlight = false;
                     if (runButton) {
                         runButton.disabled = autoMessageFetchDraftDirty;
-                        runButton.textContent = '立即抓取';
-                        runButton.title = autoMessageFetchDraftDirty ? '自动抓取设置正在保存' : '';
+                        runButton.textContent = window.YayaRendererUtils.t('立即抓取');
+                        runButton.title = window.YayaRendererUtils.t(autoMessageFetchDraftDirty ? '自动抓取设置正在保存' : '');
                     }
 
                     const latestConfig = readAutoMessageFetchConfig();
@@ -1784,7 +1787,7 @@ function queueStartupAutoMessageFetch(delayMs = 0) {
             const runButton = document.getElementById('btn-auto-fetch-now');
             if (runButton) {
                 runButton.disabled = false;
-                runButton.textContent = '立即抓取';
+                runButton.textContent = window.YayaRendererUtils.t('立即抓取');
                 runButton.title = '';
             }
         }
@@ -1899,12 +1902,12 @@ function formatCheckinSuccessMessage(content) {
     return parts.length ? `签到成功，${parts.join('，')}` : '签到成功';
 }
 
-function setCheckinButtonBusy(isBusy) {
-    const btn = document.getElementById('btn-manual-checkin');
-    if (!btn) return;
-    btn.disabled = isBusy;
-    btn.innerText = isBusy ? '签到中...' : '立即签到';
-}
+        function setCheckinButtonBusy(isBusy) {
+            const btn = document.getElementById('btn-manual-checkin');
+            if (!btn) return;
+            btn.disabled = isBusy;
+            btn.innerText = window.YayaRendererUtils.t(isBusy ? '签到中...' : '立即签到');
+        }
 
 async function performPocketCheckin(options = {}) {
     const { force = false, silentWhenSkipped = true } = options;
@@ -2020,21 +2023,22 @@ async function fetchAllMsgs() {
     const toggleBtn = document.getElementById('btn-toggle-mode');
     const clearBoundaryBtn = document.getElementById('btn-clear-fetch-boundary');
 
-    if (isAutoFetching) {
-        isAutoFetching = false;
-        btn.innerText = '加载全部';
-        btn.style.background = '';
-        btn.style.color = '';
-        if (fetchBtn) fetchBtn.disabled = false;
-        if (memberSearch) memberSearch.disabled = false;
-        if (toggleBtn) toggleBtn.disabled = false;
-        if (clearBoundaryBtn) clearBoundaryBtn.disabled = false;
-        if (allFetchedMsgs.length > 0) {
-            if (exportBtn) exportBtn.disabled = false;
-            if (exportLocalBtn) exportLocalBtn.disabled = false;
-        }
-        return;
-    }
+            if (isAutoFetching) {
+                isAutoFetching = false;
+                btn.innerText = window.YayaRendererUtils.t('加载全部');
+                btn.style.background = '';
+                btn.style.color = '';
+                if (fetchBtn) fetchBtn.disabled = false;
+                if (memberSearch) memberSearch.disabled = false;
+                if (toggleBtn) toggleBtn.disabled = false;
+                if (clearBoundaryBtn) clearBoundaryBtn.disabled = false;
+                if (allFetchedMsgs.length > 0) {
+                    if (exportBtn) exportBtn.disabled = false;
+                    if (exportLocalBtn) exportLocalBtn.disabled = false;
+                }
+                return;
+            }
+
 
     const channelId = document.getElementById('tool-channel').value.trim();
     if (!channelId) {
@@ -2042,16 +2046,16 @@ async function fetchAllMsgs() {
         return;
     }
 
-    isAutoFetching = true;
-    btn.innerText = '停止加载';
-    btn.style.background = '#ff4d4f';
-    btn.style.color = 'white';
-    if (fetchBtn) fetchBtn.disabled = true;
-    if (memberSearch) memberSearch.disabled = true;
-    if (exportBtn) exportBtn.disabled = true;
-    if (exportLocalBtn) exportLocalBtn.disabled = true;
-    if (toggleBtn) toggleBtn.disabled = true;
-    if (clearBoundaryBtn) clearBoundaryBtn.disabled = true;
+            isAutoFetching = true;
+            btn.innerText = window.YayaRendererUtils.t('停止加载');
+            btn.style.background = '#ff4d4f';
+            btn.style.color = 'white';
+            if (fetchBtn) fetchBtn.disabled = true;
+            if (memberSearch) memberSearch.disabled = true;
+            if (exportBtn) exportBtn.disabled = true;
+            if (exportLocalBtn) exportLocalBtn.disabled = true;
+            if (toggleBtn) toggleBtn.disabled = true;
+            if (clearBoundaryBtn) clearBoundaryBtn.disabled = true;
 
     try {
         if (lastNextTime === 0 || box.children.length <= 1) {
@@ -2063,20 +2067,20 @@ async function fetchAllMsgs() {
             const lastEl = box.lastElementChild;
             if (lastEl && lastEl.innerText.includes('加载更多')) lastEl.remove();
 
-            await fetchMsgs(true);
-            await sleep(50);
-        }
-    } catch (e) {
-        console.error('自动抓取中断', e);
-    } finally {
-        isAutoFetching = false;
-        btn.innerText = '加载全部';
-        btn.style.background = '';
-        btn.style.color = '';
-        if (fetchBtn) fetchBtn.disabled = false;
-        if (memberSearch) memberSearch.disabled = false;
-        if (toggleBtn) toggleBtn.disabled = false;
-        if (clearBoundaryBtn) clearBoundaryBtn.disabled = false;
+                    await fetchMsgs(true);
+                    await sleep(50);
+                }
+            } catch (e) {
+                console.error("自动抓取中断", e);
+            } finally {
+                isAutoFetching = false;
+                btn.innerText = window.YayaRendererUtils.t('加载全部');
+                btn.style.background = '';
+                btn.style.color = '';
+                if (fetchBtn) fetchBtn.disabled = false;
+                if (memberSearch) memberSearch.disabled = false;
+                if (toggleBtn) toggleBtn.disabled = false;
+                if (clearBoundaryBtn) clearBoundaryBtn.disabled = false;
 
         const statusEl = document.getElementById('fetch-status');
         if (statusEl && statusEl.innerHTML) {
@@ -2157,13 +2161,13 @@ function renderLive48QrAccountInfo(accountInfo = null) {
     const idEl = document.getElementById('live48-login-account-id');
     if (!box || !avatarEl || !nameEl || !idEl) return;
 
-    if (!accountInfo) {
-        box.style.display = 'none';
-        avatarEl.src = './icon.png';
-        nameEl.innerText = 'live.48.cn 用户';
-        idEl.innerText = 'UID: --';
-        return;
-    }
+            if (!accountInfo) {
+                box.style.display = 'none';
+                avatarEl.src = './icon.png';
+                nameEl.innerText = window.YayaRendererUtils.t('live.48.cn 用户');
+                idEl.innerText = 'UID: --';
+                return;
+            }
 
     const nickname = String(accountInfo.nickname || 'live.48.cn 用户').trim();
     const userId = String(accountInfo.userId || accountInfo.uid || '').trim();
@@ -2187,18 +2191,18 @@ function renderLive48QrAccountInfo(accountInfo = null) {
             } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/fetch-legacy.js'); }
         }
 
-function resetLive48QrDisplay() {
-    const qrImg = document.getElementById('live48-login-qr');
-    const placeholder = document.getElementById('live48-qr-placeholder');
-    if (qrImg) {
-        qrImg.src = '';
-        qrImg.style.display = 'none';
-    }
-    if (placeholder) {
-        placeholder.style.display = 'flex';
-        placeholder.innerText = '点击下方按钮生成二维码';
-    }
-}
+        function resetLive48QrDisplay() {
+            const qrImg = document.getElementById('live48-login-qr');
+            const placeholder = document.getElementById('live48-qr-placeholder');
+            if (qrImg) {
+                qrImg.src = '';
+                qrImg.style.display = 'none';
+            }
+            if (placeholder) {
+                placeholder.style.display = 'flex';
+                placeholder.innerText = window.YayaRendererUtils.t('点击下方按钮生成二维码');
+            }
+        }
 
 function stopLive48QrLogin(cancelRemote = false) {
     if (live48QrTimer) {
@@ -2210,13 +2214,13 @@ function stopLive48QrLogin(cancelRemote = false) {
     live48QrCode = '';
     live48QrPollCount = 0;
 
-    const btn = document.getElementById('btn-live48-login-qr');
-    const stopBtn = document.getElementById('btn-live48-login-stop');
-    if (btn) {
-        btn.disabled = false;
-        btn.innerText = '生成二维码';
-    }
-    if (stopBtn) stopBtn.style.display = 'none';
+            const btn = document.getElementById('btn-live48-login-qr');
+            const stopBtn = document.getElementById('btn-live48-login-stop');
+            if (btn) {
+                btn.disabled = false;
+                btn.innerText = window.YayaRendererUtils.t('生成二维码');
+            }
+            if (stopBtn) stopBtn.style.display = 'none';
 
     if (cancelRemote && codeToCancel) {
         ipcRenderer.invoke('login-cancel-qr', { code: codeToCancel }).catch(() => {});
@@ -2274,18 +2278,18 @@ async function startLive48QrLogin() {
     const placeholder = document.getElementById('live48-qr-placeholder');
     const msgBox = document.getElementById('login-msg');
 
-    if (btn) {
-        btn.disabled = true;
-        btn.innerText = '生成中...';
-    }
-    if (msgBox) msgBox.innerText = '';
-    renderLive48QrAccountInfo(null);
-    if (placeholder) {
-        placeholder.style.display = 'flex';
-        placeholder.innerText = '正在生成二维码...';
-    }
-    if (qrImg) qrImg.style.display = 'none';
-    setLive48QrMessage('正在连接 live.48.cn...');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerText = window.YayaRendererUtils.t('生成中...');
+            }
+            if (msgBox) msgBox.innerText = '';
+            renderLive48QrAccountInfo(null);
+            if (placeholder) {
+                placeholder.style.display = 'flex';
+                placeholder.innerText = window.YayaRendererUtils.t('正在生成二维码...');
+            }
+            if (qrImg) qrImg.style.display = 'none';
+            setLive48QrMessage('正在连接 live.48.cn...');
 
     try {
         const res = await ipcRenderer.invoke('login-create-qr');
@@ -2293,30 +2297,30 @@ async function startLive48QrLogin() {
             throw new Error(res?.msg || '创建二维码失败');
         }
 
-        live48QrCode = res.code;
-        live48QrPollCount = 0;
-        if (qrImg) {
-            qrImg.src = res.qrImage;
-            qrImg.style.display = 'block';
-        }
-        if (placeholder) placeholder.style.display = 'none';
-        if (btn) {
-            btn.disabled = false;
-            btn.innerText = '刷新二维码';
-        }
-        if (stopBtn) stopBtn.style.display = 'block';
-        setLive48QrMessage('请用口袋48 App 扫码，并在手机上确认登录');
+                live48QrCode = res.code;
+                live48QrPollCount = 0;
+                if (qrImg) {
+                    qrImg.src = res.qrImage;
+                    qrImg.style.display = 'block';
+                }
+                if (placeholder) placeholder.style.display = 'none';
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerText = window.YayaRendererUtils.t('刷新二维码');
+                }
+                if (stopBtn) stopBtn.style.display = 'block';
+                setLive48QrMessage('请用口袋48 App 扫码，并在手机上确认登录');
 
-        live48QrTimer = setInterval(pollLive48QrLogin, 3000);
-    } catch (error) {
-        resetLive48QrDisplay();
-        setLive48QrMessage(error.message || '创建二维码失败', '#ff4d4f');
-        if (btn) {
-            btn.disabled = false;
-            btn.innerText = '重新生成';
+                live48QrTimer = setInterval(pollLive48QrLogin, 3000);
+            } catch (error) {
+                resetLive48QrDisplay();
+                setLive48QrMessage(error.message || '创建二维码失败', '#ff4d4f');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerText = window.YayaRendererUtils.t('重新生成');
+                }
+            }
         }
-    }
-}
 
 let currentVerifyAnswer = null;
 
@@ -2339,15 +2343,15 @@ async function handleSendSms(answer = null) {
     const verifyQuestion = document.getElementById('verify-question-text');
     const verifyOptions = document.getElementById('verify-options-container');
 
-    if (!mobile) {
-        msgBox.innerText = '请输入手机号';
-        return;
-    }
+            if (!mobile) {
+                msgBox.innerText = window.YayaRendererUtils.t('请输入手机号');
+                return;
+            }
 
-    if (!answer) {
-        btn.disabled = true;
-        btn.innerText = '发送中...';
-    }
+            if (!answer) {
+                btn.disabled = true;
+                btn.innerText = window.YayaRendererUtils.t('发送中...');
+            }
 
     msgBox.innerText = '';
 
@@ -2358,23 +2362,24 @@ async function handleSendSms(answer = null) {
         if (res.success) {
             if (verifyArea) verifyArea.style.display = 'none';
 
-            let count = 60;
-            btn.innerText = `${count}s`;
-            const timer = setInterval(() => {
-                count--;
-                btn.innerText = `${count}s`;
-                if (count <= 0) {
-                    clearInterval(timer);
-                    btn.disabled = false;
-                    btn.innerText = '获取验证码';
-                }
-            }, 1000);
+                    let count = 60;
+                    btn.innerText = `${count}s`;
+                    const timer = setInterval(() => {
+                        count--;
+                        btn.innerText = `${count}s`;
+                        if (count <= 0) {
+                            clearInterval(timer);
+                            btn.disabled = false;
+                            btn.innerText = window.YayaRendererUtils.t('获取验证码');
+                        }
+                    }, 1000);
 
-            msgBox.style.color = '#28a745';
-            msgBox.innerText = '验证码已发送，请查收';
-        } else if (res.needVerification) {
-            btn.disabled = false;
-            btn.innerText = '获取验证码';
+                    msgBox.style.color = '#28a745';
+                    msgBox.innerText = window.YayaRendererUtils.t('验证码已发送，请查收');
+
+                } else if (res.needVerification) {
+                    btn.disabled = false;
+                    btn.innerText = window.YayaRendererUtils.t('获取验证码');
 
             msgBox.innerText = '';
 
@@ -2389,10 +2394,10 @@ async function handleSendSms(answer = null) {
                     optBtn.style.cssText = 'padding: 4px 10px; font-size: 12px;';
                     optBtn.innerText = opt.value;
 
-                    optBtn.onclick = () => {
-                        verifyQuestion.innerText = `正在验证: ${opt.value}...`;
-                        verifyOptions.style.pointerEvents = 'none';
-                        verifyOptions.style.opacity = '0.5';
+                            optBtn.onclick = () => {
+                                verifyQuestion.innerText = window.YayaRendererUtils.t(`正在验证: ${opt.value}...`);
+                                verifyOptions.style.pointerEvents = 'none';
+                                verifyOptions.style.opacity = '0.5';
 
                         handleSendSms(opt.option);
                     };
@@ -2400,40 +2405,42 @@ async function handleSendSms(answer = null) {
                     verifyOptions.appendChild(optBtn);
                 });
 
-                verifyOptions.style.pointerEvents = 'auto';
-                verifyOptions.style.opacity = '1';
+                        verifyOptions.style.pointerEvents = 'auto';
+                        verifyOptions.style.opacity = '1';
+                    }
+
+                } else {
+                    throw new Error(res.msg);
+                }
+            } catch (e) {
+                btn.disabled = false;
+                btn.innerText = window.YayaRendererUtils.t('获取验证码');
+                msgBox.style.color = '#ff4d4f';
+                msgBox.innerText = e.message;
+
             }
-        } else {
-            throw new Error(res.msg);
         }
-    } catch (e) {
-        btn.disabled = false;
-        btn.innerText = '获取验证码';
-        msgBox.style.color = '#ff4d4f';
-        msgBox.innerText = e.message;
-    }
-}
 
 function startCountdown(seconds) {
     const btn = document.getElementById('btn-send-sms');
     let left = seconds;
 
-    btn.disabled = true;
-    btn.innerText = `${left}s 后重试`;
+            btn.disabled = true;
+            btn.innerText = window.YayaRendererUtils.t(`${left}s 后重试`);
 
     if (smsTimer) clearInterval(smsTimer);
 
-    smsTimer = setInterval(() => {
-        left--;
-        if (left <= 0) {
-            clearInterval(smsTimer);
-            btn.disabled = false;
-            btn.innerText = '获取验证码';
-        } else {
-            btn.innerText = `${left}s 后重试`;
+            smsTimer = setInterval(() => {
+                left--;
+                if (left <= 0) {
+                    clearInterval(smsTimer);
+                    btn.disabled = false;
+                    btn.innerText = window.YayaRendererUtils.t('获取验证码');
+                } else {
+                    btn.innerText = window.YayaRendererUtils.t(`${left}s 后重试`);
+                }
+            }, 1000);
         }
-    }, 1000);
-}
 
 async function handleLoginByCode() {
     const mobile = document.getElementById('login-mobile').value.trim();
@@ -2441,13 +2448,13 @@ async function handleLoginByCode() {
     const msgDiv = document.getElementById('login-msg');
 
             if (!mobile || !code) {
-                msgDiv.innerText = '请填写手机号和验证码';
+                msgDiv.innerText = window.YayaRendererUtils.t('请填写手机号和验证码');
                 return;
             }
             const loginGeneration = ++accountValidationGeneration;
 
-    msgDiv.innerText = '登录中...';
-    msgDiv.style.color = 'var(--primary)';
+            msgDiv.innerText = window.YayaRendererUtils.t('登录中...');
+            msgDiv.style.color = 'var(--primary)';
 
             try {
                 const pa = await getLoginPa();
@@ -2463,8 +2470,8 @@ async function handleLoginByCode() {
             const tokenInput = document.getElementById('login-token');
             if (tokenInput) tokenInput.value = token;
 
-            msgDiv.style.color = '#28a745';
-            msgDiv.innerText = '登录成功！正在跳转...';
+                    msgDiv.style.color = '#28a745';
+                    msgDiv.innerText = window.YayaRendererUtils.t('登录成功！正在跳转...');
 
                     setTimeout(() => {
                         if (loginGeneration === accountValidationGeneration) checkToken();
@@ -2475,7 +2482,7 @@ async function handleLoginByCode() {
             } catch (err) {
                 if (loginGeneration !== accountValidationGeneration) return;
                 msgDiv.style.color = '#ff4d4f';
-                msgDiv.innerText = '登录失败: ' + err.message;
+                msgDiv.innerText = window.YayaRendererUtils.t('登录失败: ' + err.message);
             }
         }
         async function checkToken() {
@@ -2491,7 +2498,10 @@ async function handleLoginByCode() {
     const accountList = document.getElementById('account-list');
 
             if (!tokenInput) {
-                if (msgBox) msgBox.innerText = '请输入 Token';
+                if (typeof window.setWebAccountAuthPending === 'function') {
+                    window.setWebAccountAuthPending(false);
+                }
+                if (msgBox) msgBox.innerText = window.YayaRendererUtils.t('请输入 Token');
                 return;
             }
             const previousToken = String(appToken || readStoredToken() || '').trim();
@@ -2518,10 +2528,13 @@ async function handleLoginByCode() {
                 tokenField.value = tokenInput;
             }
 
-    if (msgBox) {
-        msgBox.innerText = '正在验证身份...';
-        msgBox.style.color = '#666';
-    }
+            if (msgBox) {
+                msgBox.innerText = window.YayaRendererUtils.t('正在验证身份...');
+                msgBox.style.color = '#666';
+            }
+            if (typeof window.setWebAccountAuthPending === 'function') {
+                window.setWebAccountAuthPending(true);
+            }
 
             try {
                 const pa = window.getPA ? window.getPA() : null;
@@ -2530,6 +2543,9 @@ async function handleLoginByCode() {
                     pa
                 });
                 if (!isCurrentValidation()) return;
+                if (typeof window.setWebAccountAuthPending === 'function') {
+                    window.setWebAccountAuthPending(false);
+                }
 
         if (res.success) {
             if (panelInput) panelInput.style.display = 'none';
@@ -2576,10 +2592,10 @@ async function handleLoginByCode() {
                         let hasOtherAccounts = false;
                         const bigSmall = userInfo.bigSmallInfo;
 
-                const createCard = (user, type) => {
-                    const card = document.createElement('div');
-                    card.className = 'account-card';
-                    card.title = `点击切换到: ${user.nickname}`;
+                        const createCard = (user, type) => {
+                            const card = document.createElement('div');
+                            card.className = 'account-card';
+                            card.title = window.YayaRendererUtils.t(`点击切换到: ${user.nickname}`);
 
                     let avatarUrl = 'https://source.48.cn/logo.png';
                     if (user.avatar) {
@@ -2617,9 +2633,13 @@ async function handleLoginByCode() {
                     }
                 }
 
-                accountList.style.gridTemplateColumns = '1fr';
-                accountArea.style.display = hasOtherAccounts ? 'block' : 'none';
-            }
+                        accountList.style.gridTemplateColumns = '1fr';
+                        accountArea.style.display = hasOtherAccounts ? 'block' : 'none';
+                    }
+
+                    if (typeof window.restoreWebProtectedRouteAfterLogin === 'function') {
+                        window.restoreWebProtectedRouteAfterLogin();
+                    }
 
                     await performPocketCheckin({
                         force: false,
@@ -2644,11 +2664,17 @@ async function handleLoginByCode() {
                     syncAutoCheckinUi();
                     if (msgBox) {
                         msgBox.style.color = '#ff4d4f';
-                        msgBox.innerText = res.msg || 'Token 无效';
+                        msgBox.innerText = window.YayaRendererUtils.t(res.msg || 'Token 无效');
+                    }
+                    if (typeof window.redirectWebProtectedRouteToLogin === 'function') {
+                        window.redirectWebProtectedRouteToLogin();
                     }
                 }
             } catch (e) {
                 if (!isCurrentValidation()) return;
+                if (typeof window.setWebAccountAuthPending === 'function') {
+                    window.setWebAccountAuthPending(false);
+                }
                 console.error(e);
                 if (typeof resetAccountScopedSessionState === 'function') {
                     resetAccountScopedSessionState();
@@ -2664,7 +2690,7 @@ async function handleLoginByCode() {
                 syncAutoCheckinUi();
                 if (msgBox) {
                     msgBox.style.color = '#ff4d4f';
-                    msgBox.innerText = '验证出错: ' + e.message;
+                    msgBox.innerText = window.YayaRendererUtils.t('验证出错: ' + e.message);
                 }
             }
         }
@@ -2677,7 +2703,7 @@ async function handleLoginByCode() {
             const nickNameEl = document.getElementById('user-nickname');
             const originalName = nickNameEl.innerText;
 
-    nickNameEl.innerText = `正在切换...`;
+            nickNameEl.innerText = window.YayaRendererUtils.t(`正在切换...`);
 
             try {
                 const pa = window.getPA ? window.getPA() : null;
@@ -2721,14 +2747,12 @@ function copyToken() {
     const token = appToken || readStoredToken();
     const btn = document.getElementById('btn-copy-token');
 
-    if (token) {
-        navigator.clipboard
-            .writeText(token)
-            .then(() => {
-                const originalText = btn.innerText;
-                btn.innerText = '已复制';
-                btn.style.backgroundColor = '#28a745';
-                btn.style.color = 'white';
+            if (token) {
+                navigator.clipboard.writeText(token).then(() => {
+                    const originalText = btn.innerText;
+                    btn.innerText = window.YayaRendererUtils.t("已复制");
+                    btn.style.backgroundColor = "#28a745";
+                    btn.style.color = "white";
 
                 setTimeout(() => {
                     btn.innerText = originalText;
@@ -2768,19 +2792,19 @@ function copyToken() {
     if (panelSuccess) panelSuccess.style.display = 'none';
     if (panelInput) panelInput.style.display = 'block';
 
-    document.getElementById('login-token').value = '';
-    syncAccountProfileEditUi(currentPocketProfile);
-    renderAccountRenameCount(null);
-    renderAccountChickenBalance(null);
-    setAccountProfileMetaVisible(false);
-    const avatarInput = document.getElementById('account-avatar-file');
-    if (avatarInput) avatarInput.value = '';
-    const msgBox = document.getElementById('login-msg');
-    if (msgBox) {
-        msgBox.innerText = '记录已清除';
-        msgBox.style.color = '#28a745';
-    }
-    syncAutoCheckinUi();
+            document.getElementById('login-token').value = '';
+            syncAccountProfileEditUi(currentPocketProfile);
+            renderAccountRenameCount(null);
+            renderAccountChickenBalance(null);
+            setAccountProfileMetaVisible(false);
+            const avatarInput = document.getElementById('account-avatar-file');
+            if (avatarInput) avatarInput.value = '';
+            const msgBox = document.getElementById('login-msg');
+            if (msgBox) {
+                msgBox.innerText = window.YayaRendererUtils.t('记录已清除');
+                msgBox.style.color = '#28a745';
+            }
+            syncAutoCheckinUi();
 
     const memberSearch = document.getElementById('member-search');
     if (memberSearch) {
@@ -2795,21 +2819,21 @@ async function fetchMsgs(isLoadMore = false) {
     const exportBtn = document.getElementById('btn-export-jsonl');
     const exportLocalBtn = document.getElementById('btn-export-local');
 
-    if (!channelId) {
-        if (!isLoadMore) {
-            box.innerHTML = `<div style="text-align:center; padding:20px; color:#ff4d4f;">请先在搜索框输入名字并选择成员</div>`;
-        } else {
-            console.warn('缺少 Channel ID');
-        }
-        isAutoFetching = false;
-        const btn = document.getElementById('btn-fetch-all');
-        if (btn) {
-            btn.innerText = '加载全部';
-            btn.style.background = '';
-            btn.style.color = '';
-        }
-        return;
-    }
+            if (!channelId) {
+                if (!isLoadMore) {
+                    box.innerHTML = `<div style="text-align:center; padding:20px; color:#ff4d4f;">请先在搜索框输入名字并选择成员</div>`;
+                } else {
+                    console.warn("缺少 Channel ID");
+                }
+                isAutoFetching = false;
+                const btn = document.getElementById('btn-fetch-all');
+                if (btn) {
+                    btn.innerText = window.YayaRendererUtils.t('加载全部');
+                    btn.style.background = '';
+                    btn.style.color = '';
+                }
+                return;
+            }
 
             if (!isLoadMore) {
                 box.replaceChildren();
@@ -2825,12 +2849,12 @@ async function fetchMsgs(isLoadMore = false) {
                 if (exportBtn) exportBtn.disabled = true;
             }
 
-    const loadingDiv = document.createElement('div');
-    loadingDiv.innerText = '加载中...';
-    loadingDiv.style.textAlign = 'center';
-    loadingDiv.style.color = '#999';
-    loadingDiv.id = 'loading-indicator';
-    box.appendChild(loadingDiv);
+            const loadingDiv = document.createElement('div');
+            loadingDiv.innerText = window.YayaRendererUtils.t('加载中...');
+            loadingDiv.style.textAlign = 'center';
+            loadingDiv.style.color = '#999';
+            loadingDiv.id = 'loading-indicator';
+            box.appendChild(loadingDiv);
 
     try {
         const pa = window.getPA ? window.getPA() : null;
@@ -3050,19 +3074,19 @@ async function fetchMsgs(isLoadMore = false) {
                         <button style="width:100%; margin-top:10px; padding:8px; cursor:pointer; background:#f0f0f0; border:1px solid #ddd; border-radius:4px;" onclick="fetchMsgs(true)">加载更多...</button>
                     </div>
                 `);
-                box.appendChild(moreBtnFragment);
+                        box.appendChild(moreBtnFragment);
+                    }
+                    if (!isAutoFetching) {
+                        if (exportBtn) exportBtn.disabled = false;
+                        if (exportLocalBtn) exportLocalBtn.disabled = false;
+                    }
+                } else {
+                    if (!isLoadMore) box.innerText = window.YayaRendererUtils.t('获取失败: ' + (res.msg || 'API Error'));
+                }
+            } catch (e) {
+                if (!isLoadMore) box.innerText = window.YayaRendererUtils.t('出错: ' + e.message);
             }
-            if (!isAutoFetching) {
-                if (exportBtn) exportBtn.disabled = false;
-                if (exportLocalBtn) exportLocalBtn.disabled = false;
-            }
-        } else {
-            if (!isLoadMore) box.innerText = '获取失败: ' + (res.msg || 'API Error');
         }
-    } catch (e) {
-        if (!isLoadMore) box.innerText = '出错: ' + e.message;
-    }
-}
 
 function getFetchExportMemberMeta(memberName, channelId) {
     const targetName = String(memberName || '').trim();
@@ -3186,9 +3210,9 @@ async function exportMsgsToJsonl() {
     tip.style.cssText =
         'text-align:center; color:#28a745; margin-top:10px; font-weight:bold; padding:5px; border:1px solid #28a745; border-radius:4px; background:rgba(40,167,69,0.1);';
 
-    try {
-        exportBtn.innerText = '正在导出';
-        exportBtn.disabled = true;
+            try {
+                exportBtn.innerText = window.YayaRendererUtils.t("正在导出");
+                exportBtn.disabled = true;
 
         const res = await window.ipcRenderer.invoke('save-export-jsonl', {
             memberName: exportFolderName,
@@ -3209,14 +3233,14 @@ async function exportMsgsToJsonl() {
             );
         }
 
-        const displayPath = res.path || `${window.desktop.storagePaths.htmlDir}\\${exportFolderName}\\${exportFileName}`;
-        exportBtn.innerText = res.changed ? '导出成功' : '没有新增';
-        exportBtn.style.backgroundColor = res.changed ? '#28a745' : '#6c757d';
-        exportBtn.style.color = 'white';
-        tip.innerText = res.changed
-            ? `已新增 ${res.addedCount} 条，共 ${res.totalCount} 条: ${displayPath}`
-            : `没有新增消息，共 ${res.totalCount} 条: ${displayPath}`;
-        box.appendChild(tip);
+                const displayPath = res.path || `${window.desktop.storagePaths.htmlDir}\\${exportFolderName}\\${exportFileName}`;
+                exportBtn.innerText = window.YayaRendererUtils.t(res.changed ? "导出成功" : "没有新增");
+                exportBtn.style.backgroundColor = res.changed ? "#28a745" : "#6c757d";
+                exportBtn.style.color = "white";
+                tip.innerText = res.changed
+                    ? `已新增 ${res.addedCount} 条，共 ${res.totalCount} 条: ${displayPath}`
+                    : `没有新增消息，共 ${res.totalCount} 条: ${displayPath}`;
+                box.appendChild(tip);
 
         setTimeout(() => {
             exportBtn.innerText = originalBtnText;
@@ -3545,10 +3569,10 @@ async function checkNetworkStatus() {
     const display = document.getElementById('ip-info-display');
     const btn = document.getElementById('btn-check-ip');
 
-    btn.disabled = true;
-    btn.innerText = '检测中';
-    display.innerHTML = '<div class="spinner"></div><span style="margin-left:10px;">正在查询网络信息...</span>';
-    display.style.display = 'flex';
+            btn.disabled = true;
+            btn.innerText = window.YayaRendererUtils.t('检测中');
+            display.innerHTML = '<div class="spinner"></div><span style="margin-left:10px;">正在查询网络信息...</span>';
+            display.style.display = 'flex';
 
     try {
         const res = await ipcRenderer.invoke('check-ip-info');
@@ -3577,22 +3601,22 @@ async function checkNetworkStatus() {
                     <span>${data.timezone}</span>
                 </div>
             `;
-        } else {
-            throw new Error(res.msg);
+                } else {
+                    throw new Error(res.msg);
+                }
+            } catch (e) {
+                display.style.display = 'flex';
+                display.innerHTML = `<span style="color: #ff4d4f;">检测失败: ${e.message}</span>`;
+            } finally {
+                btn.disabled = false;
+                btn.innerText = window.YayaRendererUtils.t('重新检测');
+            }
         }
-    } catch (e) {
-        display.style.display = 'flex';
-        display.innerHTML = `<span style="color: #ff4d4f;">检测失败: ${e.message}</span>`;
-    } finally {
-        btn.disabled = false;
-        btn.innerText = '重新检测';
-    }
-}
 
-async function checkAllNetwork() {
-    const btn = document.getElementById('btn-check-all');
-    btn.disabled = true;
-    btn.innerText = '检测中';
+        async function checkAllNetwork() {
+            const btn = document.getElementById('btn-check-all');
+            btn.disabled = true;
+            btn.innerText = window.YayaRendererUtils.t('检测中');
 
     ['domestic', 'foreign', 'google'].forEach((type) => {
         document.getElementById(`res-${type}`).innerHTML = '<div class="spinner"></div> 检测中';
@@ -3604,9 +3628,9 @@ async function checkAllNetwork() {
 
     await Promise.allSettled([p1, p2, p3]);
 
-    btn.disabled = false;
-    btn.innerText = '重新检测';
-}
+            btn.disabled = false;
+            btn.innerText = window.YayaRendererUtils.t('重新检测');
+        }
 
 function renderDomestic(res) {
     const el = document.getElementById('res-domestic');

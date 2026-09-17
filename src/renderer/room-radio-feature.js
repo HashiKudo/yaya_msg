@@ -156,7 +156,7 @@
             const { button } = getRoomRadioScanElements();
             if (!button) return;
             button.disabled = disabled;
-            button.textContent = text || (isRoomRadioScanning ? '停止扫描' : '刷新列表');
+            button.textContent = window.YayaRendererUtils.t(text || (isRoomRadioScanning ? '停止扫描' : '刷新列表'));
             button.classList.toggle('btn-danger', isRoomRadioScanning);
             button.classList.toggle('btn-secondary', !isRoomRadioScanning);
         }
@@ -178,9 +178,9 @@
                 progressText.textContent = statusText
                     || `正在扫描（${percent}%）`;
             }
-            if (detected) detected.textContent = `已检测 ${roomRadioScanCompleted}/${roomRadioScanTotal}`;
+            if (detected) detected.textContent = window.YayaRendererUtils.t(`已检测 ${roomRadioScanCompleted}/${roomRadioScanTotal}`);
             if (summary) {
-                summary.textContent = `上麦 ${getRoomRadioScanVoiceUserCount()} · 异常 ${roomRadioScanFailed}`;
+                summary.textContent = window.YayaRendererUtils.t(`上麦 ${getRoomRadioScanVoiceUserCount()} · 异常 ${roomRadioScanFailed}`);
             }
         }
 
@@ -243,18 +243,18 @@
             const count = document.getElementById('auto-room-radio-record-member-count');
             const activeCount = autoRoomRadioRecordTasks.size;
             if (button) {
-                button.textContent = activeCount > 0 ? `自动录制 ${activeCount}` : '自动录制';
+                button.textContent = window.YayaRendererUtils.t(activeCount > 0 ? `自动录制 ${activeCount}` : '自动录制');
                 button.classList.toggle('is-recording', activeCount > 0);
                 button.title = autoRoomRadioRecordEnabled
                     ? `已启用，监控 ${autoRoomRadioRecordMembers.length} 位成员${activeCount ? `，正在录制 ${activeCount} 路` : ''}`
                     : '设置上麦自动录制成员';
             }
             if (checkbox) checkbox.checked = autoRoomRadioRecordEnabled;
-            if (count) count.textContent = `${autoRoomRadioRecordMembers.length} 位`;
+            if (count) count.textContent = window.YayaRendererUtils.t(`${autoRoomRadioRecordMembers.length} 位`);
             if (status) {
-                if (!autoRoomRadioRecordEnabled) status.textContent = '尚未启用';
-                else if (!autoRoomRadioRecordMembers.length) status.textContent = '请先添加需要自动录制的成员';
-                else status.textContent = `正在监控 ${autoRoomRadioRecordMembers.length} 位成员`;
+                if (!autoRoomRadioRecordEnabled) status.textContent = window.YayaRendererUtils.t('尚未启用');
+                else if (!autoRoomRadioRecordMembers.length) status.textContent = window.YayaRendererUtils.t('请先添加需要自动录制的成员');
+                else status.textContent = window.YayaRendererUtils.t(`正在监控 ${autoRoomRadioRecordMembers.length} 位成员`);
             }
         }
 
@@ -265,7 +265,7 @@
             if (!autoRoomRadioRecordMembers.length) {
                 const empty = document.createElement('div');
                 empty.className = 'auto-live-record-member-empty';
-                empty.textContent = '还没有成员，请在上方搜索添加';
+                empty.textContent = window.YayaRendererUtils.t('还没有成员，请在上方搜索添加');
                 container.appendChild(empty);
                 return;
             }
@@ -279,7 +279,7 @@
                 name.textContent = member.name;
                 const detail = document.createElement('small');
                 const task = autoRoomRadioRecordTasks.get(member.id);
-                detail.textContent = task ? '正在自动录制' : `ID ${member.id}`;
+                detail.textContent = window.YayaRendererUtils.t(task ? '正在自动录制' : `ID ${member.id}`);
                 copy.append(name, detail);
                 const actions = document.createElement('span');
                 actions.className = 'auto-live-record-member-actions';
@@ -293,7 +293,7 @@
                 const remove = document.createElement('button');
                 remove.type = 'button';
                 remove.className = 'auto-live-record-member-remove';
-                remove.textContent = '移除';
+                remove.textContent = window.YayaRendererUtils.t('移除');
                 remove.addEventListener('click', () => removeAutoRoomRadioRecordMember(member.id));
                 actions.appendChild(remove);
                 item.append(copy, actions);
@@ -359,7 +359,7 @@
             if (!matches.length) {
                 const empty = document.createElement('div');
                 empty.className = 'suggestion-item';
-                empty.textContent = '没有匹配的成员';
+                empty.textContent = window.YayaRendererUtils.t('没有匹配的成员');
                 empty.style.cursor = 'default';
                 results.appendChild(empty);
             } else {
@@ -592,7 +592,7 @@
                 const card = document.createElement('button');
                 card.type = 'button';
                 card.className = 'room-radio-scan-card';
-                card.title = `收听${item.name}的${item.roomType === 'small' ? '小房间' : '大房间'}上麦`;
+                card.title = window.YayaRendererUtils.t(`收听${item.name}的${item.roomType === 'small' ? '小房间' : '大房间'}上麦`);
                 card.addEventListener('click', () => openRoomRadioScanResult(item));
 
                 const main = document.createElement('span');
@@ -617,13 +617,13 @@
 
                 const roomType = document.createElement('span');
                 roomType.className = `room-radio-scan-room-type is-${item.roomType}`;
-                roomType.textContent = item.roomType === 'small' ? '小房间' : '大房间';
+                roomType.textContent = window.YayaRendererUtils.t(item.roomType === 'small' ? '小房间' : '大房间');
                 title.appendChild(roomType);
 
                 if (item.inactive) {
                     const inactive = document.createElement('span');
                     inactive.className = 'room-radio-scan-inactive';
-                    inactive.textContent = '非现役';
+                    inactive.textContent = window.YayaRendererUtils.t('非现役');
                     title.appendChild(inactive);
                 }
 
@@ -632,7 +632,7 @@
                     meta = document.createElement('span');
                     meta.className = 'room-radio-scan-card-meta';
                     const roomOwner = document.createElement('span');
-                    roomOwner.textContent = `房间: ${item.roomOwnerName}`;
+                    roomOwner.textContent = window.YayaRendererUtils.t(`房间: ${item.roomOwnerName}`);
                     meta.appendChild(roomOwner);
                 }
 
@@ -640,7 +640,7 @@
                 if (meta) main.appendChild(meta);
                 const action = document.createElement('span');
                 action.className = 'room-radio-scan-card-action';
-                action.textContent = '收听 ›';
+                action.textContent = window.YayaRendererUtils.t('收听 ›');
                 card.append(main, action);
                 fragment.appendChild(card);
             });
@@ -1429,7 +1429,7 @@
                     button.style.cssText = 'height:30px;margin-left:10px;padding:0 12px;';
                     button.addEventListener('click', () => {
                         startupRetryCount = 0;
-                        statusEl.textContent = '正在继续缓冲音频...';
+                        statusEl.textContent = window.YayaRendererUtils.t('正在继续缓冲音频...');
                         requestPlayback();
                         scheduleStartupRecovery();
                     });
@@ -1476,7 +1476,7 @@
 
                         startupRetryCount += 1;
                         const statusEl = activeRoomRadioContainer?.querySelector('#radio-status-text');
-                        if (statusEl) statusEl.textContent = `音频流正在缓冲 ${startupRetryCount}/3...`;
+                        if (statusEl) statusEl.textContent = window.YayaRendererUtils.t(`音频流正在缓冲 ${startupRetryCount}/3...`);
                         try {
                             requestPlayback();
                         } catch (error) {
@@ -1564,10 +1564,10 @@
             const buttonEl = activeRoomRadioContainer?.querySelector('#btn-radio-mute');
             if (radioMediaElement.muted) {
                 radioMediaElement.muted = false;
-                if (buttonEl) buttonEl.innerText = '静音';
+                if (buttonEl) buttonEl.innerText = window.YayaRendererUtils.t('静音');
             } else {
                 radioMediaElement.muted = true;
-                if (buttonEl) buttonEl.innerText = '取消静音';
+                if (buttonEl) buttonEl.innerText = window.YayaRendererUtils.t('取消静音');
             }
             if (activeRoomRadioScanKey) publishRoomRadioScanState();
         }

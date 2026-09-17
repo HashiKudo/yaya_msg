@@ -224,6 +224,19 @@
         return element;
     }
 
+    function t(key, variables = {}) {
+        const source = String(key == null ? '' : key);
+        if (window.YayaI18n?.t) {
+            const translated = window.YayaI18n.t(source, variables);
+            if (translated !== source) return translated;
+            return window.YayaI18n.translateDynamic?.(translated) || translated;
+        }
+        return Object.entries(variables).reduce(
+            (text, [name, value]) => text.replaceAll(`{${name}}`, String(value)),
+            source
+        );
+    }
+
     function isLyricCreditLine(value) {
         const text = String(value == null ? '' : value).normalize('NFKC').trim();
         if (!text) return false;
@@ -252,6 +265,7 @@
         reportError,
         reportIgnoredError,
         setSafeHtml,
-        setText
+        setText,
+        t
     });
 })();

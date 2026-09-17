@@ -1,6 +1,6 @@
 {
   "name": "yaya_msg",
-  "version": "2.12.0",
+  "version": "2.13.0",
   "description": "牙牙消息",
   "homepage": "https://github.com/yk1z/yaya_msg",
   "main": "main.js",
@@ -22,10 +22,7 @@
     "music:metadata:local": "node scripts/build-r2-music-track-metadata.mjs",
     "music:metadata:remote": "node scripts/build-r2-music-track-metadata-from-api.mjs"
   },
-  "author": {
-    "name": "yk1z",
-    "email": "yk1z@users.noreply.github.com"
-  },
+  "author": "yk1z <yk1z@users.noreply.github.com>",
   "license": "GPL-3.0-only",
   "dependencies": {
     "axios": "^1.19.0",
@@ -124,5 +121,14 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yk1z/yaya_msg.git"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/yk1z/yaya_msg/issues"
   }
 }

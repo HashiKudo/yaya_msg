@@ -405,7 +405,7 @@
                 }
 
                 if (analysisBtn) analysisBtn.style.display = 'inline-flex';
-                if (searchInput) searchInput.placeholder = '搜索内容 / 发送者';
+                if (searchInput) searchInput.placeholder = window.YayaRendererUtils.t('搜索内容 / 发送者');
             } else {
                 if (tabSubtitle) {
                     tabSubtitle.style.color = 'var(--primary)';
@@ -417,7 +417,7 @@
                 }
 
                 if (analysisBtn) analysisBtn.style.display = 'none';
-                if (searchInput) searchInput.placeholder = '搜索字幕内容';
+                if (searchInput) searchInput.placeholder = window.YayaRendererUtils.t('搜索字幕内容');
             }
             lastActiveIndex = -1;
             refreshTimelineListUI();
@@ -716,7 +716,7 @@
             const modal = document.getElementById('danmuAnalysisModal');
             const container = document.getElementById('danmuAnalysisList');
             const modalTitle = modal?.querySelector('.modal-title');
-            if (modalTitle) modalTitle.textContent = `弹幕榜（共 ${currentDanmuList.length} 条）`;
+            if (modalTitle) modalTitle.textContent = window.YayaRendererUtils.t(`弹幕榜（共 ${currentDanmuList.length} 条）`);
 
             if (!currentDanmuList || currentDanmuList.length === 0) {
                 if (modal) modal.style.display = 'flex';

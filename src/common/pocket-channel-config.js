@@ -11,6 +11,7 @@ const POCKET_CHANNEL_METHODS = Object.freeze({
     'pocket-checkin': 'checkIn',
     'switch-big-small': 'switchBigSmall',
     'fetch-room-messages': 'fetchRoomMessages',
+    'fetch-room-essence-messages': 'fetchRoomEssenceMessages',
     'fetch-private-message-list': 'fetchPrivateMessageList',
     'fetch-private-message-info': 'fetchPrivateMessageInfo',
     'delete-private-message': 'deletePrivateMessage',

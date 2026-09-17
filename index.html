@@ -58,7 +58,7 @@
                 </svg>
             </div>
             <img src="./icon.png" class="title-logo">
-            <span>牙牙消息 v2.12</span>
+            <span>牙牙消息 v2.13</span>
         </div>
         <div id="topbar-page-title" class="title-bar-center-title" aria-live="polite"></div>
         <div class="window-controls">
@@ -633,7 +633,7 @@
                         </div>
                     </div>
 
-                    <div
+                    <div class="followed-chat-pane"
                         style="flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); position: relative;">
 
                         <div id="followed-chat-header"
@@ -708,20 +708,39 @@
                             </div>
                         </div>
 
-                        <button id="followed-chat-new-messages"
-                            onclick="flushFollowedPendingMessages()"
-                            style="display: none; position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 8; min-width: 148px; max-width: calc(100% - 40px); height: 34px; padding: 0 14px; border-radius: 999px; font-size: 12px; font-weight: 600; backdrop-filter: blur(10px); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                            有新消息，点击查看
-                        </button>
-
-                        <div id="followed-chat-messages"
-                            style="flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px; position: relative;">
-
-                            <div class="empty-state"
-                                style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--text-sub); font-size: 14px;">
-                                请选择成员房间
+                        <div id="followed-room-essence" class="followed-room-essence" hidden
+                            aria-live="polite" role="button" tabindex="0" aria-label="查看精华消息详情"
+                            title="点击查看详情">
+                            <span class="followed-room-essence-badge">精华</span>
+                            <div class="followed-room-essence-copy">
+                                <span id="followed-room-essence-sender" class="followed-room-essence-sender"></span>
+                                <span id="followed-room-essence-text" class="followed-room-essence-text">正在加载精华消息...</span>
                             </div>
+                            <span id="followed-room-essence-count" class="followed-room-essence-count"></span>
+                            <div class="followed-room-essence-actions">
+                                <button id="followed-room-essence-prev" type="button" aria-label="上一条精华消息"
+                                    title="上一条精华消息">‹</button>
+                                <button id="followed-room-essence-next" type="button" aria-label="下一条精华消息"
+                                    title="下一条精华消息">›</button>
+                            </div>
+                        </div>
 
+                        <div class="followed-chat-message-stage">
+                            <button id="followed-chat-new-messages"
+                                onclick="flushFollowedPendingMessages()"
+                                style="display: none; position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 8; min-width: 148px; max-width: calc(100% - 40px); height: 34px; padding: 0 14px; border-radius: 999px; font-size: 12px; font-weight: 600; backdrop-filter: blur(10px); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                有新消息，点击查看
+                            </button>
+
+                            <div id="followed-chat-messages"
+                                style="flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px; position: relative;">
+
+                                <div class="empty-state"
+                                    style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--text-sub); font-size: 14px;">
+                                    请选择成员房间
+                                </div>
+
+                            </div>
                         </div>
 
                     </div>
@@ -888,6 +907,11 @@
                                     <span id="current-live-time"
                                         style="font-weight: bold; color: var(--text); font-size: 14px;"></span>
                                 </div>
+                                <div id="current-live-online-wrapper" style="display: none; flex-direction: column;">
+                                    <span style="font-size: 11px; color: var(--text-sub); margin-bottom: 4px;">在线人数</span>
+                                    <span id="current-live-online"
+                                        style="font-weight: bold; color: var(--text); font-size: 14px;">--</span>
+                                </div>
                             </div>
                             <div class="player-top-actions"
                                 style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
@@ -904,6 +928,18 @@
 
                     <div id="player-split-layout"
                         style="display: flex; flex: 1; gap: 20px; min-height: 0; padding: 0 20px 20px 20px; transition: flex-direction 0.3s;">
+                        <section id="live-danmu-list-wrapper" data-status="connecting" aria-label="实时弹幕列表">
+                            <div class="live-danmu-list-columns" aria-hidden="true">
+                                <span class="live-danmu-list-name-heading">发送者
+                                    <span id="live-danmu-name-resizer" aria-hidden="true"></span>
+                                </span>
+                                <span>内容</span>
+                            </div>
+                            <div id="live-danmu-list-body" aria-live="polite">
+                                <div class="live-danmu-list-empty">等待实时弹幕</div>
+                            </div>
+                        </section>
+
                         <div id="danmu-timeline-wrapper"
                             style="flex: 1; max-width: 45%; display: flex; flex-direction: column; background: var(--input-bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; min-height: 0; height: 100%; box-sizing: border-box;">
                             <div
@@ -962,9 +998,6 @@
                                                     id="live-gift-balance"
                                                     style="color: var(--primary); font-weight: bold; margin: 0 4px;">--</span>
                                                 🍗</span>
-                                            <button class="btn btn-secondary"
-                                                onclick="event.stopPropagation(); updateLiveBalance()"
-                                                style="padding: 0 6px; height: 20px; font-size: 12px; margin-left: 8px;">↻</button>
                                             <a href="https://live.48.cn/Recharge/" target="_blank"
                                                 onclick="event.stopPropagation();"
                                                 style="margin-left: 10px; font-size: 12px; color: #1890ff; text-decoration: none; cursor: pointer; font-weight: bold;">
@@ -1080,6 +1113,14 @@
 
                     <div class="page-header">
                         <h2 class="page-title">账号设置</h2>
+                    </div>
+
+                    <div id="account-auth-loading" class="account-auth-loading" role="status" aria-live="polite">
+                        <div class="account-auth-loading-spinner" aria-hidden="true"></div>
+                        <div>
+                            <div class="account-auth-loading-title">正在验证登录状态</div>
+                            <div class="account-auth-loading-detail">请稍候</div>
+                        </div>
                     </div>
 
                     <div id="panel-login" class="Box-row account-login-panel">
@@ -1205,6 +1246,15 @@
 
                         <div id="login-msg"
                             style="margin-top:15px; text-align:center; color:#ff4d4f; font-size:13px; min-height: 20px;">
+                        </div>
+
+                        <div class="sms-login-limit-help" role="note">
+                            <span class="sms-login-limit-help-icon" aria-hidden="true">!</span>
+                            <div>
+                                如提示“今日短信发送次数已超过上限，请明日再试”，说明网站服务器今日发送验证码已达上限。
+                                请<span id="sms-limit-download-links"><a href="/downloads">下载桌面端使用</a></span>，或<button type="button"
+                                    onclick="switchLoginTab('token')">使用 Token 登录</button>。
+                            </div>
                         </div>
                     </div>
 
@@ -2397,7 +2447,7 @@
 
                                 <div class="flip-toolbar-controls">
 
-                                    <div id="flip-date-wrapper" style="position: relative;">
+                                    <div id="flip-date-wrapper" class="flip-toolbar-field flip-toolbar-date" style="position: relative;">
                                         <button class="btn btn-secondary flip-date-trigger" type="button"
                                             onclick="toggleFlipDateDropdown()" title="按日期筛选翻牌记录" aria-label="按日期筛选翻牌记录">
                                             <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -2460,7 +2510,7 @@
                                         </div>
                                     </div>
 
-                                    <div id="flip-type-wrapper" style="position: relative; width: 110px;">
+                                    <div id="flip-type-wrapper" class="flip-toolbar-field" style="position: relative; width: 110px;">
                                         <input type="text" id="flip-type-display" class="input-control" value="翻牌形式"
                                             readonly onclick="toggleFlipTypeDropdown()"
                                             style="cursor: pointer; text-align: left; padding-right: 25px;">
@@ -2480,7 +2530,7 @@
                                         </div>
                                     </div>
 
-                                    <div id="flip-visibility-wrapper" style="position: relative; width: 110px;">
+                                    <div id="flip-visibility-wrapper" class="flip-toolbar-field" style="position: relative; width: 110px;">
                                         <input type="text" id="flip-visibility-display" class="input-control" value="公开设置"
                                             readonly onclick="toggleFlipVisibilityDropdown()"
                                             style="cursor: pointer; text-align: left; padding-right: 25px;">
@@ -2499,7 +2549,7 @@
                                         </div>
                                     </div>
 
-                                    <div id="flip-sort-wrapper" style="position: relative; width: 118px;">
+                                    <div id="flip-sort-wrapper" class="flip-toolbar-field" style="position: relative; width: 118px;">
                                         <input type="text" id="flip-sort-display" class="input-control" value="最新在前"
                                             readonly onclick="toggleFlipSortDropdown()"
                                             style="cursor: pointer; text-align: left; padding-right: 25px;">
@@ -2518,7 +2568,7 @@
                                         </div>
                                     </div>
 
-                                    <div id="flip-member-filter-wrapper" style="position: relative; width: 140px;">
+                                    <div id="flip-member-filter-wrapper" class="flip-toolbar-field" style="position: relative; width: 140px;">
                                         <input type="text" id="flipMemberFilterInput" class="input-control" value="全部成员"
                                             readonly onclick="toggleFlipMemberFilterDropdown()"
                                             style="cursor: pointer; text-align: left; padding-right: 25px;">
@@ -2532,10 +2582,10 @@
                                             style="display: none; top: 42px; max-height: 300px;"></div>
                                     </div>
 
-                                    <input type="text" id="flipSearchInput" class="input-control" style="width: 180px;"
+                                    <input type="text" id="flipSearchInput" class="input-control flip-toolbar-search" style="width: 180px;"
                                         placeholder="搜索内容..." oninput="applyFlipSearch()">
 
-                                    <button class="btn btn-secondary" style="padding: 0 20px;"
+                                    <button class="btn btn-secondary flip-toolbar-refresh" style="padding: 0 20px;"
                                         onclick="updateLatestFlips()">
                                         刷新
                                     </button>
@@ -2562,12 +2612,12 @@
 
                     <div id="view-send-flip"
                         style="height: 100%; overflow-y: auto; display: none; padding: 20px 40px; box-sizing: border-box;">
-                        <div class="list-container">
+                        <div class="list-container send-flip-page">
                                 <div class="page-header media-library-header">
                                 <h2 class="page-title">翻牌提问</h2>
                             </div>
 
-                            <div class="Box-row" style="z-index: 20;">
+                            <div class="Box-row send-flip-member-card" style="z-index: 20;">
                                 <h3
                                     style="margin-top: 0; font-size: 16px; margin-bottom: 15px; border-left: 4px solid var(--primary); padding-left: 10px; color: var(--text);">
                                     选择成员</h3>
@@ -2593,7 +2643,7 @@
 
                             <div id="flip-config-area" style="display:none;">
 
-                                <div class="Box-row" style="z-index: 15;">
+                                <div class="Box-row send-flip-config-card" style="z-index: 15;">
                                     <div class="flip-config-heading">
                                         <h3
                                             style="margin: 0; font-size: 16px; border-left: 4px solid var(--primary); padding-left: 10px; color: var(--text);">
@@ -2604,8 +2654,8 @@
                                         </button>
                                     </div>
 
-                                    <div style="display: flex; gap: 20px;">
-                                        <div style="flex: 1;">
+                                    <div class="flip-config-fields" style="display: flex; gap: 20px;">
+                                        <div class="flip-config-field" style="flex: 1;">
                                             <label
                                                 style="display:block; margin-bottom: 5px; font-weight: bold; font-size: 13px; color: var(--text-sub);">翻牌类型</label>
 
@@ -2625,7 +2675,7 @@
                                             </div>
                                         </div>
 
-                                        <div style="flex: 1;">
+                                        <div class="flip-config-field" style="flex: 1;">
                                             <label
                                                 style="display:block; margin-bottom: 5px; font-weight: bold; font-size: 13px; color: var(--text-sub);">公开设置</label>
 
@@ -2660,9 +2710,9 @@
                                         </div>
                                     </div>
 
-                                    <div
+                                    <div class="flip-cost-summary"
                                         style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; border-top: 1px dashed var(--border); padding-top: 15px;">
-                                        <div
+                                        <div class="flip-balance-line"
                                             style="display: flex; align-items: center; font-size: 14px; color: var(--text);">
                                             <span>我的鸡腿：</span>
                                             <span id="flip-user-balance"
@@ -2675,7 +2725,7 @@
                                             </a>
                                         </div>
 
-                                        <div
+                                        <div class="flip-cost-line"
                                             style="display: flex; align-items: center; font-size: 14px; color: var(--text);">
                                             <span>需要消耗：</span>
                                             <input type="number" id="flip-cost-input" value="0"
@@ -2686,13 +2736,13 @@
                                     </div>
                                 </div>
 
-                                <div class="Box-row">
+                                <div class="Box-row send-flip-question-card">
                                     <h3
                                         style="margin-top: 0; font-size: 16px; margin-bottom: 15px; border-left: 4px solid var(--primary); padding-left: 10px; color: var(--text);">
                                         提问内容</h3>
 
                                     <div style="position: relative;">
-                                        <textarea id="flip-content-input" class="input-control"
+                                        <textarea id="flip-content-input" class="input-control send-flip-textarea"
                                             oninput="updateFlipCharCount(this)"
                                             style="width: 100%; height: 150px; resize: none; padding: 15px; padding-bottom: 30px; font-size: 14px; line-height: 1.5; font-family: inherit;"
                                             placeholder="在这里写下你想对成员说的话..."></textarea>
@@ -2706,7 +2756,7 @@
                                         style="margin-top: 10px; min-height: 20px; text-align: right; font-size: 13px;">
                                     </div>
 
-                                    <div style="margin-top: 20px;">
+                                    <div class="send-flip-submit" style="margin-top: 20px;">
                                         <button id="btn-do-send-flip" class="btn btn-primary btn-full"
                                             style="padding: 12px; font-size: 16px;" onclick="executeSendFlip()">
                                             提问
@@ -3327,6 +3377,26 @@
             </div>
         </div>
     </div>
+    <div class="modal-overlay" id="followedRoomEssenceDetailModal">
+        <div class="modal-content followed-room-essence-detail-modal" role="dialog" aria-modal="true"
+            aria-labelledby="followed-room-essence-detail-title">
+            <div class="modal-header">
+                <span class="modal-title" id="followed-room-essence-detail-title">精华消息</span>
+                <button type="button" class="close-btn followed-room-essence-detail-close" aria-label="关闭">×</button>
+            </div>
+            <div class="modal-body followed-room-essence-detail-body">
+                <div class="followed-room-essence-detail-meta">
+                    <button type="button" id="followed-room-essence-detail-user"
+                        class="followed-room-essence-detail-user" title="查看用户主页">
+                        <img id="followed-room-essence-detail-avatar" src="./icon.png" alt="">
+                        <strong id="followed-room-essence-detail-sender"></strong>
+                    </button>
+                    <span id="followed-room-essence-detail-time"></span>
+                </div>
+                <div id="followed-room-essence-detail-text" class="followed-room-essence-detail-text"></div>
+            </div>
+        </div>
+    </div>
     <div class="modal-overlay" id="imageModal" onclick="closeImageModal()"
         style="background: rgba(0,0,0,0.9); z-index: 2001;">
         <div
@@ -3361,7 +3431,13 @@
         <div class="modal-content">
             <div class="modal-header">
                 <span class="modal-title">本场贡献榜</span>
-                <span class="close-btn" onclick="closeLiveRankModal()">×</span>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <button id="btn-live-rank-refresh" class="btn btn-secondary"
+                        onclick="fetchLiveRank(null, 'live-rank-modal-list')"
+                        title="刷新贡献榜" aria-label="刷新贡献榜"
+                        style="width: 30px; height: 30px; min-width: 30px; padding: 0; border: 0; box-shadow: none; background: transparent; font-size: 14px;">↻</button>
+                    <span class="close-btn" onclick="closeLiveRankModal()">×</span>
+                </div>
             </div>
             <div id="live-rank-modal-info" class="live-rank-modal-info">
                 <div class="live-rank-info-grid">

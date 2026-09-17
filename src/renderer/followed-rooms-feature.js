@@ -372,7 +372,7 @@
             if (isWebRuntime()) {
                 const label = '网页版不启用发言通知';
                 const buttonLabel = button.querySelector('.followed-notification-all-label');
-                if (buttonLabel) buttonLabel.textContent = '停用';
+                if (buttonLabel) buttonLabel.textContent = window.YayaRendererUtils.t('停用');
                 button.disabled = true;
                 button.classList.remove('is-enabled', 'is-partial', 'is-initializing');
                 button.setAttribute('aria-pressed', 'false');
@@ -390,7 +390,7 @@
             button.disabled = candidates.length === 0;
             button.classList.remove('is-initializing');
             const buttonLabel = button.querySelector('.followed-notification-all-label');
-            if (buttonLabel) buttonLabel.textContent = allEnabled ? '全开' : partiallyEnabled ? '部分' : '全关';
+            if (buttonLabel) buttonLabel.textContent = window.YayaRendererUtils.t(allEnabled ? '全开' : partiallyEnabled ? '部分' : '全关');
             button.classList.toggle('is-enabled', allEnabled);
             button.classList.toggle('is-partial', partiallyEnabled);
             button.setAttribute('aria-pressed', allEnabled ? 'true' : partiallyEnabled ? 'mixed' : 'false');
@@ -1291,7 +1291,7 @@
 
             const refreshBtn = document.querySelector('button[onclick="loadFollowedRooms()"]');
             if (refreshBtn && !silent) {
-                refreshBtn.classList.add('is-fetching');
+                refreshBtn.innerText = window.YayaRendererUtils.t('刷新');
                 refreshBtn.disabled = true;
             }
 
@@ -1411,8 +1411,8 @@
                     container.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`;
                 }
             } finally {
-                if (refreshBtn && !silent) {
-                    refreshBtn.classList.remove('is-fetching');
+                if (isCurrentAccount() && refreshBtn && !silent) {
+                    refreshBtn.innerText = window.YayaRendererUtils.t('刷新');
                     refreshBtn.disabled = false;
                 }
             }
@@ -1450,7 +1450,7 @@
             if (quickId) quickId.value = '';
             if (quickType) quickType.value = '1';
             if (quickButton) {
-                quickButton.innerText = '关注';
+                quickButton.innerText = window.YayaRendererUtils.t('关注');
                 quickButton.style.color = '';
                 quickButton.disabled = false;
             }
@@ -1811,7 +1811,7 @@
             const channelId = String(card.dataset.channelid || '').trim();
             const isPinned = getPinnedChannelIds().includes(channelId);
             if (pinButton) {
-                pinButton.textContent = isPinned ? '取消置顶' : '置顶';
+                pinButton.textContent = window.YayaRendererUtils.t(isPinned ? '取消置顶' : '置顶');
             }
             if (notificationButton) {
                 notificationButton.textContent = isFollowedRoomNotificationEnabled(channelId) ? '关闭通知' : '开启通知';
@@ -1946,7 +1946,7 @@
             if (quickId) quickId.value = '';
             if (quickType) quickType.value = '1';
             if (quickButton) {
-                quickButton.innerText = '关注';
+                quickButton.innerText = window.YayaRendererUtils.t('关注');
                 quickButton.style.color = '';
                 quickButton.disabled = false;
             }
@@ -2017,12 +2017,12 @@
             const btn = document.getElementById('btn-quick-action');
             if (isFollowTargetFollowed(id, sourceType)) {
                 btn.disabled = false;
-                btn.innerText = '取关';
+                btn.innerText = window.YayaRendererUtils.t('取关');
                 btn.style.color = '#ff4d4f';
             } else {
                 btn.disabled = false;
-                btn.innerText = '关注';
-                btn.style.color = '';
+                btn.innerText = window.YayaRendererUtils.t("关注");
+                btn.style.color = "";
             }
         }
 
@@ -2091,8 +2091,8 @@
                     document.getElementById('quick-follow-id').value = '';
                     document.getElementById('quick-follow-type').value = '1';
                     btn.disabled = false;
-                    btn.innerText = '关注';
-                    btn.style.color = '';
+                    btn.innerText = window.YayaRendererUtils.t("关注");
+                    btn.style.color = "";
                 } else {
                     showToast(`失败: ${res.msg}`);
                 }

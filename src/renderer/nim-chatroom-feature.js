@@ -6,13 +6,14 @@
             getNimAuth,
             getNimInstance,
             setNimInstance,
-            showToast
+            showToast,
+            ipcRenderer
         } = deps;
 
         const NIM_CHATROOM_SDK_URL = './src/renderer/vendor/NIM_Web_Chatroom.js';
         const CHATROOM_ADDRESSES = ['chatweblink01.netease.im:443'];
         const CHATROOM_APP_KEY = '632feff1f4c838541ab75195d1ceb3fa';
-        const LIVE_DANMU_ENABLED = false;
+        const LIVE_DANMU_ENABLED = true;
         const BARRAGE_TYPES = new Set([
             'BARRAGE_NORMAL',
             'BARRAGE_MEMBER',
@@ -35,7 +36,9 @@
 
         let nimSdkLoadPromise = null;
         let sessionSequence = 0;
-        let laneSequence = 0;
+        let chatDiagnosticSaveTimer = null;
+        let pendingChatDiagnostics = [];
+        const LIVE_DANMU_LIST_MAX_ITEMS = 80;
 
         function reportIgnoredError(error) {
             if (window.YayaRendererUtils?.reportIgnoredError) {
@@ -116,23 +119,66 @@
         }
 
         function parseMessageExtension(msg) {
-            const candidates = [msg?.custom, msg?.remoteExtension, msg?.ext, msg?.attach?.custom];
-            let extension = null;
+            const candidates = [
+                msg?.msg_attach_,
+                msg?.msgAttach,
+                msg?.attachment,
+                typeof msg?.attach === 'string' ? msg.attach : null,
+                msg?.custom,
+                msg?.remoteExtension,
+                msg?.ext,
+                msg?.attach?.custom
+            ];
+            let extension = {};
             for (const candidate of candidates) {
-                extension = parseJsonObject(candidate);
-                if (extension) break;
+                const parsed = parseJsonObject(candidate);
+                if (parsed) extension = { ...extension, ...parsed };
             }
-            extension = extension || {};
 
             const nested = parseJsonObject(extension.data)
                 || parseJsonObject(extension.ext)
                 || parseJsonObject(extension.custom);
             if (nested) extension = { ...extension, ...nested };
 
-            const rawCustom = candidates.find(value => typeof value === 'string') || '';
-            const rawSourceId = readRawJsonId(rawCustom, 'sourceId');
+            const rawSourceId = candidates
+                .filter(value => typeof value === 'string')
+                .map(value => readRawJsonId(value, 'sourceId'))
+                .find(Boolean) || '';
             if (rawSourceId) extension.__rawSourceId = rawSourceId;
             return extension;
+        }
+
+        function queueChatMessageDiagnostic(msg, normalized, liveId) {
+            if (!msg || msg.type !== 'custom') return;
+            const extension = parseMessageExtension(msg);
+            const messageType = String(extension.messageType || extension.msgType || extension.type || '').trim();
+            const rawAttachment = [msg.msg_attach_, msg.msgAttach, msg.attachment, msg.custom]
+                .find(value => typeof value === 'string' && value.trim()) || '';
+            pendingChatDiagnostics.push({
+                time: new Date().toISOString(),
+                liveId: String(liveId || ''),
+                transportType: String(msg.type || ''),
+                transportMessageType: Number(msg.msg_type_ ?? -1),
+                messageType,
+                messageKeys: Object.keys(msg).sort(),
+                extensionKeys: Object.keys(extension).filter(key => key !== '__rawSourceId').sort(),
+                normalizedKind: String(normalized?.kind || ''),
+                normalizedMessageType: String(normalized?.messageType || ''),
+                rawAttachment: String(rawAttachment).replace(/https?:\/\/[^"\s]+/gi, '[url]').slice(0, 1600)
+            });
+            if (pendingChatDiagnostics.length > 50) pendingChatDiagnostics = pendingChatDiagnostics.slice(-50);
+            if (chatDiagnosticSaveTimer) return;
+            chatDiagnosticSaveTimer = setTimeout(() => {
+                chatDiagnosticSaveTimer = null;
+                const cacheApi = window.desktop?.appCache;
+                if (!cacheApi || typeof cacheApi.setCacheValueSync !== 'function') return;
+                const previous = typeof cacheApi.getCacheValueSync === 'function'
+                    ? cacheApi.getCacheValueSync('LIVE_CHAT_EVENT_DIAGNOSTIC_V1', [])
+                    : [];
+                const merged = (Array.isArray(previous) ? previous : []).concat(pendingChatDiagnostics).slice(-50);
+                pendingChatDiagnostics = [];
+                cacheApi.setCacheValueSync('LIVE_CHAT_EVENT_DIAGNOSTIC_V1', merged);
+            }, 250);
         }
 
         function getMessageUser(msg, extension) {
@@ -168,26 +214,90 @@
         }
 
         function parseGiftText(extension, user) {
-            const giftInfo = parseJsonObject(extension.giftInfo) || extension.giftInfo || {};
+            const giftInfo = parseJsonObject(extension.giftInfo)
+                || parseJsonObject(extension.presentInfo)
+                || parseJsonObject(extension.present)
+                || parseJsonObject(extension.gift)
+                || extension.giftInfo
+                || extension.presentInfo
+                || extension.present
+                || extension.gift
+                || {};
             const gift = parseJsonObject(giftInfo.gift) || giftInfo.gift || {};
             const giftName = String(
                 giftInfo.giftName
+                || giftInfo.presentName
                 || giftInfo.name
                 || gift.name
                 || extension.giftName
+                || extension.presentName
                 || '礼物'
             ).trim();
             const giftNum = Number(
                 giftInfo.giftNum
+                || giftInfo.presentNum
                 || giftInfo.num
                 || giftInfo.count
                 || giftInfo.quantity
                 || extension.giftNum
+                || extension.presentNum
                 || extension.num
+                || extension.count
+                || extension.quantity
                 || 1
             ) || 1;
             const sender = user.nick || '用户';
             return `${sender} 赠送 ${giftNum} × ${giftName}`;
+        }
+
+        function getGiftDetails(extension) {
+            const giftInfo = parseJsonObject(extension.giftInfo)
+                || parseJsonObject(extension.presentInfo)
+                || parseJsonObject(extension.present)
+                || parseJsonObject(extension.gift)
+                || extension.giftInfo
+                || extension.presentInfo
+                || extension.present
+                || extension.gift
+                || {};
+            const gift = parseJsonObject(giftInfo.gift) || giftInfo.gift || {};
+            return {
+                giftName: String(
+                    giftInfo.giftName
+                    || giftInfo.presentName
+                    || giftInfo.name
+                    || gift.name
+                    || extension.giftName
+                    || extension.presentName
+                    || ''
+                ).trim(),
+                giftNum: Number(
+                    giftInfo.giftNum
+                    || giftInfo.presentNum
+                    || giftInfo.num
+                    || giftInfo.count
+                    || giftInfo.quantity
+                    || extension.giftNum
+                    || extension.presentNum
+                    || extension.num
+                    || extension.count
+                    || extension.quantity
+                    || 1
+                ) || 1
+            };
+        }
+
+        function getBarrageText(extension, msg) {
+            const giftInfo = parseJsonObject(extension.giftInfo) || extension.giftInfo || {};
+            const giftAttachData = parseJsonObject(giftInfo.attachData) || giftInfo.attachData || {};
+            const attachData = parseJsonObject(extension.attachData) || extension.attachData || {};
+            return String(
+                extension.text
+                || giftAttachData.text
+                || attachData.text
+                || msg.text
+                || ''
+            ).trim();
         }
 
         function normalizeChatroomMessage(msg, liveId) {
@@ -202,12 +312,21 @@
                 || ''
             ).trim().toUpperCase();
             const user = getMessageUser(msg, extension);
-            const isGift = GIFT_TYPES.has(messageType)
-                || messageType.startsWith('PRESENT_')
-                || messageType.startsWith('GIFT_');
+            const giftDetails = getGiftDetails(extension);
+            const hasGiftPayload = Boolean(
+                extension.giftInfo
+                || extension.presentInfo
+                || extension.present
+                || extension.gift
+                || giftDetails.giftName
+            );
             const isBarrage = BARRAGE_TYPES.has(messageType)
                 || messageType.startsWith('BARRAGE_')
                 || msg.type === 'text';
+            const isGift = !isBarrage && (GIFT_TYPES.has(messageType)
+                || messageType.startsWith('PRESENT_')
+                || messageType.startsWith('GIFT_')
+                || hasGiftPayload);
 
             if (isGift) {
                 return {
@@ -216,6 +335,8 @@
                     text: parseGiftText(extension, user),
                     nick: user.nick,
                     userId: user.userId,
+                    giftName: giftDetails.giftName,
+                    giftNum: giftDetails.giftNum,
                     color: DANMU_COLORS.gift,
                     time: Number(msg.time || extension.time || Date.now())
                 };
@@ -237,7 +358,7 @@
                 return null;
             }
 
-            const text = String(extension.text || msg.text || '').trim();
+            const text = getBarrageText(extension, msg);
             if (!isBarrage || !text) return null;
             return {
                 kind: 'barrage',
@@ -255,119 +376,293 @@
             const style = document.createElement('style');
             style.id = 'yaya-live-danmu-style';
             style.textContent = `
-                #yaya-live-danmu-overlay {
-                    position: absolute;
-                    inset: 0;
-                    overflow: hidden;
-                    pointer-events: none;
-                    z-index: 35;
+                #live-danmu-composer {
+                    display: grid;
+                    grid-template-columns: auto minmax(0, 1fr) auto;
+                    align-items: center;
+                    gap: 8px 10px;
+                    padding: 10px 15px;
+                    border-top: 1px solid rgba(128, 128, 128, 0.2);
+                    background: var(--input-bg);
+                    color: var(--text);
                 }
-                .yaya-live-danmu-item {
-                    position: absolute;
-                    left: 100%;
-                    white-space: nowrap;
+                .live-danmu-composer-label {
+                    font-size: 13px;
                     font-weight: 700;
-                    font-size: clamp(16px, 2vw, 24px);
-                    line-height: 1.25;
-                    text-shadow: -1px -1px 2px #000, 1px -1px 2px #000, -1px 1px 2px #000, 1px 1px 3px #000;
-                    will-change: transform;
-                    animation-name: yaya-live-danmu-move;
-                    animation-timing-function: linear;
-                    animation-fill-mode: forwards;
+                    white-space: nowrap;
                 }
-                .yaya-live-danmu-item[data-kind="gift"] {
-                    padding: 4px 10px;
-                    border-radius: 999px;
-                    background: rgba(82, 44, 12, 0.72);
-                    box-shadow: 0 0 12px rgba(255, 184, 108, 0.45);
+                .live-danmu-composer-field {
+                    display: flex;
+                    align-items: center;
+                    min-width: 0;
+                    height: 34px;
+                    border: 1px solid var(--border);
+                    border-radius: 7px;
+                    background: var(--bg);
+                    transition: border-color 0.2s ease, box-shadow 0.2s ease;
                 }
-                @keyframes yaya-live-danmu-move {
-                    from { transform: translateX(0); }
-                    to { transform: translateX(calc(-100vw - 100%)); }
+                .live-danmu-composer-field:focus-within {
+                    border-color: var(--primary);
+                    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+                }
+                .live-danmu-composer-input {
+                    box-sizing: border-box;
+                    flex: 1;
+                    min-width: 0;
+                    height: 100%;
+                    padding: 0 8px 0 10px;
+                    border: 0;
+                    outline: none;
+                    background: transparent;
+                    color: var(--text);
+                    font-size: 13px;
+                }
+                .live-danmu-composer-input::placeholder {
+                    color: var(--text-sub);
+                }
+                .live-danmu-composer-count {
+                    padding-right: 9px;
+                    color: var(--text-sub);
+                    font-size: 11px;
+                    white-space: nowrap;
+                }
+                .live-danmu-composer-error {
+                    display: none;
+                    grid-column: 2 / 4;
+                    color: #cf1322;
+                    font-size: 12px;
+                }
+                #live-danmu-composer-submit {
+                    height: 34px;
+                    min-width: 68px;
+                    padding: 0 14px;
+                    font-size: 13px;
+                }
+                @media (max-width: 560px) {
+                    #live-danmu-composer {
+                        grid-template-columns: minmax(0, 1fr) auto;
+                        padding: 9px 10px;
+                    }
+                    .live-danmu-composer-label { display: none; }
+                    .live-danmu-composer-error { grid-column: 1 / 3; }
                 }
             `;
             document.head.appendChild(style);
         }
 
-        function ensureDanmuOverlay() {
-            const container = document.getElementById('dplayer-container')
-                || document.querySelector('#live-player-container .artplayer-app')
-                || document.getElementById('live-player-container');
-            if (!container) return null;
-            ensureDanmuStyle();
-            if (window.getComputedStyle(container).position === 'static') {
-                container.style.position = 'relative';
-            }
-            let overlay = document.getElementById('yaya-live-danmu-overlay');
-            if (!overlay || overlay.parentElement !== container) {
-                if (overlay) overlay.remove();
-                overlay = document.createElement('div');
-                overlay.id = 'yaya-live-danmu-overlay';
-                overlay.setAttribute('aria-hidden', 'true');
-                container.appendChild(overlay);
-            }
-            return overlay;
+        function formatLiveDanmuDisplayText(item) {
+            if (item?.kind !== 'gift') return String(item?.text || '');
+            return `${item.giftName || '礼物'} × ${Number(item.giftNum) || 1}`;
         }
 
-        function drawLiveDanmu(item) {
+        function appendLiveDanmuListItem(item) {
             if (!item?.text) return;
-            const overlay = ensureDanmuOverlay();
-            if (!overlay) return;
+            const list = document.getElementById('live-danmu-list-body');
+            if (!list) return;
+            const shouldFollow = list.scrollHeight - list.scrollTop - list.clientHeight < 56;
+            list.querySelector('.live-danmu-list-empty')?.remove();
 
-            while (overlay.childElementCount >= 60) {
-                overlay.firstElementChild?.remove();
+            const row = document.createElement('div');
+            row.className = 'live-danmu-list-row';
+            row.dataset.kind = item.kind || 'barrage';
+            const nick = document.createElement('span');
+            nick.className = 'live-danmu-list-nick';
+            nick.textContent = item.nick || (item.kind === 'system' ? '系统' : '礼物');
+            row.appendChild(nick);
+            const text = document.createElement('span');
+            text.className = 'live-danmu-list-text';
+            text.textContent = formatLiveDanmuDisplayText(item);
+            row.appendChild(text);
+            list.appendChild(row);
+
+            while (list.childElementCount > LIVE_DANMU_LIST_MAX_ITEMS) {
+                list.firstElementChild?.remove();
             }
+            if (shouldFollow) list.scrollTop = list.scrollHeight;
+        }
 
-            const element = document.createElement('span');
-            element.className = 'yaya-live-danmu-item';
-            element.dataset.kind = item.kind || 'barrage';
-            element.textContent = item.kind === 'barrage' && item.nick
-                ? `${item.nick}：${item.text}`
-                : item.text;
-            element.style.color = item.color || DANMU_COLORS.normal;
-            element.style.top = `${7 + (laneSequence % 8) * 9.5}%`;
-            element.style.animationDuration = `${Math.min(16, Math.max(8, 8 + element.textContent.length * 0.11))}s`;
-            laneSequence += 1;
-            element.addEventListener('animationend', () => element.remove(), { once: true });
-            overlay.appendChild(element);
+        function setLiveDanmuListStatus(status) {
+            const panel = document.getElementById('live-danmu-list-wrapper');
+            const normalizedStatus = String(status || 'disconnected');
+            if (panel) panel.dataset.status = normalizedStatus;
+            ensureLiveDanmuColumnResize();
+        }
+
+        function ensureLiveDanmuColumnResize() {
+            const panel = document.getElementById('live-danmu-list-wrapper');
+            const resizer = document.getElementById('live-danmu-name-resizer');
+            if (!panel || !resizer || resizer.dataset.resizeBound === 'true') return;
+            resizer.dataset.resizeBound = 'true';
+            resizer.addEventListener('mousedown', event => {
+                event.preventDefault();
+                const startX = event.pageX;
+                const configuredWidth = parseFloat(getComputedStyle(panel).getPropertyValue('--live-danmu-name-width'));
+                const startWidth = Number.isFinite(configuredWidth) ? configuredWidth : 130;
+                const minWidth = 72;
+                const maxWidth = Math.max(minWidth, Math.min(260, panel.clientWidth - 130));
+                const previousUserSelect = document.body.style.userSelect;
+                resizer.classList.add('is-resizing');
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+
+                const onMouseMove = moveEvent => {
+                    const width = Math.max(minWidth, Math.min(startWidth + moveEvent.pageX - startX, maxWidth));
+                    panel.style.setProperty('--live-danmu-name-width', `${Math.round(width)}px`);
+                };
+                const onMouseUp = () => {
+                    resizer.classList.remove('is-resizing');
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = previousUserSelect;
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                };
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            });
+        }
+
+        function resetLiveDanmuList() {
+            const list = document.getElementById('live-danmu-list-body');
+            if (list) {
+                list.innerHTML = '<div class="live-danmu-list-empty">等待实时弹幕</div>';
+                list.scrollTop = 0;
+            }
+            setLiveDanmuListStatus('connecting');
+        }
+
+        function drawLiveDanmu(item, player, { emitToPlayer = true } = {}) {
+            if (!item?.text) return;
+            appendLiveDanmuListItem(item);
+            const plugin = player?.plugins?.artplayerPluginDanmuku;
+            if (emitToPlayer && typeof plugin?.emit === 'function') {
+                void Promise.resolve(plugin.emit({
+                    text: formatLiveDanmuDisplayText(item),
+                    mode: item.kind === 'system' ? 1 : 0,
+                    color: item.color || DANMU_COLORS.normal
+                })).catch(reportIgnoredError);
+            }
 
             window.dispatchEvent(new CustomEvent('yaya:live-chat-message', { detail: item }));
         }
 
         function clearDanmuOverlay() {
-            document.getElementById('yaya-live-danmu-overlay')?.remove();
+            resetLiveDanmuList();
         }
 
-        function ensureStatusBadge() {
-            let badge = document.getElementById('live-danmu-status');
-            if (badge) return badge;
-            const actions = document.querySelector('#live-player-view .player-top-actions');
-            if (!actions) return null;
-            badge = document.createElement('span');
-            badge.id = 'live-danmu-status';
-            badge.style.cssText = 'font-size:12px;padding:5px 9px;border-radius:999px;white-space:nowrap;border:1px solid currentColor;';
-            actions.insertBefore(badge, actions.firstChild);
-            return badge;
+        function closeDanmakuComposer() {
+            document.getElementById('live-danmu-composer')?.remove();
         }
 
-        function setConnectionStatus(status, text) {
-            const badge = ensureStatusBadge();
-            if (!badge) return;
-            const colors = {
-                connecting: '#d48806',
-                connected: '#389e0d',
-                reconnecting: '#d48806',
-                disconnected: '#cf1322'
-            };
-            const color = colors[status] || '#666';
-            badge.dataset.status = status;
-            badge.textContent = text;
-            badge.style.color = color;
-            badge.style.background = `${color}14`;
+        function ensureDanmakuComposer(onSubmit) {
+            ensureDanmuStyle();
+            let form = document.getElementById('live-danmu-composer');
+            if (!form) {
+                const giftContainer = document.getElementById('live-gift-container');
+                const playerArea = document.getElementById('live-player-area');
+                const parent = giftContainer?.parentElement || playerArea?.parentElement;
+                if (!parent) return null;
+                form = document.createElement('form');
+                form.id = 'live-danmu-composer';
+                form.setAttribute('aria-label', '发送直播弹幕');
+                form.innerHTML = `
+                    <label class="live-danmu-composer-label" for="live-danmu-composer-input">发送弹幕</label>
+                    <div class="live-danmu-composer-field">
+                        <input id="live-danmu-composer-input" class="live-danmu-composer-input" type="text"
+                            maxlength="100" autocomplete="off" placeholder="说点什么吧" aria-label="弹幕内容">
+                        <span class="live-danmu-composer-count">0 / 100</span>
+                    </div>
+                    <button id="live-danmu-composer-submit" type="submit" class="btn btn-primary">发送</button>
+                    <span class="live-danmu-composer-error" role="alert"></span>`;
+                if (giftContainer) parent.insertBefore(form, giftContainer);
+                else playerArea.insertAdjacentElement('afterend', form);
+            }
+
+            const input = form.querySelector('input');
+            const count = form.querySelector('.live-danmu-composer-count');
+            const errorText = form.querySelector('.live-danmu-composer-error');
+            const sendButton = form.querySelector('#live-danmu-composer-submit');
+            form.__yayaSubmitDanmaku = onSubmit;
+            form.dataset.connectionEnabled = 'true';
+            if (form.dataset.ready !== 'true') {
+                form.dataset.ready = 'true';
+                input.addEventListener('input', () => {
+                    count.textContent = `${Array.from(input.value).length} / 100`;
+                    errorText.textContent = '';
+                    errorText.style.display = 'none';
+                });
+                form.addEventListener('submit', async event => {
+                    event.preventDefault();
+                    if (form.dataset.submitting === 'true' || input.disabled) return;
+                    const text = input.value.trim();
+                    if (!text) {
+                        errorText.textContent = '请输入弹幕内容';
+                        errorText.style.display = 'block';
+                        input.focus();
+                        return;
+                    }
+                    form.dataset.submitting = 'true';
+                    input.disabled = true;
+                    sendButton.disabled = true;
+                    sendButton.textContent = '发送中';
+                    errorText.textContent = '';
+                    errorText.style.display = 'none';
+                    try {
+                        await form.__yayaSubmitDanmaku(text);
+                        input.value = '';
+                        count.textContent = '0 / 100';
+                    } catch (error) {
+                        errorText.textContent = error?.message || '发送弹幕失败';
+                        errorText.style.display = 'block';
+                    } finally {
+                        form.dataset.submitting = 'false';
+                        const enabled = form.dataset.connectionEnabled === 'true';
+                        input.disabled = !enabled;
+                        sendButton.disabled = !enabled;
+                        sendButton.textContent = '发送';
+                        if (enabled) input.focus();
+                    }
+                });
+            }
+            input.disabled = false;
+            sendButton.disabled = false;
+            return { form, input, sendButton };
+        }
+
+        function setDanmakuComposerEnabled(enabled, message = '') {
+            const form = document.getElementById('live-danmu-composer');
+            if (!form) return;
+            const input = form.querySelector('input');
+            const sendButton = form.querySelector('#live-danmu-composer-submit');
+            const errorText = form.querySelector('.live-danmu-composer-error');
+            form.dataset.connectionEnabled = enabled ? 'true' : 'false';
+            if (input) input.disabled = !enabled;
+            if (sendButton) sendButton.disabled = !enabled;
+            if (message && errorText) {
+                errorText.textContent = message;
+                errorText.style.display = 'block';
+            } else if (errorText) {
+                errorText.textContent = '';
+                errorText.style.display = 'none';
+            }
+        }
+
+        function setConnectionStatus(status) {
+            document.getElementById('live-danmu-status')?.remove();
+            setLiveDanmuListStatus(status);
+        }
+
+        function setLiveOnlineCount(value) {
+            const countNode = document.getElementById('current-live-online');
+            if (!countNode) return;
+            const count = Number(value);
+            countNode.textContent = Number.isFinite(count) && count >= 0
+                ? new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 }).format(Math.round(count))
+                : '--';
         }
 
         function clearConnectionStatus() {
             document.getElementById('live-danmu-status')?.remove();
+            closeDanmakuComposer();
         }
 
         function notifyPlayer(player, text) {
@@ -398,6 +693,7 @@
             sessionSequence += 1;
             teardownCurrentInstance();
             if (clearUi) {
+                closeDanmakuComposer();
                 clearDanmuOverlay();
                 clearConnectionStatus();
             }
@@ -427,74 +723,143 @@
             if (!LIVE_DANMU_ENABLED) return null;
 
             const normalizedRoomId = String(chatroomId || '').trim();
-            if (!normalizedRoomId) return null;
+            const liveId = String(options.liveId || '').trim();
+            if (!/^\d{1,32}$/.test(normalizedRoomId) || !/^\d{1,32}$/.test(liveId)) return null;
+            if (!ipcRenderer || typeof ipcRenderer.invoke !== 'function' || typeof ipcRenderer.on !== 'function') {
+                setConnectionStatus('disconnected', '桌面弹幕服务不可用');
+                return null;
+            }
 
             const sessionId = ++sessionSequence;
+            const connectionId = `desktop-${Date.now()}-${sessionId}`;
             teardownCurrentInstance();
             clearDanmuOverlay();
             setConnectionStatus('connecting', '实时弹幕连接中');
 
-            try {
-                const [nimSdk, loginOptions] = await Promise.all([
-                    ensureNimChatroomSdkLoaded(),
-                    resolveLoginOptions()
-                ]);
-                if (sessionId !== sessionSequence) return null;
-
-                const instance = nimSdk.Chatroom.getInstance({
-                    appKey: CHATROOM_APP_KEY,
-                    chatroomId: normalizedRoomId,
-                    chatroomAddresses: CHATROOM_ADDRESSES,
-                    secure: true,
-                    needReconnect: true,
-                    quickReconnect: true,
-                    reconnectionAttempts: 12,
-                    logLevel: 'error',
-                    ...loginOptions,
-                    onconnect: () => {
-                        if (sessionId !== sessionSequence) return;
-                        ensureDanmuOverlay();
-                        setConnectionStatus('connected', '实时弹幕已连接');
-                        notifyPlayer(player, '实时弹幕已连接');
-                    },
-                    onwillreconnect: () => {
-                        if (sessionId !== sessionSequence) return;
-                        setConnectionStatus('reconnecting', '实时弹幕重连中');
-                    },
-                    ondisconnect: data => {
-                        if (sessionId !== sessionSequence) return;
-                        const message = String(data?.message || '').trim();
-                        const permissionDenied = /非法操作|没有权限|login error/i.test(message);
-                        setConnectionStatus(
-                            'disconnected',
-                            permissionDenied ? '服务端拒绝 Web 弹幕' : '实时弹幕已断开'
-                        );
-                        if (permissionDenied) {
-                            showToast?.('口袋48服务端拒绝 Web 端进入直播聊天室');
-                        }
-                        if (message) console.warn('[直播弹幕] 连接断开:', message);
-                    },
-                    onmsgs: messages => {
-                        if (sessionId !== sessionSequence) return;
-                        const list = Array.isArray(messages) ? messages : [messages];
-                        list.forEach(message => {
-                            const item = normalizeChatroomMessage(message, options.liveId);
-                            if (item) drawLiveDanmu(item);
-                        });
+            let destroyed = false;
+            let chatConnected = false;
+            const locallyRenderedMessageIds = new Set();
+            const remotelyRenderedMessageIds = new Set();
+            const getMessageId = message => String(message?.uuid || message?.idClient || '').trim();
+            const rememberMessageId = (collection, messageId) => {
+                if (!messageId) return;
+                collection.add(messageId);
+                while (collection.size > 128) {
+                    collection.delete(collection.values().next().value);
+                }
+            };
+            const sendDanmaku = async normalizedText => {
+                if (destroyed || sessionId !== sessionSequence) throw new Error('聊天室连接已失效');
+                if (!chatConnected) throw new Error('聊天室连接中，请稍候');
+                const result = await ipcRenderer.invoke('send-live-danmaku', {
+                    connectionId,
+                    text: normalizedText
+                });
+                if (!result?.success) throw new Error(result?.msg || '发送弹幕失败');
+                const localMessage = result.localMessage;
+                const localMessageId = getMessageId(localMessage) || String(result.idClient || '').trim();
+                if (!localMessageId || !remotelyRenderedMessageIds.has(localMessageId)) {
+                    rememberMessageId(locallyRenderedMessageIds, localMessageId);
+                    const localItem = normalizeChatroomMessage(localMessage, liveId);
+                    if (localItem) {
+                        drawLiveDanmu(localItem, player, { emitToPlayer: !options.usePlayerEmitter });
                     }
+                } else {
+                    remotelyRenderedMessageIds.delete(localMessageId);
+                }
+                showToast?.('弹幕已发送');
+            };
+            const handleStatus = (_event, payload = {}) => {
+                if (destroyed || sessionId !== sessionSequence || payload.connectionId !== connectionId) return;
+                if (payload.status === 'connected') {
+                    chatConnected = true;
+                    setConnectionStatus('connected', '实时弹幕已连接');
+                    if (options.usePlayerEmitter) closeDanmakuComposer();
+                    else ensureDanmakuComposer(sendDanmaku);
+                    notifyPlayer(player, '实时弹幕已连接');
+                    return;
+                }
+                if (payload.status === 'reconnecting') {
+                    chatConnected = false;
+                    setLiveOnlineCount(null);
+                    setConnectionStatus('reconnecting', '实时弹幕重连中');
+                    if (!options.usePlayerEmitter) {
+                        setDanmakuComposerEnabled(false, '聊天室重连中，请稍候');
+                    }
+                    return;
+                }
+                if (payload.status === 'disconnected') {
+                    chatConnected = false;
+                    setLiveOnlineCount(null);
+                    setConnectionStatus('disconnected', '实时弹幕已断开');
+                    if (!options.usePlayerEmitter) {
+                        setDanmakuComposerEnabled(false, '聊天室连接已断开');
+                    }
+                    if (payload.message) console.warn('[直播弹幕] 连接断开:', payload.message);
+                }
+            };
+            const handleOnline = (_event, payload = {}) => {
+                if (destroyed || sessionId !== sessionSequence || payload.connectionId !== connectionId) return;
+                setLiveOnlineCount(payload.onlineMemberNum);
+            };
+            const handleMessage = (_event, payload = {}) => {
+                if (destroyed || sessionId !== sessionSequence || payload.connectionId !== connectionId) return;
+                const messages = Array.isArray(payload.messages) ? payload.messages : [];
+                messages.forEach(message => {
+                    const messageId = getMessageId(message);
+                    if (messageId && locallyRenderedMessageIds.has(messageId)) {
+                        locallyRenderedMessageIds.delete(messageId);
+                        return;
+                    }
+                    rememberMessageId(remotelyRenderedMessageIds, messageId);
+                    const item = normalizeChatroomMessage(message, liveId);
+                    queueChatMessageDiagnostic(message, item, liveId);
+                    if (item) drawLiveDanmu(item, player);
+                });
+            };
+            const removeStatusListener = ipcRenderer.on('live-danmaku-status', handleStatus);
+            const removeMessageListener = ipcRenderer.on('live-danmaku-message', handleMessage);
+            const removeOnlineListener = ipcRenderer.on('live-danmaku-online', handleOnline);
+            const instance = {
+                sendText: sendDanmaku,
+                get connected() {
+                    return chatConnected;
+                },
+                destroy() {
+                    if (destroyed) return;
+                    destroyed = true;
+                    chatConnected = false;
+                    if (typeof removeStatusListener === 'function') removeStatusListener();
+                    if (typeof removeMessageListener === 'function') removeMessageListener();
+                    if (typeof removeOnlineListener === 'function') removeOnlineListener();
+                    setLiveOnlineCount(null);
+                    void ipcRenderer.invoke('disconnect-live-danmaku', { connectionId }).catch(reportIgnoredError);
+                },
+                disconnect() {
+                    this.destroy();
+                }
+            };
+            setNimInstance(instance);
+
+            try {
+                const result = await ipcRenderer.invoke('connect-live-danmaku', {
+                    connectionId,
+                    liveId,
+                    roomId: normalizedRoomId
                 });
                 if (sessionId !== sessionSequence) {
-                    if (typeof instance.destroy === 'function') instance.destroy();
-                    else if (typeof instance.disconnect === 'function') instance.disconnect();
+                    instance.destroy();
                     return null;
                 }
-                setNimInstance(instance);
+                if (!result?.success) throw new Error(result?.msg || '实时弹幕连接失败');
                 return instance;
             } catch (error) {
                 if (sessionId !== sessionSequence) return null;
                 console.error('[直播弹幕] 连接失败:', error);
+                instance.destroy();
+                setNimInstance(null);
                 setConnectionStatus('disconnected', '实时弹幕连接失败');
-                showToast?.('实时弹幕连接失败');
+                showToast?.(error?.message || '实时弹幕连接失败');
                 return null;
             }
         }
@@ -518,7 +883,11 @@
             initLiveDanmu,
             initArtLiveDanmu,
             initDanmuForDPlayer,
-            parseChatroomMessage: normalizeChatroomMessage
+            parseChatroomMessage: normalizeChatroomMessage,
+            renderLiveDanmu: drawLiveDanmu,
+            ensureDanmakuComposer,
+            setDanmakuComposerEnabled,
+            setLiveOnlineCount
         };
     };
 })();

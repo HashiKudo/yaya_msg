@@ -251,7 +251,7 @@
             const originalText = button?.innerText || '';
             if (button) {
                 button.disabled = true;
-                button.innerText = '加载中';
+                button.innerText = window.YayaRendererUtils.t('加载中');
             }
 
             tripLastTime = '0';
