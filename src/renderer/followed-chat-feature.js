@@ -81,13 +81,13 @@
         }
 
         function reconnectMemberRoomFromComposer() {
+            if (!memberRoomConnected) return;
             const webSessionNeedsRefresh = window.desktop?.platform === 'web'
-                && memberRoomConnected
                 && memberRoomConnectedAt > 0
                 && Date.now() - memberRoomConnectedAt >= WEB_MEMBER_ROOM_RECONNECT_AFTER_MS;
-            if ((memberRoomConnected && !webSessionNeedsRefresh) || memberRoomComposerReconnectPromise) return;
+            if (!webSessionNeedsRefresh || memberRoomComposerReconnectPromise) return;
             if (!activeFollowedServer || !activeFollowedChannel) return;
-            if (webSessionNeedsRefresh) memberRoomConnected = false;
+            memberRoomConnected = false;
             memberRoomComposerReconnectPromise = Promise.resolve()
                 .then(() => ensureMemberRoomConnection())
                 .catch(error => {
@@ -103,6 +103,7 @@
                 form: document.getElementById('followed-room-composer'),
                 input: document.getElementById('followed-room-message-input'),
                 button: document.getElementById('followed-room-message-send'),
+                toggleBtn: document.getElementById('followed-room-connect-toggle'),
                 replyPreview: document.getElementById('followed-room-reply-preview'),
                 replyName: document.getElementById('followed-room-reply-name'),
                 replyText: document.getElementById('followed-room-reply-text')
@@ -113,22 +114,50 @@
             const elements = getMemberRoomComposerElements();
             if (!elements.form) return;
             elements.form.dataset.state = state;
-            const connectedMessage = '已连接';
+            const isConnected = state === 'connected';
+            const isConnecting = state === 'connecting';
+            const connectedMessage = '已连接，可输入消息';
+
             if (elements.input) {
-                let inlineMessage = message || (state === 'connected'
-                    ? connectedMessage
-                    : (state === 'connecting' ? '正在连接成员房间' : '未连接'));
-                if (state === 'connected' && message === '正在发送') {
+                let inlineMessage = message;
+                if (!inlineMessage) {
+                    if (isConnected) {
+                        inlineMessage = connectedMessage;
+                    } else if (isConnecting) {
+                        inlineMessage = '正在连接房间发言通道...';
+                    } else {
+                        inlineMessage = '未连接发言通道（点击右侧“连接发言”开启；注意会顶掉手机端）';
+                    }
+                }
+                if (isConnected && message === '正在发送') {
                     inlineMessage = '正在发送';
-                } else if (state === 'connected' && message === '已发送') {
+                } else if (isConnected && message === '已发送') {
                     inlineMessage = '已发送';
                 }
                 elements.input.placeholder = inlineMessage;
                 elements.input.setAttribute('aria-label', inlineMessage);
+                elements.input.readOnly = !isConnected;
             }
             if (elements.button) {
-                elements.button.disabled = state !== 'connected' || memberRoomComposerSending;
+                elements.button.disabled = !isConnected || memberRoomComposerSending;
                 elements.button.textContent = memberRoomComposerSending ? '发送中' : '发送';
+                elements.button.style.display = isConnected ? '' : 'none';
+            }
+            if (elements.toggleBtn) {
+                elements.toggleBtn.disabled = isConnecting || memberRoomComposerSending;
+                if (isConnected) {
+                    elements.toggleBtn.textContent = '断开发言';
+                    elements.toggleBtn.className = 'btn btn-secondary followed-room-connect-btn followed-room-disconnect-active';
+                    elements.toggleBtn.title = '断开房间长连接（断开后可让手机重新登录）';
+                } else if (isConnecting) {
+                    elements.toggleBtn.textContent = '连接中...';
+                    elements.toggleBtn.className = 'btn btn-secondary followed-room-connect-btn';
+                    elements.toggleBtn.title = '正在连接云信...';
+                } else {
+                    elements.toggleBtn.textContent = '连接发言';
+                    elements.toggleBtn.className = 'btn btn-secondary followed-room-connect-btn';
+                    elements.toggleBtn.title = '连接房间发言（注意：连接将导致手机端口袋48被顶下线）';
+                }
             }
         }
 
@@ -156,10 +185,12 @@
                     <div class="followed-room-message-field">
                         <textarea id="followed-room-message-input" class="followed-room-message-input"
                             rows="2" autocomplete="off"
-                            placeholder="正在连接成员房间"></textarea>
+                            placeholder="未连接发言通道（点击右侧“连接发言”开启；注意会顶掉手机端）" readonly></textarea>
                     </div>
+                    <button id="followed-room-connect-toggle" class="btn btn-secondary followed-room-connect-btn"
+                        type="button">连接发言</button>
                     <button id="followed-room-message-send" class="btn btn-primary followed-room-message-send"
-                        type="submit" disabled>发送</button>
+                        type="submit" disabled style="display: none;">发送</button>
                 </div>`;
             composerHost.appendChild(form);
             form.addEventListener('submit', event => {
@@ -167,8 +198,33 @@
                 void sendActiveMemberRoomMessage();
             });
             const input = form.querySelector('.followed-room-message-input');
-            input?.addEventListener('pointerdown', reconnectMemberRoomFromComposer);
-            input?.addEventListener('focus', reconnectMemberRoomFromComposer);
+            const toggleBtn = form.querySelector('#followed-room-connect-toggle');
+
+            toggleBtn?.addEventListener('click', () => {
+                if (memberRoomConnected) {
+                    void destroyMemberRoomConnections();
+                    setMemberRoomComposerState('disconnected', '已断开发言连接');
+                    showToast('已断开房间连接');
+                    return;
+                }
+                const confirmPrompt = '注意：连接房间发言将建立云信长连接，这会导致您手机上的口袋48被顶下线，抓包 Token 可能会失效。\n\n确定要连接并开启发言吗？';
+                const doConnect = () => {
+                    ensureMemberRoomConnection().catch(error => {
+                        showToast(formatMemberRoomError(error, '连接失败'));
+                    });
+                };
+                if (typeof showConfirm === 'function') {
+                    showConfirm(confirmPrompt, doConnect);
+                } else if (window.confirm(confirmPrompt)) {
+                    doConnect();
+                }
+            });
+
+            input?.addEventListener('click', () => {
+                if (!memberRoomConnected) {
+                    showToast('当前处于浏览只读模式。如需发消息，请点击右侧“连接发言”');
+                }
+            });
             form.querySelector('.followed-room-reply-close')?.addEventListener('click', clearMemberRoomReply);
             return form;
         }
@@ -190,7 +246,11 @@
         function setMemberRoomReply(target) {
             memberRoomReplyTarget = target;
             renderMemberRoomReplyTarget();
-            getMemberRoomComposerElements().input?.focus();
+            if (!memberRoomConnected) {
+                showToast('已选定回复目标。请先点击“连接发言”开启连接后再发送');
+            } else {
+                getMemberRoomComposerElements().input?.focus();
+            }
         }
 
         function closeMemberRoomContextMenu() {
@@ -440,9 +500,9 @@
                 setMemberRoomComposerState('error', '当前房间缺少发送目标');
                 return;
             }
-            void ensureMemberRoomConnection().catch(error => {
-                console.warn('[成员房间] QChat 连接失败:', formatMemberRoomError(error));
-            });
+            if (!memberRoomConnected) {
+                setMemberRoomComposerState('disconnected', '未连接发言通道（点击右侧“连接发言”开启；注意会顶掉手机端）');
+            }
         }
 
         function hideMemberRoomComposer() {
@@ -3494,7 +3554,7 @@
                         dlBtn.onclick = (e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            downloadMediaFileIconMode(src, filename, dlBtn, dlBtn.innerHTML, 'media', `【口袋房间】${activeFollowedName}`);
+                            downloadMediaFileIconMode(src, filename, dlBtn, dlBtn.innerHTML, 'media', `【口袋房间】${activeFollowedName || '媒体'}`);
                         };
                         player.style.position = 'relative';
                         player.appendChild(dlBtn);
@@ -4227,7 +4287,13 @@
                                     txt = `<p class="mb-2 template-pre">${safeStr(json.text || json.bodys || body)}</p>`;
                                 } else if (msgType === 'IMAGE') {
                                     const url = json.url.startsWith('http') ? json.url : `https://source3.48.cn${json.url}`;
-                                    txt = `<div class="mb-2"><img class="template-media" src="${url}" loading="lazy" style="max-height: 250px; border-radius: 8px; cursor: zoom-in;" onclick="openImageModal('${url}')"></div>`;
+                                    const dlFilename = `IMAGE_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.jpg`;
+                                    txt = `<div class="mb-2" style="position:relative; display:inline-block;">
+                                            <img class="template-media" src="${url}" loading="lazy" style="max-height: 250px; border-radius: 8px; cursor: zoom-in;" onclick="openImageModal('${url}')">
+                                            <div class="media-dl-btn-overlay image-dl" title="下载图片" onclick="event.stopPropagation(); downloadMediaFileIconMode('${url}', '${dlFilename}', this, this.innerHTML, 'media', '【口袋房间】${activeFollowedName || '媒体'}')">
+                                                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                            </div>
+                                           </div>`;
                                 } else if (msgType === 'EXPRESSIMAGE') {
                                     const url = json.expressImgInfo ? json.expressImgInfo.emotionRemote : json.url;
                                     txt = `<div class="mb-2"><img class="template-image-express-image" src="${url.startsWith('http') ? url : 'https://source3.48.cn' + url}"></div>`;
@@ -4243,10 +4309,12 @@
                                            </blockquote>`;
                                 } else if (msgType === 'AUDIO') {
                                     let mediaUrl = json.url.startsWith('http') ? json.url : `https://mp4.48.cn${json.url.startsWith('/') ? '' : '/'}${json.url}`;
-                                    txt = `<div class="mb-2 preview-media-placeholder" data-type="audio" data-src="${mediaUrl}"></div>`;
+                                    const dlFilename = `AUDIO_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.mp3`;
+                                    txt = `<div class="mb-2 preview-media-placeholder" data-type="audio" data-src="${mediaUrl}" data-filename="${dlFilename}"></div>`;
                                 } else if (msgType === 'VIDEO') {
                                     let mediaUrl = json.url.startsWith('http') ? json.url : `https://mp4.48.cn${json.url.startsWith('/') ? '' : '/'}${json.url}`;
-                                    txt = `<div class="mb-2 preview-media-placeholder" data-type="video" data-src="${mediaUrl}"></div>`;
+                                    const dlFilename = `VIDEO_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.mp4`;
+                                    txt = `<div class="mb-2 preview-media-placeholder" data-type="video" data-src="${mediaUrl}" data-filename="${dlFilename}"></div>`;
                                 } else if (jsonType === 'GIFT_TEXT' || msgType === 'GIFT_TEXT') {
                                     const info = json.giftInfo || json;
                                     giftInfo = json.giftInfo || null;
@@ -4270,7 +4338,8 @@
                                             if (ansObj && ansObj.url) {
                                                 let mediaUrl = ansObj.url.startsWith('http') ? ansObj.url : `https://mp4.48.cn${ansObj.url.startsWith('/') ? '' : '/'}${ansObj.url}`;
                                                 const mType = (msgType.includes('AUDIO') || jsonType.includes('AUDIO')) ? 'audio' : 'video';
-                                                ansHtml = `<div class="preview-media-placeholder" data-type="${mType}" data-src="${mediaUrl}" style="margin-top:8px;"></div>`;
+                                                const dlFilename = `FLIP_${mType.toUpperCase()}_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.${mType === 'audio' ? 'mp3' : 'mp4'}`;
+                                                ansHtml = `<div class="preview-media-placeholder" data-type="${mType}" data-src="${mediaUrl}" data-filename="${dlFilename}" style="margin-top:8px;"></div>`;
                                             }
                                         } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/followed-chat-feature.js'); }
                                     }
@@ -4376,7 +4445,8 @@
                                         const rName = safeStr(info.replyName || '未知用户');
                                         const rText = safeStr(info.replyText || '');
                                         txt = '';
-                                        extraHtml = `<div class="preview-media-placeholder" data-type="audio" data-src="${voiceUrl}" style="margin: 0 0 12px 0;"></div>
+                                        const dlFilename = `AUDIO_REPLY_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.mp3`;
+                                        extraHtml = `<div class="preview-media-placeholder" data-type="audio" data-src="${voiceUrl}" data-filename="${dlFilename}" style="margin: 0 0 12px 0;"></div>
                                             <div style="background: var(--blockquote-bg); padding: 8px 12px; border-radius: 6px; border-left: 3px solid var(--border); margin: 0 0 8px 0; color: var(--text-sub); font-size: 13px; line-height: 1.5;">
                                                 ${rName}：${rText}
                                             </div>`;

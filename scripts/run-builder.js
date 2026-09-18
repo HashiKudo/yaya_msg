@@ -31,6 +31,38 @@ function shouldWrapWindowsZip(args) {
     return joined.includes('--win zip') || joined.includes('--windows zip');
 }
 
+function isWindowsBuild(args) {
+    return args.some((arg) => {
+        const normalized = String(arg).toLowerCase();
+        return normalized === '--win'
+            || normalized === '--windows'
+            || normalized === '-w'
+            || normalized.startsWith('--win=')
+            || normalized.startsWith('--windows=');
+    });
+}
+
+function hasExplicitArchitecture(args) {
+    return args.some((arg) => {
+        const normalized = String(arg).toLowerCase();
+        return normalized === '--x64'
+            || normalized === '--ia32'
+            || normalized === '--arm64'
+            || normalized === '--arch'
+            || normalized.startsWith('--arch=')
+            || /:(x64|ia32|arm64)$/.test(normalized);
+    });
+}
+
+function withDefaultWindowsArchitecture(args) {
+    if (!isWindowsBuild(args) || hasExplicitArchitecture(args)) {
+        return args;
+    }
+
+    console.log('[run-builder] No Windows architecture specified; defaulting to x64.');
+    return [...args, '--x64'];
+}
+
 function buildWindowsWrappedZip() {
     const unpackedDir = path.join(distDir, 'win-unpacked');
     const stagingDir = path.join(distDir, windowsArtifactBaseName);
@@ -61,10 +93,11 @@ function buildWindowsWrappedZip() {
     }
 }
 
-const wrapWindowsZip = shouldWrapWindowsZip(userArgs);
+const normalizedUserArgs = withDefaultWindowsArchitecture(userArgs);
+const wrapWindowsZip = shouldWrapWindowsZip(normalizedUserArgs);
 const builderArgs = wrapWindowsZip
-    ? userArgs.map((arg) => (String(arg).toLowerCase() === 'zip' ? 'dir' : arg))
-    : userArgs;
+    ? normalizedUserArgs.map((arg) => (String(arg).toLowerCase() === 'zip' ? 'dir' : arg))
+    : normalizedUserArgs;
 const builderEnv = {
     ...process.env,
     ELECTRON_MIRROR: process.env.ELECTRON_MIRROR || DEFAULT_ELECTRON_MIRROR,

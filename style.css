@@ -394,10 +394,27 @@
     opacity: 0.52;
 }
 
-.followed-room-composer[data-state="error"] .followed-room-message-input::placeholder,
-.followed-room-composer[data-state="disconnected"] .followed-room-message-input::placeholder {
+.followed-room-composer[data-state="error"] .followed-room-message-input::placeholder {
     color: var(--danger, #d64545);
     opacity: 1;
+}
+
+.followed-room-composer[data-state="disconnected"] .followed-room-message-input::placeholder {
+    color: var(--text-sub);
+    opacity: 0.72;
+}
+
+.followed-room-composer .followed-room-connect-btn {
+    height: 60px;
+    padding: 0 14px;
+    font-size: 13px;
+    white-space: nowrap;
+    flex: 0 0 auto;
+}
+
+.followed-room-composer .followed-room-disconnect-active {
+    border-color: rgba(220, 53, 69, 0.45);
+    color: var(--danger, #d64545);
 }
 
 .followed-room-composer .followed-room-message-send {

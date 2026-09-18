@@ -52,6 +52,7 @@
             FOLLOWED_NOTIFICATION_CURSORS_KEY,
             FOLLOWED_TEAM_RELATIONS_KEY
         ]);
+        const FOLLOWED_REFRESH_ICON_HTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>';
 
         function isWebRuntime() {
             return window.desktop?.platform === 'web'
@@ -1289,10 +1290,19 @@
                 && isCurrentAccount()
             );
 
-            const refreshBtn = document.querySelector('button[onclick="loadFollowedRooms()"]');
-            if (refreshBtn && !silent) {
-                refreshBtn.innerText = window.YayaRendererUtils.t('刷新');
-                refreshBtn.disabled = true;
+            const refreshBtn = document.querySelector('.btn-refresh-icon')
+                || document.querySelector('button[onclick="loadFollowedRooms()"]');
+            if (refreshBtn) {
+                if (!refreshBtn.querySelector('svg')) {
+                    refreshBtn.innerHTML = FOLLOWED_REFRESH_ICON_HTML;
+                }
+                if (!silent) {
+                    refreshBtn.classList.add('is-fetching');
+                    refreshBtn.disabled = true;
+                }
+                if (window.YayaRendererUtils?.t) {
+                    refreshBtn.title = window.YayaRendererUtils.t('刷新');
+                }
             }
 
             if (!silent && !container.querySelector('.session-card')) {
@@ -1412,7 +1422,7 @@
                 }
             } finally {
                 if (isCurrentAccount() && refreshBtn && !silent) {
-                    refreshBtn.innerText = window.YayaRendererUtils.t('刷新');
+                    refreshBtn.classList.remove('is-fetching');
                     refreshBtn.disabled = false;
                 }
             }
@@ -1454,10 +1464,17 @@
                 quickButton.style.color = '';
                 quickButton.disabled = false;
             }
-            const refreshBtn = document.querySelector('button[onclick="loadFollowedRooms()"]');
+            const refreshBtn = document.querySelector('.btn-refresh-icon')
+                || document.querySelector('button[onclick="loadFollowedRooms()"]');
             if (refreshBtn) {
+                if (!refreshBtn.querySelector('svg')) {
+                    refreshBtn.innerHTML = FOLLOWED_REFRESH_ICON_HTML;
+                }
                 refreshBtn.classList.remove('is-fetching');
                 refreshBtn.disabled = false;
+                if (window.YayaRendererUtils?.t) {
+                    refreshBtn.title = window.YayaRendererUtils.t('刷新');
+                }
             }
         }
 
