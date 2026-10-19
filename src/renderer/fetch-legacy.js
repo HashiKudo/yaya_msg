@@ -33,6 +33,8 @@
         let autoCheckinInFlight = false;
         let autoCheckinGeneration = 0;
         let autoCheckinSettingsMigrated = false;
+        let autoCheckinMidnightTimer = null;
+        let autoCheckinObservedDate = '';
         const WEB_ACCOUNT_PROFILE_CACHE_KEY = 'yaya_web_account_profile_v1';
         let maskwordLibrary = [];
 
@@ -351,6 +353,7 @@ function normalizeAccountAvatarUrl(avatarPath) {
         }
 
         function invalidatePocketAccountRequestState() {
+            stopAutoCheckinMidnightTimer();
             autoCheckinGeneration += 1;
             autoCheckinInFlight = false;
             selectedAccountAvatarFile = null;
@@ -1838,19 +1841,57 @@ function getTodayCheckinKey() {
     return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
-function getAutoCheckinEnabled() {
-    return String(readAutoCheckinSetting(AUTO_CHECKIN_ENABLED_KEY, '1')) !== '0';
-}
+        function getAutoCheckinEnabled() {
+            return String(readAutoCheckinSetting(AUTO_CHECKIN_ENABLED_KEY, '1')) !== '0';
+        }
+
+        function stopAutoCheckinMidnightTimer() {
+            clearTimeout(autoCheckinMidnightTimer);
+            autoCheckinMidnightTimer = null;
+            autoCheckinObservedDate = '';
+        }
+
+        function scheduleAutoCheckinMidnight() {
+            clearTimeout(autoCheckinMidnightTimer);
+            autoCheckinMidnightTimer = null;
+            if (!window.desktop?.platform || window.desktop.platform === 'web'
+                || !appToken || !currentPocketUserId || !getAutoCheckinEnabled()) {
+                stopAutoCheckinMidnightTimer();
+                return;
+            }
+            if (!autoCheckinObservedDate) autoCheckinObservedDate = getTodayCheckinKey();
+            const midnight = new Date();
+            midnight.setHours(24, 0, 1, 0);
+            autoCheckinMidnightTimer = setTimeout(checkAutoCheckinDayChange,
+                Math.max(1000, Math.min(60000, midnight.getTime() - Date.now())));
+        }
+
+        function checkAutoCheckinDayChange() {
+            if (autoCheckinObservedDate && autoCheckinObservedDate !== getTodayCheckinKey()
+                && !autoCheckinInFlight && appToken && currentPocketUserId && getAutoCheckinEnabled()) {
+                autoCheckinObservedDate = getTodayCheckinKey();
+                void performPocketCheckin({ force: false, silentWhenSkipped: true }).catch(error => {
+                    console.warn('跨零点自动签到失败:', error);
+                });
+            }
+            scheduleAutoCheckinMidnight();
+        }
+
+        window.addEventListener('focus', checkAutoCheckinDayChange);
+        window.addEventListener('online', checkAutoCheckinDayChange);
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) checkAutoCheckinDayChange();
+        });
 
 function setAutoCheckinEnabled(enabled) {
     writeAutoCheckinSetting(AUTO_CHECKIN_ENABLED_KEY, enabled ? '1' : '0');
     syncAutoCheckinUi();
 }
 
-function markCheckinComplete(userId) {
-    writeAutoCheckinSetting(AUTO_CHECKIN_LAST_DATE_KEY, getTodayCheckinKey());
-    writeAutoCheckinSetting(AUTO_CHECKIN_LAST_USER_KEY, String(userId || currentPocketUserId || ''));
-}
+        function markCheckinComplete(userId, date = getTodayCheckinKey()) {
+            writeAutoCheckinSetting(AUTO_CHECKIN_LAST_DATE_KEY, date);
+            writeAutoCheckinSetting(AUTO_CHECKIN_LAST_USER_KEY, String(userId || currentPocketUserId || ''));
+        }
 
 function isCheckinRecordedToday(userId) {
     const targetUserId = String(userId || currentPocketUserId || '');
@@ -1867,23 +1908,30 @@ function updateAutoCheckinStatus(message, color = 'var(--text-sub)') {
     statusEl.style.color = color;
 }
 
-function syncAutoCheckinUi() {
-    const toggle = document.getElementById('auto-checkin-toggle');
-    if (toggle) {
-        toggle.checked = getAutoCheckinEnabled();
-    }
+        function syncAutoCheckinUi() {
+            scheduleAutoCheckinMidnight();
+            if (window.desktop?.platform && window.desktop.platform !== 'web') {
+                const subtitle = document.querySelector('.account-checkin-panel .account-section-subtitle');
+                if (subtitle) subtitle.textContent = '打开软件及跨零点自动签到';
+            }
+            const toggle = document.getElementById('auto-checkin-toggle');
+            if (toggle) {
+                toggle.checked = getAutoCheckinEnabled();
+            }
 
     if (currentPocketUserId && isCheckinRecordedToday(currentPocketUserId)) {
         updateAutoCheckinStatus('今日签到已完成，重复打开软件不会再次提交', '#28a745');
         return;
     }
 
-    if (getAutoCheckinEnabled()) {
-        updateAutoCheckinStatus('已开启自动签到，登录成功后会在打开软件时自动尝试签到');
-    } else {
-        updateAutoCheckinStatus('已关闭自动签到，需要时可以点击“立即签到”');
-    }
-}
+            if (getAutoCheckinEnabled()) {
+                updateAutoCheckinStatus(window.desktop?.platform === 'web'
+                    ? '已开启自动签到，登录成功后会在打开软件时自动尝试签到'
+                    : '已开启自动签到，启动并登录后及跨零点时会自动尝试签到');
+            } else {
+                updateAutoCheckinStatus('已关闭自动签到，需要时可以点击“立即签到”');
+            }
+        }
 
 function formatCheckinSuccessMessage(content) {
     if (!content || typeof content !== 'object') {
@@ -1938,6 +1986,7 @@ async function performPocketCheckin(options = {}) {
                 return { success: false, skipped: true, reason: 'busy' };
             }
             const accountContext = capturePocketAccountContext(appToken);
+            const checkinDate = getTodayCheckinKey();
             const checkinGeneration = autoCheckinGeneration;
             const isCurrentCheckin = () => (
                 checkinGeneration === autoCheckinGeneration
@@ -1957,7 +2006,7 @@ async function performPocketCheckin(options = {}) {
                 if (!isCurrentCheckin()) return { success: false, skipped: true, reason: 'account-changed' };
 
                 if (res && res.success) {
-                    markCheckinComplete(accountContext.userId);
+                    markCheckinComplete(accountContext.userId, checkinDate);
                     const successMsg = formatCheckinSuccessMessage(res.content);
                     updateAutoCheckinStatus(`${successMsg}，今日无需重复签到`, '#28a745');
                     if (shouldShowCheckinToast) {
@@ -1968,7 +2017,7 @@ async function performPocketCheckin(options = {}) {
 
                 const errorMessage = res?.msg || '签到失败';
                 if (/已签到|重复签到|已经签到|已领取|明天再来/.test(errorMessage)) {
-                    markCheckinComplete(accountContext.userId);
+                    markCheckinComplete(accountContext.userId, checkinDate);
                     updateAutoCheckinStatus('今日签到已完成，重复打开软件不会再次提交', '#28a745');
                     if (shouldShowCheckinToast) {
                         showToast('今天已经签到过了');
@@ -1993,6 +2042,7 @@ async function performPocketCheckin(options = {}) {
                 if (isCurrentCheckin()) {
                     autoCheckinInFlight = false;
                     setCheckinButtonBusy(false);
+                    checkAutoCheckinDayChange();
                 }
             }
         }
@@ -2004,14 +2054,16 @@ async function handleManualCheckIn() {
     });
 }
 
-function toggleAutoCheckin(enabled) {
-    setAutoCheckinEnabled(enabled);
-    if (enabled) {
-        updateAutoCheckinStatus('已开启自动签到，软件启动并验证登录后会自动尝试签到');
-    } else {
-        updateAutoCheckinStatus('已关闭自动签到，需要时可以点击“立即签到”');
-    }
-}
+        function toggleAutoCheckin(enabled) {
+            setAutoCheckinEnabled(enabled);
+            if (enabled) {
+                updateAutoCheckinStatus(window.desktop?.platform === 'web'
+                    ? '已开启自动签到，软件启动并验证登录后会自动尝试签到'
+                    : '已开启自动签到，软件启动并验证登录后及跨零点时会自动尝试签到');
+            } else {
+                updateAutoCheckinStatus('已关闭自动签到，需要时可以点击“立即签到”');
+            }
+        }
 
 async function fetchAllMsgs() {
     const btn = document.getElementById('btn-fetch-all');
@@ -3391,10 +3443,10 @@ async function downloadMediaFileIconMode(url, filename, btnElement, originalIcon
     }
 }
 
-function showCustomConfirm(text, onConfirm) {
-    const overlay = document.createElement('div');
-    overlay.className = 'confirm-overlay';
-    overlay.innerHTML = `
+        function showCustomConfirm(text, onConfirm, onCancel) {
+            const overlay = document.createElement('div');
+            overlay.className = 'confirm-overlay';
+            overlay.innerHTML = `
         <div class="confirm-box">
             <div class="confirm-text">${text}</div>
             <div class="confirm-btns">
@@ -3407,21 +3459,26 @@ function showCustomConfirm(text, onConfirm) {
     const btnCancel = overlay.querySelector('.cancel');
     const btnOk = overlay.querySelector('.ok');
 
-    function close() {
-        document.body.removeChild(overlay);
-    }
+            let closed = false;
+            function close(confirmed = false) {
+                if (closed) return;
+                closed = true;
+                overlay.remove();
+                if (confirmed) onConfirm?.();
+                else onCancel?.();
+            }
 
     btnCancel.onclick = () => {
         close();
     };
 
-    btnOk.onclick = () => {
-        close();
-        if (onConfirm) onConfirm();
-    };
+            btnOk.onclick = () => {
+                close(true);
+            };
 
-    document.body.appendChild(overlay);
-}
+            document.body.appendChild(overlay);
+            return () => close(false);
+        }
 
 function showUserGifts(uid, name) {
     closeGiftAnalysis();
