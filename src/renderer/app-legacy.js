@@ -2857,10 +2857,13 @@ function handleSearch(keyword) {
         window.closeAnnouncement = closeAnnouncement;
 
         ({
+            closeActiveFollowedChat,
             executeQuickAction,
             handleQuickFollowSearch,
             loadFollowedRooms,
             openFollowedRoomByChannelId,
+            popoutActiveFollowedRoom,
+            popoutFollowedRoom,
             resetFollowedRoomsState,
             selectFollowedSort,
             selectQuickFollowMember,
@@ -2871,6 +2874,7 @@ function handleSearch(keyword) {
             sortFollowedRooms,
             toggleActiveFollowedRoomNotification,
             toggleAllFollowedRoomNotifications,
+            toggleFollowedRoomsSidebarCollapse,
             toggleFollowedSortDropdown,
             updateAllFollowedRoomNotificationsButton,
             updateFollowedRoomNotificationButton
@@ -2894,15 +2898,19 @@ function handleSearch(keyword) {
             replaceTencentEmoji: value => typeof replaceTencentEmoji === 'function' ? replaceTencentEmoji(value) : value,
             showToast: (...args) => showToast(...args)
         }));
+        window.closeActiveFollowedChat = closeActiveFollowedChat;
         window.executeQuickAction = executeQuickAction;
         window.handleQuickFollowSearch = handleQuickFollowSearch;
         window.loadFollowedRooms = loadFollowedRooms;
         window.openFollowedRoomByChannelId = openFollowedRoomByChannelId;
+        window.popoutActiveFollowedRoom = popoutActiveFollowedRoom;
+        window.popoutFollowedRoom = popoutFollowedRoom;
         window.resetFollowedRoomsState = resetFollowedRoomsState;
         window.selectFollowedSort = selectFollowedSort;
         window.selectQuickFollowMember = selectQuickFollowMember;
         window.toggleActiveFollowedRoomNotification = toggleActiveFollowedRoomNotification;
         window.toggleAllFollowedRoomNotifications = toggleAllFollowedRoomNotifications;
+        window.toggleFollowedRoomsSidebarCollapse = toggleFollowedRoomsSidebarCollapse;
         window.updateAllFollowedRoomNotificationsButton = updateAllFollowedRoomNotificationsButton;
         window.updateFollowedRoomNotificationButton = updateFollowedRoomNotificationButton;
         window.sortFollowedRooms = sortFollowedRooms;
@@ -6631,8 +6639,9 @@ function handleSearch(keyword) {
                 (typeof memberIdSet !== 'undefined' && post.userId && memberIdSet.has(String(post.userId)));
 
 
+            const myUserId = typeof currentPocketUserId !== 'undefined' ? String(currentPocketUserId).trim() : '';
             let nameStyle = '';
-            if (String(post.userId) === '121569667') {
+            if ((myUserId && String(post.userId) === myUserId) || String(post.userId) === '121569667') {
                 nameStyle = 'color: #056de8; font-weight: bold;';
             } else {
                 nameStyle = isMemberPost ? 'color: #FB7299; font-weight: bold;' : 'color: var(--text); opacity: 0.9;';

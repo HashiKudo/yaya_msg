@@ -27,6 +27,7 @@ const { closeAllLiveDanmakuConnections } = require('./services/danmaku-service')
 const { closeAllMemberRoomConnections } = require('./services/member-room-service');
 const roomNotificationService = require('./services/room-notification-service');
 const { closeMemberRoomTransport } = require('./services/member-room-transport');
+const { closeAllRoomWindows } = require('./services/room-window-service');
 const { ensureStoragePaths } = require('../common/storage-paths');
 
 registerWindowIpc();
@@ -70,6 +71,7 @@ function performFinalCleanup() {
     cleanupMediaTasks();
     closeAllLiveDanmakuConnections();
     closeAllMemberRoomConnections();
+    closeAllRoomWindows();
     roomNotificationService.closeAll();
     closeMemberRoomTransport();
     netfaceService.closeAll();

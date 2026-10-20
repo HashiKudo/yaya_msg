@@ -1470,7 +1470,10 @@ function scheduleAutoMessageFetch(delayMs) {
                         if (ext?.user) senderId = ext.user.userId || ext.user.id;
                     } catch (error) { window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/fetch-legacy.js'); }
                 }
-                return String(senderId || '') !== '121569667';
+                const myId = String(currentPocketUserId || '').trim();
+                const sId = String(senderId || '');
+                if (myId && sId === myId) return false;
+                return sId !== '121569667';
             });
         }
 
@@ -2943,7 +2946,10 @@ async function fetchMsgs(isLoadMore = false) {
                                     if (ext.user) sid = ext.user.userId || ext.user.id;
                                 } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/fetch-legacy.js'); }
                             }
-                            return String(sid) !== '121569667';
+                            const myId = String(currentPocketUserId || '').trim();
+                            const sId = String(sid || '');
+                            if (myId && sId === myId) return false;
+                            return sId !== '121569667';
                         });
                     }
 

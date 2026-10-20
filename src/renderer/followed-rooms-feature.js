@@ -645,7 +645,9 @@
                 const normalized = window.YayaRendererFeatures.memberRoomRealtime?.normalize(message);
                 if (!normalized?.handled) { notificationCatchupPending = true; requestNotificationCatchup?.(); return; }
                 const record = normalized.record;
-                if (!record || String(record.senderUserId || record.senderId) === '121569667') return;
+                const currentUserId = String(typeof getCurrentUserId === 'function' ? getCurrentUserId() || '' : '').trim();
+                const recordSenderId = String(record?.senderUserId || record?.senderId || '');
+                if (!record || (currentUserId && recordSenderId === currentUserId) || recordSenderId === '121569667') return;
                 if (!record.senderUserId) { notificationCatchupPending = true; requestNotificationCatchup?.(1000); return; }
                 if (record.senderUserId !== room.ownerId) return;
                 const cursors = readJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, {});
@@ -690,7 +692,7 @@
 
         function startFollowedRoomNotificationPolling(delayMs = 1000, options = {}) {
             stopFollowedRoomNotificationPolling();
-            if (isWebRuntime()) return;
+            if (isWebRuntime() || window.__isRoomPopupWindow) return;
 
             followedRoomNotificationEnabled = true;
             const pollingGeneration = followedRoomNotificationGeneration;
@@ -874,7 +876,8 @@
                             .filter(message => {
                                 const senderId = String(getFollowedMessageExtUser(message)?.userId
                                     || message.senderUserId || message.senderId || message.uid || '');
-                                if (senderId === '121569667') return false;
+                                const currentUserId = String(typeof getCurrentUserId === 'function' ? getCurrentUserId() || '' : '').trim();
+                                if ((currentUserId && senderId === currentUserId) || senderId === '121569667') return false;
                                 const messageKey = getFollowedMessageKey(message);
                                 if (getFollowedMessageKeys(message).some(key => knownMessageKeys.has(key))) return false;
                                 const messageTime = getFollowedMessageTime(message);
@@ -1771,6 +1774,13 @@
                     </div>
                     <div style="display: flex; align-items: center; flex-shrink: 0; margin-left: 10px;">
                         ${teamHtml}
+                        <button class="session-card-popout-btn" type="button" title="独立小窗口打开" aria-label="独立小窗口打开" data-channelid="${escapeHtml(item.channelId)}" data-server-id="${escapeHtml(item.serverId)}" data-owner-name="${escapeHtml(item.bigDisplayName)}" data-member-id="${escapeHtml(memberId)}">
+                            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                <polyline points="15 3 21 3 21 9"></polyline>
+                                <line x1="10" y1="14" x2="21" y2="3"></line>
+                            </svg>
+                        </button>
                     </div>
                 </div>
                 <div class="session-msg" style="font-size: 12px; color: var(--text-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
@@ -1824,6 +1834,19 @@
                             button.dataset.radioServerId
                         );
                     }
+                });
+                button.addEventListener('mousedown', event => event.stopPropagation());
+            });
+            container.querySelectorAll('.session-card-popout-btn').forEach(button => {
+                button.addEventListener('click', event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    popoutFollowedRoom(
+                        button.dataset.channelid,
+                        button.dataset.serverId,
+                        button.dataset.ownerName,
+                        button.dataset.memberId
+                    );
                 });
                 button.addEventListener('mousedown', event => event.stopPropagation());
             });
@@ -1914,6 +1937,7 @@
             menu.style.cssText = ['position: fixed', 'z-index: 99999', 'display: none', 'min-width: 132px'].join(';');
 
             menu.innerHTML = `
+                <button type="button" data-action="popout" class="yaya-context-menu-item">🗗 独立小窗口打开</button>
                 <button type="button" data-action="notify" class="yaya-context-menu-item">开启通知</button>
                 <button type="button" data-action="pin" class="yaya-context-menu-item">置顶</button>
                 <button type="button" data-action="unfollow" class="yaya-context-menu-item yaya-context-menu-danger">取关</button>
@@ -1926,7 +1950,9 @@
                     const target = followedRoomContextTarget;
                     hideFollowedRoomContextMenu();
                     if (!target) return;
-                    if (action === 'notify') {
+                    if (action === 'popout') {
+                        popoutFollowedRoom(target.dataset.channelid, target.dataset.serverId, target.dataset.ownerName, target.dataset.memberId);
+                    } else if (action === 'notify') {
                         toggleFollowedRoomNotification(target);
                     } else if (action === 'pin') {
                         toggleFollowedRoomPinned(target);
@@ -2246,11 +2272,95 @@
             }
         }
 
+        async function popoutFollowedRoom(channelId, serverId, ownerName, memberId = '', roomType = 'big') {
+            const normalizedChannelId = String(channelId || '').trim();
+            if (!normalizedChannelId) return;
+
+            if (!window.desktop || !window.desktop.ipcRenderer) {
+                if (typeof showToast === 'function') showToast('独立小窗口仅支持桌面端');
+                return;
+            }
+
+            try {
+                const result = await window.desktop.ipcRenderer.invoke('open-room-window', {
+                    channelId: normalizedChannelId,
+                    serverId: String(serverId || '').trim(),
+                    ownerName: String(ownerName || '成员房间').trim(),
+                    memberId: String(memberId || '').trim(),
+                    roomType: String(roomType || 'big').trim()
+                });
+                if (result?.success) {
+                    if (typeof showToast === 'function') {
+                        showToast(result.alreadyOpen ? `已切换到 ${ownerName} 的窗口` : `已在独立小窗口打开 ${ownerName}`);
+                    }
+                }
+            } catch (err) {
+                console.error('[popout-room] 打开独立窗口失败:', err);
+                if (typeof showToast === 'function') showToast(`打开失败: ${err.message}`);
+            }
+        }
+
+        function popoutActiveFollowedRoom() {
+            const channelId = deps.getActiveFollowedChannel?.() || (typeof window.getActiveFollowedChannel === 'function' ? window.getActiveFollowedChannel() : '');
+            if (!channelId) {
+                if (typeof showToast === 'function') showToast('请先选择一个成员房间');
+                return;
+            }
+            const activeCard = document.querySelector(`.session-card[data-channelid="${channelId}"], .session-card[data-small-channel-id="${channelId}"]`);
+            const ownerName = activeCard?.dataset?.ownerName || document.getElementById('followed-chat-title')?.innerText || '成员房间';
+            const serverId = activeCard?.dataset?.serverId || '';
+            const memberId = activeCard?.dataset?.memberId || '';
+            popoutFollowedRoom(channelId, serverId, ownerName, memberId);
+        }
+
+        function toggleFollowedRoomsSidebarCollapse() {
+            const followedView = document.getElementById('view-followed-rooms');
+            if (!followedView) return;
+            const isCollapsed = followedView.classList.toggle('is-sidebar-collapsed');
+            const btn = document.getElementById('btn-toggle-followed-rooms-sidebar');
+            if (btn) {
+                btn.title = isCollapsed ? '展开房间列表' : '折叠房间列表';
+                btn.setAttribute('aria-label', btn.title);
+            }
+        }
+
+        function closeActiveFollowedChat() {
+            const followedView = document.getElementById('view-followed-rooms');
+            if (followedView) {
+                followedView.classList.remove('is-chat-open');
+            }
+            if (typeof window.backToFollowedRoomList === 'function') {
+                window.backToFollowedRoomList();
+            }
+            const header = document.getElementById('followed-chat-header');
+            if (header) {
+                header.style.visibility = 'hidden';
+            }
+            document.querySelectorAll('.session-card').forEach((card) => card.classList.remove('active'));
+            const messages = document.getElementById('followed-chat-messages');
+            if (messages) {
+                messages.innerHTML = `
+                    <div class="empty-state"
+                        style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--text-sub); font-size: 14px;">
+                        请选择成员房间
+                    </div>
+                `;
+            }
+        }
+
+        window.popoutFollowedRoom = popoutFollowedRoom;
+        window.popoutActiveFollowedRoom = popoutActiveFollowedRoom;
+        window.toggleFollowedRoomsSidebarCollapse = toggleFollowedRoomsSidebarCollapse;
+        window.closeActiveFollowedChat = closeActiveFollowedChat;
+
         return {
+            closeActiveFollowedChat,
             executeQuickAction,
             handleQuickFollowSearch,
             loadFollowedRooms,
             openFollowedRoomByChannelId,
+            popoutActiveFollowedRoom,
+            popoutFollowedRoom,
             resetFollowedRoomsState,
             selectFollowedSort,
             selectQuickFollowMember,
@@ -2261,6 +2371,7 @@
             sortFollowedRooms,
             toggleActiveFollowedRoomNotification,
             toggleAllFollowedRoomNotifications,
+            toggleFollowedRoomsSidebarCollapse,
             toggleFollowedSortDropdown,
             updateAllFollowedRoomNotificationsButton,
             updateFollowedRoomNotificationButton

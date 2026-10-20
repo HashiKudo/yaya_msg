@@ -85,6 +85,9 @@
         let memberRoomComposerReconnectPromise = null;
         let memberRoomConnectionGeneration = 0;
         let memberRoomComposerSending = false;
+        let memberRoomSessionHeld = false;
+        const MEMBER_ROOM_IDLE_DISCONNECT_MS = 5 * 60 * 1000;
+        let memberRoomIdleTimer = null;
         let memberRoomReplyTarget = null;
         let memberRoomContextMenu = null;
         const memberRoomMessageActions = new Map();
@@ -99,6 +102,7 @@
                 getTarget: () => ({ serverId: activeFollowedServer, channelId: activeFollowedChannel, name: activeFollowedName }),
                 getSessionKey: getAppToken,
                 onGiftSent: target => {
+                    touchMemberRoomActivity();
                     scheduleMemberRoomHistoryRefresh(target.serverId, target.channelId, 350);
                     scheduleMemberRoomHistoryRefresh(target.serverId, target.channelId, 1200);
                 }
@@ -154,7 +158,7 @@
                     } else if (isConnecting) {
                         inlineMessage = '正在连接房间发言通道...';
                     } else {
-                        inlineMessage = '未连接发言通道（点击右侧“连接发言”开启；注意会顶掉手机端）';
+                        inlineMessage = '未连接发言';
                     }
                 }
                 if (isConnected && message === '正在发送') {
@@ -213,7 +217,7 @@
                     <div class="followed-room-message-field">
                         <textarea id="followed-room-message-input" class="followed-room-message-input"
                             rows="2" autocomplete="off"
-                            placeholder="未连接发言通道（点击右侧“连接发言”开启；注意会顶掉手机端）" readonly></textarea>
+                            placeholder="未连接发言" readonly></textarea>
                     </div>
                     <button id="followed-room-connect-toggle" class="btn btn-secondary followed-room-connect-btn"
                         type="button">连接发言</button>
@@ -236,20 +240,16 @@
                     showToast('已断开房间连接');
                     return;
                 }
-                const confirmPrompt = '注意：连接房间发言将建立云信长连接，这会导致您手机上的口袋48被顶下线，抓包 Token 可能会失效。\n\n确定要连接并开启发言吗？';
-                const doConnect = () => {
-                    ensureMemberRoomConnection().catch(error => {
-                        showToast(formatMemberRoomError(error, '连接失败'));
-                    });
-                };
-                if (typeof showConfirm === 'function') {
-                    showConfirm(confirmPrompt, doConnect);
-                } else if (window.confirm(confirmPrompt)) {
-                    doConnect();
-                }
+                ensureMemberRoomConnection().catch(error => {
+                    showToast(formatMemberRoomError(error, '连接失败'));
+                });
             });
 
+            const touchOnInput = () => touchMemberRoomActivity();
+            input?.addEventListener('input', touchOnInput);
+            input?.addEventListener('focus', touchOnInput);
             input?.addEventListener('click', () => {
+                touchMemberRoomActivity();
                 if (!memberRoomConnected) {
                     showToast('当前处于浏览只读模式。如需发消息，请点击右侧“连接发言”');
                 }
@@ -274,6 +274,7 @@
 
         function setMemberRoomReply(target) {
             memberRoomReplyTarget = target;
+            touchMemberRoomActivity();
             renderMemberRoomReplyTarget();
             if (!memberRoomConnected) {
                 showToast('已选定回复目标。请先点击“连接发言”开启连接后再发送');
@@ -287,31 +288,126 @@
             memberRoomContextMenu = null;
         }
 
-        function getCurrentMemberRoomIdentityIds() {
-            const identityIds = new Set([
-                getCurrentUserId(),
-                memberRoomUserId,
-                memberRoomAccountId
-            ].map(value => String(value || '').trim()).filter(Boolean));
-            const customProfile = typeof window.readStoredJsonSetting === 'function'
-                ? window.readStoredJsonSetting('customSenderProfile', {})
-                : {};
-            if (customProfile?.enabled === true) {
-                const customUserId = String(customProfile.userId || '').trim();
-                if (customUserId) identityIds.add(customUserId);
+        const memberRoomSentMessageIds = new Set();
+
+        function recordSentOwnMemberRoomMessage(msg) {
+            if (!msg) return;
+            const ids = roomRealtime ? roomRealtime.aliases(msg) : [];
+            [
+                msg.msgIdClient,
+                msg.msgidClient,
+                msg.msgIdServer,
+                msg.msgId,
+                msg.id,
+                ...ids
+            ].forEach(id => {
+                if (id != null && String(id).trim() && String(id) !== '0') {
+                    memberRoomSentMessageIds.add(String(id).trim());
+                }
+            });
+            while (memberRoomSentMessageIds.size > 500) {
+                memberRoomSentMessageIds.delete(memberRoomSentMessageIds.keys().next().value);
             }
-            return identityIds;
         }
 
-        function isOwnMemberRoomMessage(target) {
-            const currentIdentityIds = getCurrentMemberRoomIdentityIds();
-            const senderIdentityIds = Array.isArray(target?.senderIdentityIds)
-                ? target.senderIdentityIds
-                : [target?.senderUserId];
-            return senderIdentityIds
-                .map(value => String(value || '').trim())
-                .filter(Boolean)
-                .some(identityId => currentIdentityIds.has(identityId));
+        function isSentOwnMemberRoomMessage(target) {
+            if (!target || !memberRoomSentMessageIds.size) return false;
+            const ids = [
+                target.msgIdClient,
+                target.msgidClient,
+                target.msgIdServer,
+                target.msgId,
+                target.id,
+                ...(roomRealtime ? roomRealtime.aliases(target) : [])
+            ];
+            return ids.some(id => id != null && memberRoomSentMessageIds.has(String(id).trim()));
+        }
+
+        function extractSenderIdentityIds(target) {
+            if (!target) return [];
+            if (Array.isArray(target.senderIdentityIds) && target.senderIdentityIds.length) {
+                return target.senderIdentityIds;
+            }
+            if (target._senderIdsCache) return target._senderIdsCache;
+            const ids = [
+                target.senderUserId,
+                target.senderId,
+                target.uid,
+                target.fromAccount
+            ];
+            let ext = target.extInfo || target.ext;
+            if (typeof ext === 'string' && ext.charCodeAt(0) === 123 /* '{' */) {
+                try { ext = JSON.parse(ext); } catch (_) { ext = null; }
+            }
+            if (ext && typeof ext === 'object') {
+                const user = ext.user;
+                if (user && typeof user === 'object') {
+                    ids.push(user.userId, user.id);
+                }
+            }
+            const result = ids.map(value => String(value || '').trim()).filter(Boolean);
+            target._senderIdsCache = result;
+            return result;
+        }
+
+        let cachedCustomSenderProfileUserId = undefined;
+        let cachedCustomSenderProfileTime = 0;
+
+        function getCustomSenderProfileUserId() {
+            const now = Date.now();
+            if (cachedCustomSenderProfileUserId !== undefined && now - cachedCustomSenderProfileTime < 10000) {
+                return cachedCustomSenderProfileUserId;
+            }
+            cachedCustomSenderProfileTime = now;
+            try {
+                const customProfile = typeof window.readStoredJsonSetting === 'function'
+                    ? window.readStoredJsonSetting('customSenderProfile', {})
+                    : {};
+                cachedCustomSenderProfileUserId = customProfile?.enabled === true
+                    ? String(customProfile.userId || '').trim()
+                    : '';
+            } catch (_) {
+                cachedCustomSenderProfileUserId = '';
+            }
+            return cachedCustomSenderProfileUserId;
+        }
+
+        let cachedMemberRoomIdentities = null;
+        let cachedMemberRoomIdentitiesKey = '';
+
+        function getCurrentMemberRoomIdentityIds() {
+            const myUserId = (typeof currentPocketUserId !== 'undefined' && currentPocketUserId)
+                ? String(currentPocketUserId).trim()
+                : '';
+            const currentUserId = typeof getCurrentUserId === 'function' ? String(getCurrentUserId() || '').trim() : '';
+            const customUserId = getCustomSenderProfileUserId();
+            const key = `${currentUserId}:${myUserId}:${memberRoomUserId}:${memberRoomAccountId}:${customUserId}`;
+            if (cachedMemberRoomIdentities && cachedMemberRoomIdentitiesKey === key) {
+                return cachedMemberRoomIdentities;
+            }
+            cachedMemberRoomIdentitiesKey = key;
+            cachedMemberRoomIdentities = new Set([
+                currentUserId,
+                myUserId,
+                memberRoomUserId,
+                memberRoomAccountId,
+                customUserId
+            ].filter(Boolean));
+            return cachedMemberRoomIdentities;
+        }
+
+        function isOwnMemberRoomMessage(target, identityIds) {
+            if (!target) return false;
+            if (isSentOwnMemberRoomMessage(target)) return true;
+            const currentIdentityIds = identityIds || getCurrentMemberRoomIdentityIds();
+            const sUserId = String(target.senderUserId || '').trim();
+            if (sUserId && currentIdentityIds.has(sUserId)) return true;
+            const sId = String(target.senderId || '').trim();
+            if (sId && currentIdentityIds.has(sId)) return true;
+            const fromAcc = String(target.fromAccount || '').trim();
+            if (fromAcc && currentIdentityIds.has(fromAcc)) return true;
+            const senderIdentityIds = extractSenderIdentityIds(target);
+            return senderIdentityIds.some(identityId => currentIdentityIds.has(identityId));
         }
 
         function openMemberRoomContextMenu(event, target) {
@@ -398,7 +494,30 @@
             return /云信连接(?:已关闭|已断开|超时)|成员房间连接已断开|ECONNRESET|ETIMEDOUT|socket hang up/i.test(message);
         }
 
+        function clearMemberRoomIdleTimer() {
+            clearTimeout(memberRoomIdleTimer);
+            memberRoomIdleTimer = null;
+        }
+
+        // 记录一次用户操作（输入、发送、回复、切换房间等），重新开始 5 分钟闲置计时
+        function touchMemberRoomActivity() {
+            clearMemberRoomIdleTimer();
+            if (!memberRoomConnected && !memberRoomConnectPromise) return;
+            memberRoomIdleTimer = setTimeout(function onIdle() {
+                memberRoomIdleTimer = null;
+                if (!memberRoomConnected && !memberRoomConnectPromise) return;
+                if (memberRoomComposerSending) {
+                    memberRoomIdleTimer = setTimeout(onIdle, 10000);
+                    return;
+                }
+                void destroyMemberRoomConnections();
+                setMemberRoomComposerState('disconnected', '已闲置 5 分钟，自动断开发言连接');
+                showToast('已闲置 5 分钟，自动断开房间连接');
+            }, MEMBER_ROOM_IDLE_DISCONNECT_MS);
+        }
+
         async function destroyMemberRoomConnections() {
+            clearMemberRoomIdleTimer();
             const connectionId = memberRoomConnectionId;
             memberRoomConnectionId = '';
             memberRoomConnected = false;
@@ -469,8 +588,11 @@
             memberRoomRealtimeFlushScheduled = false;
             if (isFollowedChatLoading || !memberRoomRealtimeQueue.length
                 || document.getElementById('view-followed-rooms')?.style.display === 'none') return;
-            const list = memberRoomRealtimeQueue.splice(0).filter(record => record.serverId === String(activeFollowedServer)
-                && record.channelId === String(activeFollowedChannel) && shouldShowMemberRoomRealtime(record) === true);
+            const currentIdentityIds = getCurrentMemberRoomIdentityIds();
+            const currentServer = String(activeFollowedServer);
+            const currentChannel = String(activeFollowedChannel);
+            const list = memberRoomRealtimeQueue.splice(0).filter(record => record.serverId === currentServer
+                && record.channelId === currentChannel && shouldShowMemberRoomRealtime(record, currentIdentityIds) === true);
             list.sort((a, b) => b.msgTime - a.msgTime);
             if (list.length) {
                 try { renderFollowedChatMessages(list, { isAutoRefresh: true }); }
@@ -481,12 +603,22 @@
             }
         }
 
-        function shouldShowMemberRoomRealtime(record) {
+        function shouldShowMemberRoomRealtime(record, identityIds) {
             if (isFollowedChatAllMode) return true;
-            const member = getMemberData().find(item => String(item.channelId || '') === String(activeFollowedMainChannel)
-                || item.ownerName === activeFollowedName);
-            const ownerId = String(activeFollowedMemberId || member?.id || member?.userId || '');
-            return ownerId ? record.senderUserId === ownerId : null;
+            if (isOwnMemberRoomMessage(record, identityIds)) return true;
+            let ownerId = String(activeFollowedMemberId || '');
+            if (!ownerId) {
+                const member = getMemberData().find(item => String(item.channelId || '') === String(activeFollowedMainChannel)
+                    || item.ownerName === activeFollowedName);
+                if (member) {
+                    activeFollowedMemberId = String(member.id || member.userId || '').trim();
+                    ownerId = activeFollowedMemberId;
+                }
+            }
+            if (!ownerId) return null;
+            if (String(record.senderUserId || '').trim() === ownerId) return true;
+            const senderIds = extractSenderIdentityIds(record);
+            return senderIds.includes(ownerId);
         }
 
         function receiveMemberRoomRealtime(message) {
@@ -553,7 +685,15 @@
             if (memberRoomConnectPromise
                 && memberRoomTargetServer === serverId
                 && memberRoomTargetChannel === channelId) return memberRoomConnectPromise;
-            if (memberRoomConnectionId || memberRoomConnectPromise) {
+            // 桌面端：已连接时切换房间不断开云信会话，直接转到新房间（见主进程 connectMemberRoom）
+            const keepSession = isDesktopRoom && memberRoomSessionHeld && Boolean(memberRoomConnectionId);
+            if (keepSession) {
+                memberRoomConnected = false;
+                memberRoomConnectedAt = 0;
+                memberRoomConnectPromise = null;
+                clearMemberRoomReply();
+                closeMemberRoomContextMenu();
+            } else if (memberRoomConnectionId || memberRoomConnectPromise) {
                 await destroyMemberRoomConnections();
             }
 
@@ -612,6 +752,8 @@
                 memberRoomUserId = String(result.userId || getCurrentUserId() || '').trim();
                 memberRoomAccountName = String(result.accountName || '口袋账号');
                 setMemberRoomComposerState('connected', '已连接');
+                memberRoomSessionHeld = true;
+                if (!memberRoomIdleTimer) touchMemberRoomActivity();
                 return resolvedConnectionId;
             })().catch(error => {
                 if (generation === memberRoomConnectionGeneration) {
@@ -620,6 +762,8 @@
                         message: String(error?.message || error?.msg || '')
                     }));
                     memberRoomConnected = false;
+                    memberRoomSessionHeld = false;
+                    clearMemberRoomIdleTimer();
                     memberRoomConnectedAt = 0;
                     memberRoomConnectionId = '';
                     memberRoomTargetServer = '';
@@ -646,10 +790,25 @@
                 setMemberRoomComposerState('error', '当前房间缺少发送目标');
                 return;
             }
-            void ensureMemberRoomConnection().catch(error => {
-                console.warn('[成员房间] QChat 连接失败:', formatMemberRoomError(error));
-                scheduleMemberRoomReconnect();
-            });
+            // 默认不自动连接云信，避免顶掉手机端；需用户点击“连接发言”后才连接
+            // 但已连接时切换房间不断开，直接把连接转到新房间，直到手动断开或闲置 5 分钟
+            const serverId = String(activeFollowedServer || '');
+            const channelId = String(activeFollowedChannel || '');
+            const sameTarget = memberRoomTargetServer === serverId && memberRoomTargetChannel === channelId;
+            if (sameTarget && memberRoomConnected) {
+                setMemberRoomComposerState('connected', '已连接');
+                touchMemberRoomActivity();
+            } else if (sameTarget && memberRoomConnectPromise) {
+                setMemberRoomComposerState('connecting', '正在连接成员房间');
+            } else if (isDesktopRoom && memberRoomSessionHeld && memberRoomConnectionId) {
+                touchMemberRoomActivity();
+                ensureMemberRoomConnection().catch(error => {
+                    console.warn('[成员房间] 切换房间连接失败:', formatMemberRoomError(error));
+                });
+            } else {
+                if (memberRoomConnectionId || memberRoomConnectPromise) void destroyMemberRoomConnections();
+                setMemberRoomComposerState('disconnected');
+            }
         }
 
         function hideMemberRoomComposer() {
@@ -665,7 +824,8 @@
             memberRoomGiftEffects?.clear();
             const form = document.getElementById('followed-room-composer');
             if (form) form.style.display = 'none';
-            void destroyMemberRoomConnections();
+            // 桌面端保持云信连接（仅手动断开或闲置 5 分钟后断开）；Web 端维持原行为
+            if (!isDesktopRoom) void destroyMemberRoomConnections();
         }
 
         async function sendActiveMemberRoomMessage() {
@@ -674,6 +834,7 @@
             const serverId = String(activeFollowedServer || '');
             const channelId = String(activeFollowedChannel || '');
             const sendingRevision = followedChatRequestRevision;
+            touchMemberRoomActivity();
             try {
                 memberRoomComposerSending = true;
                 setMemberRoomComposerState('connected', '正在发送');
@@ -695,6 +856,10 @@
                 clearMemberRoomReply();
                 setMemberRoomComposerState('connected', '已发送');
                 showToast('消息已发送到成员房间');
+                followedStickToBottom = true;
+                followedUserScrollLockUntil = 0;
+                recordSentOwnMemberRoomMessage(result);
+                if (result.message) recordSentOwnMemberRoomMessage(result.message);
                 if (isDesktopRoom && result.message) {
                     if (!receiveMemberRoomRealtime(result.message)) scheduleMemberRoomFallback();
                 } else {
@@ -735,6 +900,8 @@
                 return;
             }
             memberRoomConnected = false;
+            memberRoomSessionHeld = false;
+            clearMemberRoomIdleTimer();
             memberRoomConnectedAt = 0;
             setMemberRoomComposerState('disconnected', payload.message || '成员房间连接已断开');
             if (isDesktopRoom) {
@@ -747,6 +914,8 @@
 
         ipcRenderer?.on?.('member-room-message', (_event, payload = {}) => {
             if (!payload.connectionId || payload.connectionId !== memberRoomConnectionId) return;
+            // 已返回房间列表（连接仍保留）时不处理实时消息
+            if (document.getElementById('followed-room-composer')?.style.display === 'none') return;
             const serverId = payload.message?.serverId;
             const channelId = payload.message?.channelId;
             if (String(serverId || '') === String(activeFollowedServer || '')
@@ -3917,6 +4086,11 @@
             if (!titleEl) return;
             titleEl.innerText = title;
             titleEl.style.visibility = 'visible';
+
+            const popupTitleEl = document.querySelector('.popup-title-name');
+            if (popupTitleEl && title) {
+                popupTitleEl.innerText = title;
+            }
         }
 
         function updateFollowedChatSubtitle(channelId) {
@@ -4061,6 +4235,11 @@
             activeFollowedServer = serverId;
             activeFollowedName = ownerName;
             activeFollowedMemberId = String(options?.memberId || '').trim();
+            if (!activeFollowedMemberId) {
+                const member = getMemberData().find(item => String(item.channelId || '') === String(mainChannelId)
+                    || item.ownerName === ownerName);
+                if (member) activeFollowedMemberId = String(member.id || member.userId || '').trim();
+            }
             activeFollowedNextTime = 0;
             isFollowedSmallRoomMode = initialRoomType === 'small';
             activateMemberRoomComposer();
@@ -4101,6 +4280,18 @@
                 roomBtn.innerText = window.YayaRendererUtils.t(isFollowedSmallRoomMode ? "小房间" : "大房间");
                 roomBtn.classList.remove('btn-primary');
                 roomBtn.classList.add('btn-secondary');
+            }
+
+            const modeBtn = document.getElementById('btn-toggle-followed-mode');
+            if (modeBtn) {
+                modeBtn.innerText = window.YayaRendererUtils.t(isFollowedChatAllMode ? "全部消息" : "成员消息");
+                if (isFollowedChatAllMode) {
+                    modeBtn.classList.remove('btn-secondary');
+                    modeBtn.classList.add('btn-primary');
+                } else {
+                    modeBtn.classList.remove('btn-primary');
+                    modeBtn.classList.add('btn-secondary');
+                }
             }
 
             document.querySelectorAll('.session-card').forEach((card) => card.classList.remove('active'));
@@ -4346,6 +4537,13 @@
 
             loadFollowedChatPage(false).finally(() => {
                 btn.innerText = window.YayaRendererUtils.t(isFollowedChatAllMode ? "全部消息" : "成员消息");
+                if (isFollowedChatAllMode) {
+                    btn.classList.remove('btn-secondary');
+                    btn.classList.add('btn-primary');
+                } else {
+                    btn.classList.remove('btn-primary');
+                    btn.classList.add('btn-secondary');
+                }
                 btn.disabled = false;
             });
         };
@@ -4385,6 +4583,11 @@
                 : new Set();
             const batchMessageIds = [];
             const batchAliases = [];
+            const currentIdentityIds = getCurrentMemberRoomIdentityIds();
+            const myUserId = (typeof currentPocketUserId !== 'undefined' && currentPocketUserId)
+                ? String(currentPocketUserId).trim()
+                : String(typeof getCurrentUserId === 'function' ? getCurrentUserId() || '' : '').trim();
+            let hasOwnMessage = false;
 
             const batchHtml = reversedList.map(m => {
                 if (window.desktop?.platform && window.desktop.platform !== 'web'
@@ -4472,7 +4675,14 @@
                             txt = `<p class="mb-2 template-pre">${safeStr(json.text || json.bodys || body)}</p>`;
                         } else if (msgType === 'IMAGE') {
                             const url = json.url.startsWith('http') ? json.url : `https://source3.48.cn${json.url}`;
-                        txt = `<div class="mb-2"><img class="template-media" src="${escapeFollowedHtml(url)}" loading="lazy" style="max-height: 250px; border-radius: 8px; cursor: zoom-in;" onclick="openImageModal(${toFollowedInlineArg(url)})"></div>`;
+                            const dlFilename = `IMAGE_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.jpg`;
+                            const dlSource = `【口袋房间】${activeFollowedName || '媒体'}`;
+                            txt = `<div class="mb-2" style="position:relative; display:inline-block;">
+                                    <img class="template-media" src="${escapeFollowedHtml(url)}" loading="lazy" style="max-height: 250px; border-radius: 8px; cursor: zoom-in;" onclick="openImageModal(${toFollowedInlineArg(url)})">
+                                    <div class="media-dl-btn-overlay image-dl" title="下载图片" onclick="event.stopPropagation(); downloadMediaFileIconMode(${toFollowedInlineArg(url)}, ${toFollowedInlineArg(dlFilename)}, this, this.innerHTML, 'media', ${toFollowedInlineArg(dlSource)})">
+                                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                    </div>
+                                   </div>`;
                         } else if (msgType === 'EXPRESSIMAGE') {
                             const url = json.expressImgInfo ? json.expressImgInfo.emotionRemote : json.url;
                         txt = `<div class="mb-2"><img class="template-image-express-image" src="${escapeFollowedHtml(url.startsWith('http') ? url : 'https://source3.48.cn' + url)}"></div>`;
@@ -4488,10 +4698,12 @@
                                    </blockquote>`;
                         } else if (msgType === 'AUDIO') {
                             let mediaUrl = json.url.startsWith('http') ? json.url : `https://mp4.48.cn${json.url.startsWith('/') ? '' : '/'}${json.url}`;
-                        txt = `<div class="mb-2 preview-media-placeholder" data-type="audio" data-src="${escapeFollowedHtml(mediaUrl)}"></div>`;
+                            const dlFilename = `AUDIO_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.mp3`;
+                            txt = `<div class="mb-2 preview-media-placeholder" data-type="audio" data-src="${escapeFollowedHtml(mediaUrl)}" data-filename="${escapeFollowedHtml(dlFilename)}"></div>`;
                         } else if (msgType === 'VIDEO') {
                             let mediaUrl = json.url.startsWith('http') ? json.url : `https://mp4.48.cn${json.url.startsWith('/') ? '' : '/'}${json.url}`;
-                        txt = `<div class="mb-2 preview-media-placeholder" data-type="video" data-src="${escapeFollowedHtml(mediaUrl)}"></div>`;
+                            const dlFilename = `VIDEO_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.mp4`;
+                            txt = `<div class="mb-2 preview-media-placeholder" data-type="video" data-src="${escapeFollowedHtml(mediaUrl)}" data-filename="${escapeFollowedHtml(dlFilename)}"></div>`;
                         } else if (['GIFT_TEXT', 'CHANNEL_PRESENT_TEXT', 'PRESENT_TEXT'].includes(jsonType)
                             || ['GIFT_TEXT', 'CHANNEL_PRESENT_TEXT', 'PRESENT_TEXT'].includes(msgType)) {
                             const info = json.giftInfo || json;
@@ -4516,7 +4728,8 @@
                                     if (ansObj && ansObj.url) {
                                         let mediaUrl = ansObj.url.startsWith('http') ? ansObj.url : `https://mp4.48.cn${ansObj.url.startsWith('/') ? '' : '/'}${ansObj.url}`;
                                         const mType = (msgType.includes('AUDIO') || jsonType.includes('AUDIO')) ? 'audio' : 'video';
-                                        ansHtml = `<div class="preview-media-placeholder" data-type="${mType}" data-src="${mediaUrl}" style="margin-top:8px;"></div>`;
+                                        const dlFilename = `FLIP_${mType.toUpperCase()}_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.${mType === 'audio' ? 'mp3' : 'mp4'}`;
+                                        ansHtml = `<div class="preview-media-placeholder" data-type="${mType}" data-src="${mediaUrl}" data-filename="${escapeFollowedHtml(dlFilename)}" style="margin-top:8px;"></div>`;
                                     }
                                 } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/followed-chat-feature.js'); }
                             }
@@ -4538,16 +4751,16 @@
                             const tStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
                             const escapedTitle = liveTitle.replace(/'/g, "\\'");
                             const escapedName = safeStr(displayName).replace(/'/g, "\\'");
-                            txt = `<div class="vod-card-row" style="margin-top: 8px; width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--border); box-shadow: none; ${liveId ? 'cursor: pointer;' : 'cursor: default;'}"
+                            txt = `<div class="vod-card-row followed-chat-live-card" style="margin-top: 8px; width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--border); box-shadow: none; ${liveId ? 'cursor: pointer;' : 'cursor: default;'}"
                                  ${liveId ? `onclick="event.stopPropagation(); playSharedLiveFromMessage('${liveId}', '${escapedName}', '${tStr}', '${escapedTitle}')"` : ''}>
-                                <div class="vod-row-cover-container" style="width: 100px; height: 56px; border-radius: 6px;">
+                                <div class="vod-row-cover-container" style="width: 84px; height: 48px; flex: 0 0 84px; margin-right: 10px; border-radius: 6px;">
                                     <img src="${cover}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 6px;">
                                     <div class="vod-badge" style="bottom: 4px; right: 4px; background-color: #722ed1;">通知</div>
                                 </div>
-                                <div class="vod-row-info" style="height: 56px; justify-content: space-between;">
-                                    <div class="vod-row-name" style="font-size: 14px; color: var(--text);">${safeStr(displayName)}</div>
-                                    <div class="vod-row-title" style="font-size: 12px; color: var(--text-sub);">${liveTitle}</div>
-                                    <div class="vod-row-time" style="font-size: 11px; color: var(--text-sub); opacity: 0.6;">${tStr}</div>
+                                <div class="vod-row-info" style="height: auto; min-height: 48px; padding: 0 !important; display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; flex: 1;">
+                                    <div class="vod-row-name" style="font-size: 13px; font-weight: bold; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 16px;">${safeStr(displayName)}</div>
+                                    <div class="vod-row-title" style="font-size: 11px; color: var(--text-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 15px; margin: 0;">${liveTitle}</div>
+                                    <div class="vod-row-time" style="font-size: 10px; color: var(--text-sub); opacity: 0.65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 13px; margin: 0;">${tStr}</div>
                                 </div>
                             </div>`;
                         } else if (msgType === 'SHARE_LIVE' || jsonType === 'SHARE_LIVE') {
@@ -4569,16 +4782,16 @@
                             const escapedName = liveUserName.replace(/'/g, "\\'");
                             const shareTime = shareDesc || fallbackTimeStr;
 
-                            txt = `<div class="vod-card-row" style="margin-top: 8px; width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--border); box-shadow: none; ${sharedLiveId ? 'cursor: pointer;' : 'cursor: default;'}"
+                            txt = `<div class="vod-card-row followed-chat-live-card" style="margin-top: 8px; width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--border); box-shadow: none; ${sharedLiveId ? 'cursor: pointer;' : 'cursor: default;'}"
                                  ${sharedLiveId ? `onclick="event.stopPropagation(); playSharedLiveFromMessage('${sharedLiveId}', '${escapedName}', '${shareTime}', '${escapedTitle}')"` : ''}>
-                                <div class="vod-row-cover-container" style="width: 100px; height: 56px; border-radius: 6px;">
+                                <div class="vod-row-cover-container" style="width: 84px; height: 48px; flex: 0 0 84px; margin-right: 10px; border-radius: 6px;">
                                     <img src="${sharePic}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 6px;" onerror="this.src='./icon.png'">
                                     <div class="vod-badge" style="bottom: 4px; right: 4px; background-color: #722ed1;">分享</div>
                                 </div>
-                                <div class="vod-row-info" style="height: 56px; justify-content: space-between;">
-                                    <div class="vod-row-name" style="font-size: 14px; color: var(--text);">${liveUserName || safeStr(displayName)}</div>
-                                    <div class="vod-row-title" style="font-size: 12px; color: var(--text-sub);">${shareTitle}</div>
-                                    <div class="vod-row-time" style="font-size: 11px; color: var(--text-sub); opacity: 0.6;">${shareTime}</div>
+                                <div class="vod-row-info" style="height: auto; min-height: 48px; padding: 0 !important; display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; flex: 1;">
+                                    <div class="vod-row-name" style="font-size: 13px; font-weight: bold; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 16px;">${liveUserName || safeStr(displayName)}</div>
+                                    <div class="vod-row-title" style="font-size: 11px; color: var(--text-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 15px; margin: 0;">${shareTitle}</div>
+                                    <div class="vod-row-time" style="font-size: 10px; color: var(--text-sub); opacity: 0.65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 13px; margin: 0;">${shareTime}</div>
                                 </div>
                             </div>`;
                         } else if (jsonType.startsWith('RED_PACKET')) {
@@ -4614,7 +4827,8 @@
                             const rName = safeStr(info.replyName || '未知用户');
                             const rText = safeStr(info.replyText || '');
                             txt = '';
-                            extraHtml = `<div class="preview-media-placeholder" data-type="audio" data-src="${voiceUrl}" style="margin: 0 0 12px 0;"></div>
+                            const dlFilename = `AUDIO_REPLY_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.mp3`;
+                            extraHtml = `<div class="preview-media-placeholder" data-type="audio" data-src="${voiceUrl}" data-filename="${escapeFollowedHtml(dlFilename)}" style="margin: 0 0 12px 0;"></div>
                                     <div style="background: var(--blockquote-bg); padding: 8px 12px; border-radius: 6px; border-left: 3px solid var(--border); margin: 0 0 8px 0; color: var(--text-sub); font-size: 13px; line-height: 1.5;">
                                         ${rName}：${rText}
                                     </div>`;
@@ -4631,16 +4845,19 @@
 
                 const timeStr = fallbackTimeStr;
 
-                const nameColorVar = String(senderId) === '121569667'
+                const isOwnMessage = Boolean(
+                    (myUserId && String(senderId) === myUserId)
+                    || [...senderIdentityIds].some(identityId => currentIdentityIds.has(identityId))
+                    || isSentOwnMemberRoomMessage(m)
+                );
+                if (isOwnMessage) hasOwnMessage = true;
+                const matchedOwnIdentity = isOwnMessage
+                    ? ([...senderIdentityIds].find(identityId => currentIdentityIds.has(identityId)) || myUserId)
+                    : '';
+
+                const nameColorVar = isOwnMessage
                     ? '#056de8'
                     : (isMember ? 'var(--msg-name-member)' : 'var(--msg-name-fan)');
-
-                const currentIdentityIds = getCurrentMemberRoomIdentityIds();
-                const isOwnMessage = [...senderIdentityIds]
-                    .some(identityId => currentIdentityIds.has(identityId));
-                const matchedOwnIdentity = isOwnMessage
-                    ? [...senderIdentityIds].find(identityId => currentIdentityIds.has(identityId))
-                    : '';
                 const canReplyEligible = Boolean(String(m.msgIdClient || '').trim())
                     && ['TEXT', 'REPLY', 'GIFTREPLY', 'GIFT_TEXT'].includes(actionType)
                     && Boolean(String(replyText || '').trim());
@@ -4699,7 +4916,11 @@
                 return;
             }
 
-            const shouldAutoScrollNow = !isAutoRefresh || canFollowedAutoScroll(msgBox);
+            if (hasOwnMessage) {
+                followedStickToBottom = true;
+                followedUserScrollLockUntil = 0;
+            }
+            const shouldAutoScrollNow = !isAutoRefresh || hasOwnMessage || canFollowedAutoScroll(msgBox);
             if (isAutoRefresh && !shouldAutoScrollNow) {
                 queueFollowedPendingBatch(batchHtml, batchMessageIds, batchAliases);
                 return;

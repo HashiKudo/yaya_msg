@@ -37,11 +37,13 @@ function sendToRenderer(sender, channel, connectionId, payload = {}) {
 
 function disconnectMemberRoom(senderId, connectionId = '') {
     const pendingConnectionId = pendingConnectionIds.get(senderId);
-    if (!connectionId || pendingConnectionId === connectionId) {
+    // 取消的是尚未完成的新连接时，旧连接（切换房间前保留的）也要一并断开
+    const cancelledPending = !connectionId || pendingConnectionId === connectionId;
+    if (cancelledPending) {
         pendingConnectionIds.delete(senderId);
     }
     const current = connections.get(senderId);
-    if (!current || (connectionId && current.connectionId !== connectionId)) return false;
+    if (!current || (connectionId && current.connectionId !== connectionId && !cancelledPending)) return false;
     connections.delete(senderId);
     current.client.destroy();
     return true;
@@ -51,7 +53,8 @@ async function connectMemberRoom(sender, payload = {}) {
     const connectionId = normalizeConnectionId(payload.connectionId);
     const serverId = normalizeId(payload.serverId, '成员房间服务器 ID');
     const channelId = normalizeId(payload.channelId, '成员房间频道 ID');
-    disconnectMemberRoom(sender.id);
+    // 不在此处断开旧连接：切换房间时让新连接先加入共享云信会话，再销毁旧连接，
+    // 这样云信登录不会被拆掉重登。
     pendingConnectionIds.set(sender.id, connectionId);
     if (!observedSenders.has(sender)) {
         observedSenders.add(sender);
@@ -82,11 +85,16 @@ async function connectMemberRoom(sender, payload = {}) {
         assertConnectionStillRequested();
     } catch (error) {
         if (pendingConnectionIds.get(sender.id) === connectionId) {
-            pendingConnectionIds.delete(sender.id);
+            disconnectMemberRoom(sender.id);
         }
         throw error;
     }
-    if (!credentials?.success) throw new Error(credentials?.msg || '获取云信登录凭证失败');
+    if (!credentials?.success) {
+        if (pendingConnectionIds.get(sender.id) === connectionId) {
+            disconnectMemberRoom(sender.id);
+        }
+        throw new Error(credentials?.msg || '获取云信登录凭证失败');
+    }
 
     const userInfo = accountResult?.success ? accountResult.userInfo || {} : {};
     if (!userInfo.userId) userInfo.userId = credentials.userId || '';
@@ -127,6 +135,7 @@ async function connectMemberRoom(sender, payload = {}) {
         }
     });
 
+    const previous = connections.get(sender.id);
     connections.set(sender.id, {
         connectionId,
         serverId,
@@ -138,7 +147,10 @@ async function connectMemberRoom(sender, payload = {}) {
         lastSentAt: 0
     });
     try {
-        await client.connect();
+        // connect() 会同步加入共享会话，之后再销毁旧连接，会话得以保留
+        const connecting = client.connect();
+        if (previous) previous.client.destroy();
+        await connecting;
         assertConnectionStillRequested();
         if (pendingConnectionIds.get(sender.id) === connectionId) {
             pendingConnectionIds.delete(sender.id);
