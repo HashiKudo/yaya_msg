@@ -28,6 +28,7 @@ const { closeAllMemberRoomConnections } = require('./services/member-room-servic
 const roomNotificationService = require('./services/room-notification-service');
 const { closeMemberRoomTransport } = require('./services/member-room-transport');
 const { closeAllRoomWindows } = require('./services/room-window-service');
+const { ensureWindowsNotificationRegistration } = require('./services/system-service');
 const { ensureStoragePaths } = require('../common/storage-paths');
 
 registerWindowIpc();
@@ -100,7 +101,7 @@ if (process.platform === 'linux') {
 }
 
 if (process.platform === 'win32') {
-    app.setAppUserModelId(app.isPackaged ? 'com.yaya.message' : 'electron.app.Electron');
+    app.setAppUserModelId('com.yaya.message');
 }
 
 if (!gotSingleInstanceLock) {
@@ -109,6 +110,9 @@ if (!gotSingleInstanceLock) {
     app.on('second-instance', showMainWindow);
     app.whenReady().then(() => {
         ensureStoragePaths();
+        if (process.platform === 'win32') {
+            ensureWindowsNotificationRegistration();
+        }
         createWindow();
         createTray();
         startMessageIndexWatcher((result) => {

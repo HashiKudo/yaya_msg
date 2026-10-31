@@ -664,14 +664,16 @@
                 };
                 writeJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, cursors);
                 if (!isCurrentNotificationRealtime(state)) return;
-                await ipcRenderer.invoke('show-system-notification', {
+                const notificationResult = await ipcRenderer.invoke('show-system-notification', {
                     title: `${room.memberName} · ${getCachedFollowedNotificationRoomName(room)}`,
                     body: `${getFollowedMessageSenderName(record, room.memberName)}：${getFollowedMessagePreview(record)}`,
                     iconUrl: getFollowedMessageSenderAvatar(record) || room.avatarUrl,
                     memberName: room.memberName, channelId: room.channelId, mainChannelId: room.mainChannelId,
-                    serverId: room.serverId, roomType: room.roomType,
-                    theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'
+                    serverId: room.serverId, roomType: room.roomType
                 });
+                if (notificationResult?.success === false) {
+                    showToast(notificationResult.msg || '系统通知发送失败');
+                }
             }).catch(() => {});
         });
 
@@ -950,8 +952,7 @@
                                 channelId: room.channelId,
                                 mainChannelId: room.mainChannelId,
                                 serverId: room.serverId,
-                                roomType: room.roomType,
-                                theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'
+                                roomType: room.roomType
                             });
                             if (notificationResult?.success === false) {
                                 showToast(notificationResult.msg || '系统通知发送失败');
