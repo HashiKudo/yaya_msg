@@ -4,6 +4,7 @@ const { BrowserWindow, shell } = require('electron');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { reportIgnoredError } = require('../../common/error-utils');
+const { getAppIconPath } = require('./app-icon-service');
 
 const roomWindows = new Map();
 const preloadPath = path.join(__dirname, '../preload.js');
@@ -54,7 +55,7 @@ function openRoomWindow(payload = {}) {
         frame: isMac,
         titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
         trafficLightPosition: isMac ? { x: 14, y: 10 } : undefined,
-        icon: path.join(__dirname, '../../../icon.png'),
+        icon: getAppIconPath(),
         title: `${ownerName} - 牙牙消息`,
         webPreferences: {
             preload: preloadPath,

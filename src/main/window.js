@@ -2,6 +2,7 @@ const { app, BrowserWindow, shell } = require('electron');
 const path = require('path');
 const { reportIgnoredError } = require('../common/error-utils');
 const settingsService = require('./services/settings-service');
+const { getAppIconPath } = require('./services/app-icon-service');
 
 let mainWindow = null;
 let isAppQuitting = false;
@@ -55,7 +56,7 @@ function createWindow() {
         frame: isMac,
         titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
         trafficLightPosition: isMac ? { x: 14, y: 10 } : undefined,
-        icon: path.join(__dirname, '../../icon.png'),
+        icon: getAppIconPath(),
         webPreferences: {
             preload: preloadPath,
             nodeIntegration: false,
@@ -91,25 +92,6 @@ function createWindow() {
             shell.openExternal(url);
         }
         return { action: 'deny' };
-    });
-
-    mainWindow.on('close', (event) => {
-        if (!isAppQuitting) {
-            if (process.platform === 'darwin') {
-                event.preventDefault();
-                mainWindow.hide();
-                return;
-            }
-            if (getWindowCloseBehavior() === 'minimize-to-tray') {
-                event.preventDefault();
-                mainWindow.hide();
-                return;
-            }
-        }
-    });
-
-    mainWindow.on('closed', () => {
-        mainWindow = null;
     });
 
     mainWindow.on('close', (event) => {

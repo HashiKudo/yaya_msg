@@ -29,7 +29,10 @@ const roomNotificationService = require('./services/room-notification-service');
 const { closeMemberRoomTransport } = require('./services/member-room-transport');
 const { closeAllRoomWindows } = require('./services/room-window-service');
 const { ensureWindowsNotificationRegistration } = require('./services/system-service');
+const { applyAppIcon } = require('./services/app-icon-service');
 const { ensureStoragePaths } = require('../common/storage-paths');
+
+app.on('browser-window-created', (_event, window) => applyAppIcon(window));
 
 registerWindowIpc();
 registerMediaIpc();

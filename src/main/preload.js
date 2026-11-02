@@ -296,7 +296,16 @@ window.desktop = {
         getBackgroundUrlSync,
         saveBackgroundFromFileSync,
         saveBackgroundFromDataUrlSync,
-        clearBackgroundSync
+        clearBackgroundSync,
+        getAppIcon() {
+            return ipcRenderer.invoke('get-app-icon');
+        },
+        chooseAppIcon() {
+            return ipcRenderer.invoke('choose-app-icon');
+        },
+        resetAppIcon() {
+            return ipcRenderer.invoke('reset-app-icon');
+        }
     },
     appCache: {
         readSync: readRuntimeCacheSync,

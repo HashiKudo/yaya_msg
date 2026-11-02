@@ -902,13 +902,14 @@
             memberRoomConnected = false;
             memberRoomSessionHeld = false;
             clearMemberRoomIdleTimer();
+            clearTimeout(memberRoomReconnectTimer);
+            memberRoomReconnectTimer = null;
             memberRoomConnectedAt = 0;
             setMemberRoomComposerState('disconnected', payload.message || '成员房间连接已断开');
             if (isDesktopRoom) {
                 memberRoomNeedsCatchup = true;
                 scheduleFollowedRoomPoll?.();
                 scheduleMemberRoomFallback(100);
-                scheduleMemberRoomReconnect();
             }
         });
 

@@ -29,6 +29,55 @@
             document.body.style.backgroundImage = '';
         }
 
+        function initAppIconSetting(settingsApi) {
+            const row = document.getElementById('app-icon-setting');
+            if (!row || !settingsApi || typeof settingsApi.getAppIcon !== 'function') return;
+            row.style.display = '';
+            if (row.dataset.iconInitialized === 'true') return;
+            row.dataset.iconInitialized = 'true';
+
+            const preview = document.getElementById('app-icon-preview');
+            const status = document.getElementById('app-icon-status');
+            const chooseButton = document.getElementById('app-icon-choose');
+            const resetButton = document.getElementById('app-icon-reset');
+            let custom = false;
+            let busy = false;
+
+            async function updateIcon(method) {
+                if (busy) return;
+                busy = true;
+                row.setAttribute('aria-busy', 'true');
+                chooseButton.disabled = true;
+                resetButton.disabled = true;
+                try {
+                    const result = await settingsApi[method]();
+                    if (!result || !result.success) {
+                        throw new Error(result?.msg || '图标更新失败');
+                    }
+                    if (result.canceled) return;
+                    custom = result.custom === true;
+                    if (result.previewUrl) {
+                        preview.src = result.previewUrl;
+                    } else {
+                        preview.removeAttribute('src');
+                    }
+                    preview.style.visibility = result.previewUrl ? 'visible' : 'hidden';
+                    status.textContent = custom ? '自定义图标' : '默认图标';
+                } catch (error) {
+                    status.textContent = `图标更新失败：${error.message || '未知错误'}`;
+                } finally {
+                    busy = false;
+                    row.setAttribute('aria-busy', 'false');
+                    chooseButton.disabled = false;
+                    resetButton.disabled = !custom;
+                }
+            }
+
+            chooseButton.addEventListener('click', () => updateIcon('chooseAppIcon'));
+            resetButton.addEventListener('click', () => updateIcon('resetAppIcon'));
+            updateIcon('getAppIcon');
+        }
+
         function initTheme() {
             const savedTheme = readThemeSetting();
             const settingsApi = window.desktop && window.desktop.appSettings ? window.desktop.appSettings : null;
@@ -42,6 +91,7 @@
                 ? settingsApi.getBackgroundUrlSync()
                 : localStorage.getItem('custom_bg_data');
             applyCustomBackground(savedBg || '');
+            initAppIconSetting(settingsApi);
         }
 
         function toggleTheme() {

@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } = require
 const path = require('path');
 const { createWindow, getMainWindow, showMainWindow } = require('./window');
 const settingsService = require('./services/settings-service');
+const { getAppIconPath } = require('./services/app-icon-service');
 
 let tray = null;
 let trayMenuWindow = null;
@@ -11,10 +12,10 @@ const TRAY_MENU_WIDTH = 136;
 const TRAY_MENU_HEIGHT = 82;
 
 function createTrayIcon() {
-    const iconPath = path.join(
+    const iconPath = getAppIconPath(path.join(
         __dirname,
         process.platform === 'win32' ? '../../icon.ico' : '../../icon.png'
-    );
+    ));
     const sourceIcon = nativeImage.createFromPath(iconPath);
     if (sourceIcon.isEmpty()) {
         console.warn(`[tray] icon not found: ${iconPath}`);
@@ -22,7 +23,18 @@ function createTrayIcon() {
     }
     if (process.platform === 'win32') return sourceIcon;
 
-    const resizedIcon = sourceIcon.resize({ width: 18, height: 18 });
+    const traySize = process.platform === 'darwin' ? 18 : 22;
+    const resizedIcon = sourceIcon.resize({ width: traySize, height: traySize, quality: 'best' });
+    for (const scaleFactor of [2, 3]) {
+        resizedIcon.addRepresentation({
+            scaleFactor,
+            buffer: sourceIcon.resize({
+                width: traySize * scaleFactor,
+                height: traySize * scaleFactor,
+                quality: 'best'
+            }).toPNG()
+        });
+    }
     if (process.platform === 'darwin') resizedIcon.setTemplateImage(true);
     return resizedIcon;
 }
@@ -164,6 +176,7 @@ ipcMain.on('tray-menu-action', (event, action) => {
 });
 
 function createTray() {
+    if (process.platform === 'darwin') return null;
     if (tray && !tray.isDestroyed()) return tray;
     const icon = createTrayIcon();
     if (!icon) return null;
@@ -178,6 +191,12 @@ function createTray() {
         createTrayMenuWindow();
     }
     return tray;
+}
+
+function updateTrayIcon() {
+    if (!tray || tray.isDestroyed()) return;
+    const icon = createTrayIcon();
+    if (icon) tray.setImage(icon);
 }
 
 function destroyTray() {
@@ -196,5 +215,6 @@ function destroyTray() {
 
 module.exports = {
     createTray,
+    updateTrayIcon,
     destroyTray
 };

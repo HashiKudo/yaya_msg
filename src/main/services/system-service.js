@@ -8,6 +8,7 @@ const axios = require('axios');
 const { app, dialog, nativeImage, Notification: ElectronNotification, session, shell } = require('electron');
 const { ensureStoragePaths } = require('../../common/storage-paths');
 const { reportIgnoredError } = require('../../common/error-utils');
+const { getAppIconPath } = require('./app-icon-service');
 
 const IMAGE_THUMB_CACHE_LIMIT_BYTES = 500 * 1024 * 1024;
 const imageThumbInflight = new Map();
@@ -21,6 +22,7 @@ const NOTIFICATION_AVATAR_SIZE = 128;
 const WINDOWS_APP_USER_MODEL_ID = 'com.yaya.message';
 const WINDOWS_APP_DISPLAY_NAME = '牙牙消息';
 let windowsNotificationRegistered = false;
+let windowsNotificationRegisteredIconPath = '';
 
 function truncateNotificationText(value, maxLength) {
     const normalized = String(value || '').replace(/\s+/g, ' ').trim();
@@ -30,7 +32,11 @@ function truncateNotificationText(value, maxLength) {
 
 function getAppNotificationIcon() {
     try {
-        const iconPath = path.join(__dirname, '../../../icon.png');
+        const defaultIconPath = path.join(
+            __dirname,
+            process.platform === 'win32' ? '../../../icon.ico' : '../../../icon.png'
+        );
+        const iconPath = getAppIconPath(defaultIconPath);
         const image = nativeImage.createFromPath(iconPath);
         return image && !image.isEmpty() ? image : null;
     } catch (error) {
@@ -39,22 +45,10 @@ function getAppNotificationIcon() {
     }
 }
 
-function ensureUnpackedWindowsNotificationIconPath() {
+function getWindowsNotificationIconPath() {
     try {
-        const { internalDataDir } = ensureStoragePaths();
-        const sourceIco = path.join(__dirname, '../../../icon.ico');
-        const sourcePng = path.join(__dirname, '../../../icon.png');
-        const hasIco = fs.existsSync(sourceIco);
-        const sourcePath = hasIco ? sourceIco : sourcePng;
-        if (!fs.existsSync(sourcePath)) return '';
-
-        const targetPath = path.join(internalDataDir, hasIco ? 'notification-app-icon.ico' : 'notification-app-icon.png');
-        const sourceBytes = fs.readFileSync(sourcePath);
-        if (!fs.existsSync(targetPath) || fs.statSync(targetPath).size !== sourceBytes.length) {
-            fs.mkdirSync(internalDataDir, { recursive: true });
-            fs.writeFileSync(targetPath, sourceBytes);
-        }
-        return targetPath;
+        const defaultIconPath = path.join(__dirname, '../../../icon.ico');
+        return getAppIconPath(defaultIconPath);
     } catch (error) {
         reportIgnoredError(error, 'src/main/services/system-service.js');
         return '';
@@ -62,8 +56,11 @@ function ensureUnpackedWindowsNotificationIconPath() {
 }
 
 function ensureWindowsNotificationRegistration() {
-    if (process.platform !== 'win32' || windowsNotificationRegistered) return;
+    if (process.platform !== 'win32') return;
+    const iconPath = getWindowsNotificationIconPath();
+    if (windowsNotificationRegistered && windowsNotificationRegisteredIconPath === iconPath) return;
     windowsNotificationRegistered = true;
+    windowsNotificationRegisteredIconPath = iconPath;
 
     try {
         app?.setAppUserModelId?.(WINDOWS_APP_USER_MODEL_ID);
@@ -71,7 +68,6 @@ function ensureWindowsNotificationRegistration() {
         reportIgnoredError(error, 'src/main/services/system-service.js');
     }
 
-    const iconPath = ensureUnpackedWindowsNotificationIconPath();
     const regKey = `HKCU\\Software\\Classes\\AppUserModelId\\${WINDOWS_APP_USER_MODEL_ID}`;
     execFile('reg', ['add', regKey, '/v', 'DisplayName', '/t', 'REG_SZ', '/d', WINDOWS_APP_DISPLAY_NAME, '/f'], {
         windowsHide: true,

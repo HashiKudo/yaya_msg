@@ -73,27 +73,10 @@ async function connect(state) {
     }
 }
 
-function configure(sender, payload = {}) {
-    const requestId = String(payload.requestId || '');
-    if (!/^[a-zA-Z0-9_-]{1,96}$/.test(requestId)) throw new Error('无效的消息提醒连接 ID');
-    if (!Array.isArray(payload.rooms) || payload.rooms.length > 5000) throw new Error('无效的消息提醒房间列表');
-    const rooms = [...new Map(payload.rooms.map(room => {
-        const serverId = String(room.serverId || '');
-        const channelId = String(room.channelId || '');
-        if (!/^\d{1,32}$/.test(serverId) || !/^\d{1,32}$/.test(channelId)) throw new Error('无效的消息提醒房间 ID');
-        return [`${serverId}:${channelId}`, { serverId, channelId }];
-    })).values()];
-    stop(sender.id);
-    if (!rooms.length) return { success: true };
-    const token = settingsService.getToken();
-    if (!token) throw new Error('请先登录口袋48账号');
-    const state = { sender, requestId, token, rooms, timer: null, client: null, attempt: 0 };
-    states.set(sender.id, state);
-    if (!observed.has(sender)) {
-        observed.add(sender);
-        sender.once('destroyed', () => stop(sender.id));
+function configure(sender) {
+    if (sender?.id != null) {
+        stop(sender.id);
     }
-    void connect(state);
     return { success: true };
 }
 

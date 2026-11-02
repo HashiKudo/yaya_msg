@@ -2145,6 +2145,60 @@ html[data-theme="dark"] .media-search-input::placeholder {
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
 }
 
+.app-icon-setting {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 15px;
+}
+
+.app-icon-setting-summary {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1 1 180px;
+    min-width: 0;
+}
+
+.app-icon-setting-preview {
+    flex: 0 0 48px;
+    width: 48px;
+    height: 48px;
+    object-fit: contain;
+    border-radius: 8px;
+}
+
+.app-icon-setting-copy {
+    min-width: 0;
+}
+
+.app-icon-setting-label {
+    display: block;
+    font-weight: bold;
+    color: var(--text);
+}
+
+.app-icon-setting-status {
+    display: block;
+    color: var(--text-sub);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.app-icon-setting-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    max-width: 100%;
+}
+
+.app-icon-setting-actions .btn {
+    max-width: 100%;
+    white-space: normal;
+}
+
 .download-path-row {
     display: grid;
     grid-template-columns: 52px minmax(0, 1fr);
