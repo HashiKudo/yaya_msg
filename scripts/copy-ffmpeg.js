@@ -71,6 +71,28 @@ exports.default = async function copyFfmpeg(context) {
 
     console.log(`[afterPack] Copied ffmpeg into application resources: ${targetPath}`);
 
+    if (platform === 'darwin' && process.platform === 'darwin') {
+        const productFilename = context.packager?.appInfo?.productFilename;
+        const appBundlePath = productFilename
+            ? path.join(context.appOutDir, `${productFilename}.app`)
+            : '';
+        if (appBundlePath && fs.existsSync(appBundlePath)) {
+            const { spawnSync } = require('child_process');
+            const verifyResult = spawnSync('codesign', ['--verify', '--deep', '--strict', appBundlePath], {
+                stdio: 'ignore'
+            });
+            if (verifyResult.status !== 0) {
+                const signResult = spawnSync('codesign', ['--force', '--deep', '--sign', '-', appBundlePath], {
+                    stdio: 'pipe',
+                    encoding: 'utf8'
+                });
+                if (signResult.status === 0) {
+                    console.log(`[afterPack] Applied ad-hoc bundle signature to ${appBundlePath}`);
+                }
+            }
+        }
+    }
+
     if (platform === 'linux') {
         copyLinuxIcon(projectDir, context.appOutDir);
     }

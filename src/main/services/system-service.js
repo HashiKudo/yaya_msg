@@ -5,7 +5,7 @@ const { spawn } = require('child_process');
 const { execFile, execFileSync } = require('child_process');
 const { pathToFileURL } = require('url');
 const axios = require('axios');
-const { app, dialog, nativeImage, Notification: ElectronNotification, session, shell } = require('electron');
+const { app, BrowserWindow, dialog, nativeImage, Notification: ElectronNotification, screen, session, shell } = require('electron');
 const { ensureStoragePaths } = require('../../common/storage-paths');
 const { reportIgnoredError } = require('../../common/error-utils');
 const { getSettingValue } = require('./settings-service');
@@ -14,6 +14,13 @@ const { getAppIconPath } = require('./app-icon-service');
 const IMAGE_THUMB_CACHE_LIMIT_BYTES = 500 * 1024 * 1024;
 const imageThumbInflight = new Map();
 const jsonlKeyCache = new Map();
+const activeDesktopToasts = [];
+const DESKTOP_TOAST_WIDTH = 456;
+const DESKTOP_TOAST_HEIGHT = 126;
+const DESKTOP_TOAST_GAP = 10;
+const DESKTOP_TOAST_MARGIN = 16;
+const DESKTOP_TOAST_DURATION_MS = 8000;
+const DESKTOP_TOAST_MAX_VISIBLE = 1;
 const activeNativeNotifications = new Set();
 const MAX_ACTIVE_NATIVE_NOTIFICATIONS = 200;
 const notificationAvatarMemoryCache = new Map();
@@ -24,6 +31,113 @@ const WINDOWS_APP_USER_MODEL_ID = 'com.yaya.message';
 const WINDOWS_APP_DISPLAY_NAME = '牙牙消息';
 let windowsNotificationRegistered = false;
 let windowsNotificationRegisteredIconPath = '';
+let cachedForegroundFullscreenState = { checkedAt: 0, isForegroundFullscreen: false };
+let nativeNotificationUnavailable = false;
+let nativeNotificationFailureCount = 0;
+let nativeNotificationRetryAfter = 0;
+let nativeNotificationFallbackLogged = false;
+
+const WINDOWS_FULLSCREEN_CHECK_SCRIPT = String.raw`
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class YayaFullscreenCheck {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO {
+        public uint cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern IntPtr GetShellWindow();
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
+    [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+'@
+$window = [YayaFullscreenCheck]::GetForegroundWindow()
+if ($window -eq [IntPtr]::Zero -or $window -eq [YayaFullscreenCheck]::GetShellWindow()) { Write-Output '0|0'; exit }
+$rect = New-Object YayaFullscreenCheck+RECT
+if (-not [YayaFullscreenCheck]::GetWindowRect($window, [ref]$rect)) { Write-Output '0|0'; exit }
+$monitor = [YayaFullscreenCheck]::MonitorFromWindow($window, 2)
+$info = New-Object YayaFullscreenCheck+MONITORINFO
+$info.cbSize = [Runtime.InteropServices.Marshal]::SizeOf($info)
+if (-not [YayaFullscreenCheck]::GetMonitorInfo($monitor, [ref]$info)) { Write-Output '0|0'; exit }
+[uint32]$ownerProcessId = 0
+[void][YayaFullscreenCheck]::GetWindowThreadProcessId($window, [ref]$ownerProcessId)
+$tolerance = 2
+$isFullscreen = $rect.Left -le ($info.rcMonitor.Left + $tolerance) -and
+    $rect.Top -le ($info.rcMonitor.Top + $tolerance) -and
+    $rect.Right -ge ($info.rcMonitor.Right - $tolerance) -and
+    $rect.Bottom -ge ($info.rcMonitor.Bottom - $tolerance)
+Write-Output (([int]$isFullscreen).ToString() + '|' + $ownerProcessId.ToString())
+`;
+
+function runHiddenPowerShell(script, timeout = 1800) {
+    return new Promise((resolve) => {
+        execFile('powershell.exe', [
+            '-NoLogo',
+            '-NoProfile',
+            '-NonInteractive',
+            '-ExecutionPolicy', 'Bypass',
+            '-Command', script
+        ], {
+            windowsHide: true,
+            timeout,
+            encoding: 'utf8'
+        }, (error, stdout) => resolve(error ? '' : String(stdout || '').trim()));
+    });
+}
+
+async function getForegroundFullscreenState() {
+    if (process.platform !== 'win32') return { isForegroundFullscreen: false };
+    const now = Date.now();
+    if (now - cachedForegroundFullscreenState.checkedAt < 750) {
+        return cachedForegroundFullscreenState;
+    }
+
+    const output = await runHiddenPowerShell(WINDOWS_FULLSCREEN_CHECK_SCRIPT);
+    const [fullscreenFlag] = output.split('|');
+    cachedForegroundFullscreenState = {
+        checkedAt: Date.now(),
+        isForegroundFullscreen: fullscreenFlag === '1'
+    };
+    return cachedForegroundFullscreenState;
+}
+
+function getNativeWindowHandleNumber(window) {
+    const handle = window.getNativeWindowHandle();
+    if (!Buffer.isBuffer(handle) || handle.length < 4) return '';
+    return handle.length >= 8
+        ? handle.readBigUInt64LE(0).toString()
+        : handle.readUInt32LE(0).toString();
+}
+
+async function placeToastBehindForegroundWindow(toastWindow) {
+    if (process.platform !== 'win32' || !toastWindow || toastWindow.isDestroyed()) return;
+    const toastHandle = getNativeWindowHandleNumber(toastWindow);
+    if (!/^\d+$/.test(toastHandle)) return;
+    const script = String.raw`
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class YayaToastLayer {
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+}
+'@
+$toast = [IntPtr]::new([Int64]::Parse('${toastHandle}'))
+$foreground = [YayaToastLayer]::GetForegroundWindow()
+if ($foreground -ne [IntPtr]::Zero) {
+    [void][YayaToastLayer]::SetWindowPos($toast, $foreground, 0, 0, 0, 0, 0x0053)
+}
+`;
+    await runHiddenPowerShell(script);
+}
 
 function truncateNotificationText(value, maxLength) {
     const normalized = String(value || '').replace(/\s+/g, ' ').trim();
@@ -213,19 +327,235 @@ function openNotificationTarget(payload, title, mainWindow) {
     });
 }
 
-async function showSystemNotification(payload = {}, mainWindow) {
+function getDesktopToastMemberKey(payload = {}, title = '') {
+    if (payload.kind === 'private-message') return `private:${String(payload.targetUserId || '').trim()}`;
+    return String(
+        payload.mainChannelId
+        || payload.memberId
+        || payload.memberName
+        || payload.channelId
+        || title
+    ).trim();
+}
+
+function getDesktopToastRenderPayload(title, body, avatarUrl, appIconDataUrl, theme) {
+    return JSON.stringify({ title, body, avatarUrl, appIconDataUrl, theme })
+        .replace(/</g, '\\u003c')
+        .replace(/>/g, '\\u003e');
+}
+
+function getDesktopToastDisplay(mainWindow) {
+    try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            return screen.getDisplayMatching(mainWindow.getBounds());
+        }
+    } catch (error) { reportIgnoredError(error, 'src/main/services/system-service.js'); }
+    return screen.getPrimaryDisplay();
+}
+
+function repositionDesktopToasts(mainWindow) {
+    if (!screen) return;
+    const display = getDesktopToastDisplay(mainWindow);
+    const workArea = display.workArea;
+    const aliveEntries = activeDesktopToasts.filter(entry => !entry.window.isDestroyed());
+
+    aliveEntries.forEach((entry, index) => {
+        const distanceFromBottom = aliveEntries.length - index - 1;
+        const x = workArea.x + workArea.width - DESKTOP_TOAST_WIDTH - DESKTOP_TOAST_MARGIN;
+        const y = workArea.y + workArea.height - DESKTOP_TOAST_HEIGHT - DESKTOP_TOAST_MARGIN
+            - distanceFromBottom * (DESKTOP_TOAST_HEIGHT + DESKTOP_TOAST_GAP);
+        entry.window.setBounds({
+            x: Math.round(x),
+            y: Math.round(y),
+            width: DESKTOP_TOAST_WIDTH,
+            height: DESKTOP_TOAST_HEIGHT
+        }, true);
+    });
+}
+
+function removeDesktopToast(toastWindow, mainWindow) {
+    const index = activeDesktopToasts.findIndex(entry => entry.window === toastWindow);
+    if (index >= 0) {
+        const [entry] = activeDesktopToasts.splice(index, 1);
+        if (entry.timer) clearTimeout(entry.timer);
+        if (entry.closeTimer) clearTimeout(entry.closeTimer);
+    }
+    repositionDesktopToasts(mainWindow);
+}
+
+function fadeOutDesktopToast(entry) {
+    const toastWindow = entry?.window;
+    if (!toastWindow || toastWindow.isDestroyed() || entry.closing) return;
+    entry.closing = true;
+    if (entry.timer) {
+        clearTimeout(entry.timer);
+        entry.timer = null;
+    }
+
+    toastWindow.webContents.executeJavaScript("window.dismissYayaNotification('close')")
+        .catch(() => {
+            if (!toastWindow.isDestroyed()) toastWindow.close();
+        });
+    entry.closeTimer = setTimeout(() => {
+        if (!toastWindow.isDestroyed()) toastWindow.close();
+    }, 360);
+}
+
+async function showDesktopToastNotification({ payload = {}, mainWindow, title, body, avatarIcon, appIcon, theme }) {
+    if (!BrowserWindow || !screen) {
+        return { success: false, msg: '当前系统不支持桌面通知弹窗' };
+    }
+
+    const resolvedAppIcon = (appIcon && !appIcon.isEmpty())
+        ? appIcon
+        : nativeImage.createFromPath(path.join(__dirname, '../../../icon.png'));
+    const appIconDataUrl = resolvedAppIcon && !resolvedAppIcon.isEmpty() ? resolvedAppIcon.toDataURL() : '';
+    const rawAvatarUrl = String(payload.iconUrl || '').trim();
+    const avatarUrl = (avatarIcon && !avatarIcon.isEmpty())
+        ? avatarIcon.toDataURL()
+        : (/^(?:https?:\/\/|data:image\/)/i.test(rawAvatarUrl) ? rawAvatarUrl : appIconDataUrl);
+    const { isForegroundFullscreen } = await getForegroundFullscreenState();
+    const memberKey = getDesktopToastMemberKey(payload, title);
+    const existingEntry = activeDesktopToasts.find(entry => (
+        !entry.closing
+        && !entry.window.isDestroyed()
+    ));
+
+    if (existingEntry) {
+        const existingWindow = existingEntry.window;
+        existingEntry.memberKey = memberKey;
+        existingEntry.payload = payload;
+        existingEntry.title = title;
+        if (existingEntry.timer) clearTimeout(existingEntry.timer);
+        const renderPayload = getDesktopToastRenderPayload(title, body, avatarUrl, appIconDataUrl, theme);
+        try {
+            await existingWindow.webContents.executeJavaScript(`window.renderYayaNotification(${renderPayload})`);
+            existingWindow.setAlwaysOnTop(!isForegroundFullscreen, isForegroundFullscreen ? 'normal' : 'pop-up-menu');
+            if (isForegroundFullscreen) {
+                await placeToastBehindForegroundWindow(existingWindow);
+            } else {
+                existingWindow.showInactive();
+            }
+            existingEntry.timer = setTimeout(() => {
+                fadeOutDesktopToast(existingEntry);
+            }, DESKTOP_TOAST_DURATION_MS);
+            return { success: true, merged: true };
+        } catch (error) {
+            console.warn('[系统通知] 更新已有弹窗失败:', error.message);
+            if (!existingWindow.isDestroyed()) existingWindow.close();
+        }
+    }
+
+    const display = getDesktopToastDisplay(mainWindow);
+    const workArea = display.workArea;
+    const toastWindow = new BrowserWindow({
+        x: Math.round(workArea.x + workArea.width - DESKTOP_TOAST_WIDTH - DESKTOP_TOAST_MARGIN),
+        y: Math.round(workArea.y + workArea.height - DESKTOP_TOAST_HEIGHT - DESKTOP_TOAST_MARGIN),
+        width: DESKTOP_TOAST_WIDTH,
+        height: DESKTOP_TOAST_HEIGHT,
+        show: false,
+        frame: false,
+        transparent: true,
+        resizable: false,
+        movable: false,
+        minimizable: false,
+        maximizable: false,
+        fullscreenable: false,
+        skipTaskbar: true,
+        alwaysOnTop: !isForegroundFullscreen,
+        focusable: true,
+        hasShadow: false,
+        backgroundColor: '#00000000',
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true
+        }
+    });
+
+    if (!isForegroundFullscreen) {
+        toastWindow.setAlwaysOnTop(true, 'pop-up-menu');
+    }
+    toastWindow.setMenuBarVisibility(false);
+    const entry = {
+        window: toastWindow,
+        timer: null,
+        closeTimer: null,
+        closing: false,
+        memberKey,
+        payload,
+        title
+    };
+    activeDesktopToasts.push(entry);
+    while (activeDesktopToasts.length > DESKTOP_TOAST_MAX_VISIBLE) {
+        const oldest = activeDesktopToasts.shift();
+        fadeOutDesktopToast(oldest);
+    }
+    repositionDesktopToasts(mainWindow);
+
+    toastWindow.webContents.on('will-navigate', (event, url) => {
+        if (!url.startsWith('yaya-notification://')) return;
+        event.preventDefault();
+        if (url.startsWith('yaya-notification://open')) {
+            openNotificationTarget(entry.payload, entry.title, mainWindow);
+        }
+        if (!toastWindow.isDestroyed()) toastWindow.close();
+    });
+    toastWindow.on('closed', () => removeDesktopToast(toastWindow, mainWindow));
+    try {
+        await toastWindow.loadFile(path.join(__dirname, '../notification-toast.html'));
+        if (toastWindow.isDestroyed()) {
+            return { success: false, msg: '软件通知弹窗已关闭' };
+        }
+
+        const renderPayload = getDesktopToastRenderPayload(title, body, avatarUrl, appIconDataUrl, theme);
+        await toastWindow.webContents.executeJavaScript(`window.renderYayaNotification(${renderPayload})`);
+        if (isForegroundFullscreen) {
+            await placeToastBehindForegroundWindow(toastWindow);
+        } else {
+            toastWindow.showInactive();
+        }
+        entry.timer = setTimeout(() => {
+            fadeOutDesktopToast(entry);
+        }, DESKTOP_TOAST_DURATION_MS);
+        return { success: true };
+    } catch (error) {
+        console.warn('[系统通知] 弹窗加载失败:', error.message);
+        if (!toastWindow.isDestroyed()) toastWindow.close();
+        return { success: false, msg: '软件通知弹窗加载失败' };
+    }
+}
+
+function canAttemptNativeNotification() {
     if (!ElectronNotification || (typeof ElectronNotification.isSupported === 'function' && !ElectronNotification.isSupported())) {
-        return { success: false, msg: '当前系统不支持原生通知' };
+        return false;
+    }
+    if (nativeNotificationUnavailable) return false;
+    return Date.now() >= nativeNotificationRetryAfter;
+}
+
+function markNativeNotificationFailed() {
+    nativeNotificationFailureCount += 1;
+    if (nativeNotificationFailureCount >= 2) {
+        nativeNotificationUnavailable = true;
+    } else {
+        nativeNotificationRetryAfter = Date.now() + 15_000;
+    }
+    if (!nativeNotificationFallbackLogged) {
+        nativeNotificationFallbackLogged = true;
+        console.info('[系统通知] 原生通知未获系统授权或不可用，已自动切换为桌面悬浮通知');
+    }
+}
+
+function tryShowNativeNotification({ payload, mainWindow, title, body, avatarIcon, appIcon, theme }) {
+    if (!canAttemptNativeNotification()) {
+        return Promise.resolve(null);
     }
 
     if (process.platform === 'win32') {
         ensureWindowsNotificationRegistration();
     }
 
-    const title = truncateNotificationText(payload.title || '牙牙消息', 80);
-    const body = truncateNotificationText(payload.body || '收到一条新消息', 220);
-    const avatarIcon = await resolveNotificationAvatarIcon(payload.iconUrl);
-    const appIcon = getAppNotificationIcon();
     const notificationIcon = process.platform === 'darwin'
         ? avatarIcon
         : (avatarIcon || appIcon);
@@ -254,26 +584,95 @@ async function showSystemNotification(payload = {}, mainWindow) {
             activeNativeNotifications.delete(oldest);
         }
 
-        notification.once('click', () => {
-            activeNativeNotifications.delete(notification);
-            openNotificationTarget(payload, title, mainWindow);
+        return new Promise((resolve) => {
+            let settled = false;
+            let fallbackTriggered = false;
+            const settleTimer = setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                resolve({ success: true, native: true });
+            }, 220);
+
+            notification.once('show', () => {
+                clearTimeout(settleTimer);
+                nativeNotificationFailureCount = 0;
+                nativeNotificationRetryAfter = 0;
+                if (!settled) {
+                    settled = true;
+                    resolve({ success: true, native: true });
+                }
+            });
+
+            notification.once('click', () => {
+                activeNativeNotifications.delete(notification);
+                openNotificationTarget(payload, title, mainWindow);
+            });
+
+            notification.once('close', () => {
+                activeNativeNotifications.delete(notification);
+            });
+
+            notification.once('failed', () => {
+                clearTimeout(settleTimer);
+                activeNativeNotifications.delete(notification);
+                markNativeNotificationFailed();
+                if (!settled) {
+                    settled = true;
+                    fallbackTriggered = true;
+                    resolve(null);
+                    return;
+                }
+                if (!fallbackTriggered) {
+                    fallbackTriggered = true;
+                    void showDesktopToastNotification({
+                        payload,
+                        mainWindow,
+                        title,
+                        body,
+                        avatarIcon,
+                        appIcon,
+                        theme
+                    });
+                }
+            });
+
+            notification.show();
         });
-        notification.once('close', () => {
-            activeNativeNotifications.delete(notification);
-        });
-        notification.once('failed', (_event, error) => {
-            console.warn('[系统通知] 原生通知发送失败:', error || 'unknown error');
-            activeNativeNotifications.delete(notification);
-        });
-        notification.show();
-        return { success: true, native: true };
     } catch (error) {
-        console.warn('[系统通知] 原生通知创建失败:', error.message || error);
-        return {
-            success: false,
-            msg: error.message || '系统通知发送失败'
-        };
+        markNativeNotificationFailed();
+        return Promise.resolve(null);
     }
+}
+
+async function showSystemNotification(payload = {}, mainWindow) {
+    const title = truncateNotificationText(payload.title || '牙牙消息', 80);
+    const body = truncateNotificationText(payload.body || '收到一条新消息', 220);
+    const theme = payload.theme === 'dark' ? 'dark' : 'light';
+    const avatarIcon = await resolveNotificationAvatarIcon(payload.iconUrl);
+    const appIcon = getAppNotificationIcon();
+
+    const nativeResult = await tryShowNativeNotification({
+        payload,
+        mainWindow,
+        title,
+        body,
+        avatarIcon,
+        appIcon,
+        theme
+    });
+    if (nativeResult) {
+        return nativeResult;
+    }
+
+    return showDesktopToastNotification({
+        payload,
+        mainWindow,
+        title,
+        body,
+        avatarIcon,
+        appIcon,
+        theme
+    });
 }
 
 function normalizeIncomingEntries(entries) {
