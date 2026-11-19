@@ -231,7 +231,7 @@ async function chooseAppIcon(parentWindow) {
         const targetPath = path.join(ensureStoragePaths().internalDataDir, fileName);
         try {
             fs.writeFileSync(targetPath, image.toPNG());
-            getPlatformAppIconPath(targetPath, image);
+            getPlatformAppIconPath(targetPath, image, path.parse(targetPath).name);
             settingsService.setSettingValue('customAppIconFile', fileName);
         } catch (error) {
             removeSavedIcon(targetPath);

@@ -8,6 +8,29 @@
     <meta http-equiv="Content-Security-Policy"
         content="default-src 'self' file: https: data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' file: https: data: blob:; media-src 'self' file: https: http: data: blob:; connect-src 'self' file: https: http: ws: wss: data: blob:; font-src 'self' data:;">
     <title>牙牙消息</title>
+    <style>
+        #web-vod-startup { display: none; }
+        html[data-vod-startup] #web-vod-startup {
+            position: fixed;
+            inset: 0;
+            z-index: 4;
+            display: grid;
+            place-items: center;
+            box-sizing: border-box;
+            padding: 24px;
+            color: var(--text-sub, #a4a4ad);
+            font-size: 14px;
+            pointer-events: none;
+        }
+    </style>
+    <script>
+        if (/^https?:$/.test(location.protocol) && /^\/vod\/?$/.test(location.pathname)) {
+            document.documentElement.dataset.vodStartup = '';
+            window.addEventListener('yaya:view-changed', () => {
+                if (!/^\/vod\/?$/.test(location.pathname)) delete document.documentElement.dataset.vodStartup;
+            });
+        }
+    </script>
     <link rel="icon" href="./icon.png" type="image/x-icon">
     <link rel="stylesheet" href="style.css?v=__YAYA_BUILD_VERSION__">
     <link rel="stylesheet" href="./src/renderer/netface.css">
@@ -15,7 +38,9 @@
     <link rel="stylesheet" href="./src/web/pocket-home.css?v=__YAYA_BUILD_VERSION__">
 
     <script src="./src/renderer/renderer-utils.js?v=__YAYA_BUILD_VERSION__"></script>
-    <script src="./src/renderer/vendor/media-vendors.js?v=__YAYA_BUILD_VERSION__"></script>
+    <script src="./src/renderer/vendor/pinyin-vendor.js?v=__YAYA_BUILD_VERSION__"></script>
+    <script src="./src/renderer/desktop-media-loader.js?v=__YAYA_BUILD_VERSION__"></script>
+    <script src="./src/web/desktop-live-link.js?v=__YAYA_BUILD_VERSION__"></script>
     <script src="./src/web/browser-shim.js?v=__YAYA_BUILD_VERSION__"></script>
     <script src="./src/web/web-shell.js?v=__YAYA_BUILD_VERSION__"></script>
     <script src="./src/web/pocket-home.js?v=__YAYA_BUILD_VERSION__"></script>
@@ -26,8 +51,10 @@
 </head>
 
 <body class="topbar-page-title-enabled">
+    <div id="web-vod-startup" role="status">正在加载回放…</div>
     <img id="web-background-layer" class="web-background-layer"
-        alt="" aria-hidden="true" style="display: none;"
+        src="https://data.gnz.hk/assets/default-background.jpg?v=20260829" alt="" aria-hidden="true"
+        style="display: none;"
         onerror="window.__recoverYayaWebBackground && window.__recoverYayaWebBackground(this)">
     <script>
         (function () {
@@ -58,8 +85,8 @@
                     <path d="M9.5 21v-6h5v6"></path>
                 </svg>
             </div>
-            <img src="./icon.png" class="title-logo" draggable="false">
-            <span>牙牙消息 v2.14</span>
+            <img src="./icon.png" class="title-logo">
+            <span>牙牙消息 v2.15</span>
         </div>
         <div id="topbar-page-title" class="title-bar-center-title" aria-live="polite"></div>
         <div class="window-controls">
@@ -223,6 +250,18 @@
 
                     <div id="memberDropdownList" class="suggestion-box" style="max-height: 300px;"></div>
                 </div>
+                <div id="message-room-wrapper" style="position: relative;">
+                    <input type="hidden" id="message-room-type" value="all">
+                    <button type="button" id="message-room-trigger" class="input-control" onclick="toggleMessageRoomDropdown()"
+                        aria-expanded="false" style="width: 100%; display: flex; justify-content: space-between; align-items: center; text-align: left;">
+                        <span id="message-room-label">全部房间</span><span style="color: var(--text-sub); font-size: 12px;">▼</span>
+                    </button>
+                    <div id="message-room-dropdown" class="suggestion-box">
+                        <button type="button" class="suggestion-item message-room-option" onclick="selectMessageRoom('all')">全部房间</button>
+                        <button type="button" class="suggestion-item message-room-option" onclick="selectMessageRoom('big')">大房间</button>
+                        <button type="button" class="suggestion-item message-room-option" onclick="selectMessageRoom('small')">小房间</button>
+                    </div>
+                </div>
             </div>
             <div class="sidebar-group" id="sb-date" style="display: flex; flex-direction: column; gap: 10px;">
                 <div class="group-title" style="margin-bottom: 0;">日期筛选</div>
@@ -349,227 +388,19 @@
             </div>
         </aside>
         <main class="main-content home-mode" id="mainContentArea">
-            <div id="view-home" class="home-view"
-                style="height: 100%; overflow-y: auto; display: flex; box-sizing: border-box;">
-                <div class="home-shell">
-                    <section class="home-grid">
-                        <div class="home-panel home-panel-messages">
-                            <div class="home-panel-title">消息</div>
-                            <div class="home-panel-subtitle">口袋房间消息抓取、检索</div>
-                            <div class="home-panel-actions home-card-grid">
-                                <button class="home-card home-card-primary" onclick="switchView('messages')">
-                                    <span class="home-card-title">检索</span>
-                                    <span class="home-card-desc">进入历史消息列表</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('fetch')">
-                                    <span class="home-card-title">抓取</span>
-                                    <span class="home-card-desc">手动刷新与重扫</span>
-                                </button>
-                            </div>
-                        </div>
+            <div id="view-home" class="web-home-view"></div>
 
-                        <div class="home-panel home-panel-live">
-                            <div class="home-panel-title">直播</div>
-                            <div class="home-panel-subtitle">口袋直播、回放、房间上麦、公演直播B站源</div>
-                            <div class="home-panel-actions home-card-grid">
-                                <button class="home-card home-card-primary" onclick="switchView('media', 'live')">
-                                    <span class="home-card-title">直播</span>
-                                    <span class="home-card-desc">查看当前直播列表</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('media', 'vod')">
-                                    <span class="home-card-title">回放</span>
-                                    <span class="home-card-desc">进入录播与弹幕页</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('media', 'meet-live')" style="display: none;">
-                                    <span class="home-card-title">海外直播</span>
-                                    <span class="home-card-desc">查看 Meet48 直播</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('media', 'meet-vod')" style="display: none;">
-                                    <span class="home-card-title">海外回放</span>
-                                    <span class="home-card-desc">查看 Meet48 回放</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('room-radio')">
-                                    <span class="home-card-title">上麦</span>
-                                    <span class="home-card-desc">进入房间电台</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('bilibili-live')">
-                                    <span class="home-card-title">B站</span>
-                                    <span class="home-card-desc">进入 B 站直播播放</span>
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="home-panel home-panel-pocket">
-                            <div class="home-panel-title">口袋</div>
-                            <div class="home-panel-subtitle">口袋房间、私信列表、房间相册、公演记录、成员微博</div>
-                            <div class="home-panel-actions home-card-grid">
-                                <button class="home-card home-card-primary" onclick="switchView('followed-rooms')">
-                                    <span class="home-card-title">房间</span>
-                                    <span class="home-card-desc">查看聚聚与房间动态</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('private-messages')">
-                                    <span class="home-card-title">私信</span>
-                                    <span class="home-card-desc">查看口袋私信会话</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('room-album')">
-                                    <span class="home-card-title">相册</span>
-                                    <span class="home-card-desc">按房间查看图片</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('performance')">
-                                    <span class="home-card-title">公演</span>
-                                    <span class="home-card-desc">查看公演与成员记录</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('member-weibo')">
-                                    <span class="home-card-title">微博</span>
-                                    <span class="home-card-desc">查看成员微博动态</span>
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="home-panel home-panel-data">
-                            <div class="home-panel-title">数据</div>
-                            <div class="home-panel-subtitle">成员档案、成员行程、成员动态、鸡腿榜、48区</div>
-                            <div class="home-panel-actions home-card-grid">
-                                <button class="home-card" onclick="switchView('profile')">
-                                    <span class="home-card-title">档案</span>
-                                    <span class="home-card-desc">成员资料与细节</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('trip')">
-                                    <span class="home-card-title">行程</span>
-                                    <span class="home-card-desc">查看公演与活动安排</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('member-dynamic')">
-                                    <span class="home-card-title">动态</span>
-                                    <span class="home-card-desc">查看成员口袋动态</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('community')">
-                                    <span class="home-card-title">社区</span>
-                                    <span class="home-card-desc">查看广场动态</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('melee-rank')">
-                                    <span class="home-card-title">鸡腿榜</span>
-                                    <span class="home-card-desc">查询乱斗周榜</span>
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="home-panel home-panel-flip">
-                            <div class="home-panel-title">翻牌</div>
-                            <div class="home-panel-subtitle">翻牌、个人相册、云握手</div>
-                            <div class="home-panel-actions home-card-grid">
-                                <button class="home-card home-card-primary" onclick="switchView('send-flip')">
-                                    <span class="home-card-title">提问</span>
-                                    <span class="home-card-desc">进入翻牌发送入口</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('flip')">
-                                    <span class="home-card-title">历史</span>
-                                    <span class="home-card-desc">浏览历史翻牌内容</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('photos')">
-                                    <span class="home-card-title">个人相册</span>
-                                    <span class="home-card-desc">浏览成员照片</span>
-                                </button>
-                                <button id="home-netface" class="home-card" onclick="switchView('netface')">
-                                    <span class="home-card-title">云握手</span>
-                                    <span class="home-card-desc">预约排队，与成员音视频互动</span>
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="home-panel home-panel-library">
-                            <div class="home-panel-title">资源</div>
-                            <div class="home-panel-subtitle">视频、音乐、电台、数据库</div>
-                            <div class="home-panel-actions home-card-grid">
-                                <button class="home-card" onclick="switchView('video-library')">
-                                    <span class="home-card-title">视频</span>
-                                    <span class="home-card-desc">查看视频资源</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('official-site-music')">
-                                    <span class="home-card-title">音乐</span>
-                                    <span class="home-card-desc">官网音乐源</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('audio-programs')">
-                                    <span class="home-card-title">电台</span>
-                                    <span class="home-card-desc">播放音频节目</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('database')">
-                                    <span class="home-card-title">数据库</span>
-                                    <span class="home-card-desc">查看附属数据</span>
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="home-panel home-panel-settings">
-                            <div class="home-panel-title">通用</div>
-                            <div class="home-panel-subtitle">口袋账号、B站账号、开具发票、下载管理、软件相关设置</div>
-                            <div class="home-panel-actions home-card-grid">
-                                <button class="home-card" onclick="switchView('login')">
-                                    <span class="home-card-title">账号登录</span>
-                                    <span class="home-card-desc">登录与账号信息</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('invoice')">
-                                    <span class="home-card-title">开具发票</span>
-                                    <span class="home-card-desc">订单开票申请</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('downloads')">
-                                    <span class="home-card-title">下载管理</span>
-                                    <span class="home-card-desc">查看任务与进度</span>
-                                </button>
-                                <button class="home-card" onclick="switchView('settings')">
-                                    <span class="home-card-title">软件设置</span>
-                                    <span class="home-card-desc">调整程序行为</span>
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="home-panel home-panel-yk1z">
-                            <div id="home-yk1z-title" class="home-panel-title">牙口栗子</div>
-                            <div id="home-yk1z-subtitle" class="home-panel-subtitle">O.o？</div>
-                            <div id="home-yk1z-actions" class="home-panel-actions home-card-grid">
-                                <button class="home-card" data-yk1z-type="url" data-yk1z-value="https://push.gnz.hk"
-                                    data-yk1z-desc="牙牙推送" onclick="openInBrowser('https://push.gnz.hk')">
-                                    <span class="home-card-title">牙牙推送</span>
-                                    <span class="home-card-desc">牙牙推送</span>
-                                </button>
-                                <button class="home-card" data-yk1z-type="url" data-yk1z-value="https://zimu.gnz.hk"
-                                    data-yk1z-desc="牙牙字幕" onclick="openInBrowser('https://zimu.gnz.hk')">
-                                    <span class="home-card-title">牙牙字幕</span>
-                                    <span class="home-card-desc">牙牙字幕</span>
-                                </button>
-                                <button class="home-card" data-yk1z-type="url" data-yk1z-value="https://snh48.xyz"
-                                    data-yk1z-desc="所有房间" onclick="openInBrowser('https://snh48.xyz')">
-                                    <span class="home-card-title">Room</span>
-                                    <span class="home-card-desc">所有房间</span>
-                                </button>
-                                <button class="home-card" data-yk1z-type="url" data-yk1z-value="https://kh.gay"
-                                    data-yk1z-desc="kh" onclick="openInBrowser('https://kh.gay')">
-                                    <span class="home-card-title">看看烟花</span>
-                                    <span class="home-card-desc">kh</span>
-                                </button>
-                                <button class="home-card" data-yk1z-type="url"
-                                    data-yk1z-value="https://github.com/yk1z/yaya_msg" data-yk1z-desc="项目仓库"
-                                    onclick="openInBrowser('https://github.com/yk1z/yaya_msg')">
-                                    <span class="home-card-title">项目仓库</span>
-                                    <span class="home-card-desc">项目仓库</span>
-                                </button>
-                            </div>
-                        </div>
-                    </section>
-                    <div class="home-footer-credit">presented by yk1z</div>
-                </div>
-            </div>
-
-            <div id="view-followed-rooms" class="view-followed-rooms"
+            <div id="view-followed-rooms"
                 style="height: 100%; overflow: hidden; display: none; padding: 20px 40px; box-sizing: border-box;">
-                <div id="followed-rooms-card-container" class="followed-rooms-card-container"
+                <div
                     style="display: flex; height: 100%; gap: 0; background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); overflow: hidden;">
 
-                    <div id="followed-rooms-sidebar" class="followed-rooms-sidebar"
+                    <div
                         style="width: 280px; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--input-bg); flex-shrink: 0;">
                         <div
                             style="padding: 15px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: var(--sidebar-bg);">
                             <h2 style="margin: 0; color: var(--primary); font-size: 16px; line-height: 26px; transform: translateY(-1px);">聚聚</h2>
-                            <div class="followed-rooms-toolbar" style="display: flex; gap: 8px;">
+                            <div style="display: flex; gap: 8px;">
                                 <button id="btn-toggle-all-followed-notifications" type="button"
                                     class="followed-notification-all-toggle is-initializing"
                                     onclick="toggleAllFollowedRoomNotifications()" title="一键开启所有通知"
@@ -582,9 +413,11 @@
                                 </button>
                                 <div id="followed-sort-wrapper" style="position: relative; width: 105px;">
                                     <input type="hidden" id="followed-sort-value" value="default">
-                                    <input type="text" id="followed-sort-display" class="input-control" value="自定义排序"
-                                        readonly onclick="toggleFollowedSortDropdown()"
+                                    <button type="button" id="followed-sort-display" class="input-control followed-sort-trigger"
+                                        onclick="toggleFollowedSortDropdown()"
                                         style="cursor: pointer; height: 26px; font-size: 12px; padding: 0 20px 0 8px; text-align: left;">
+                                        <span class="followed-sort-label">自定义排序</span>
+                                    </button>
                                     <div
                                         style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-sub); font-size: 10px;">
                                         ▼
@@ -599,13 +432,6 @@
                                         </div>
                                     </div>
                                 </div>
-                                <button class="btn btn-secondary btn-refresh-icon" onclick="loadFollowedRooms()"
-                                    title="刷新" style="height: 26px; width: 26px; padding: 0; display: flex; align-items: center; justify-content: center;">
-                                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M23 4v6h-6"></path>
-                                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                                    </svg>
-                                </button>
                             </div>
                         </div>
                         <div style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
@@ -638,97 +464,77 @@
                         </div>
                     </div>
 
-                    <div class="followed-chat-pane">
+                    <div class="followed-chat-pane"
+                        style="flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); position: relative;">
 
-                        <div id="followed-chat-header" class="followed-chat-header">
+                        <div id="followed-chat-header"
+                            style="padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--sidebar-bg); display: flex; justify-content: space-between; align-items: center; visibility: hidden; flex-shrink: 0;">
 
-                            <div class="followed-chat-header-info">
+                            <div
+                                style="flex: 1; min-width: 0; margin-right: 15px; display: flex; align-items: center; gap: 12px;">
                                 <button type="button" class="followed-chat-mobile-back"
                                     onclick="backToFollowedRoomList(event)">‹ 聚聚</button>
-                                <button id="btn-toggle-followed-rooms-sidebar" type="button"
-                                    class="followed-notification-toggle followed-collapse-sidebar-button"
-                                    onclick="toggleFollowedRoomsSidebarCollapse()" title="折叠/展开房间列表"
-                                    aria-label="折叠/展开房间列表">
-                                    <svg class="followed-sidebar-toggle-icon" aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                                        <line x1="9" y1="3" x2="9" y2="21"></line>
-                                        <polyline points="14 9 11 12 14 15"></polyline>
-                                    </svg>
-                                </button>
-                                <img id="followed-chat-avatar" class="followed-chat-avatar" src="./icon.png" alt="成员头像">
+                                <img id="followed-chat-avatar" src="./icon.png" data-avatar-fallback
+                                    style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 1.5px solid var(--primary); display: block; flex: 0 0 40px; visibility: hidden; opacity: 0;">
 
-                                <div class="followed-chat-meta">
-                                    <div id="followed-chat-title" class="followed-chat-title">成员房间</div>
-                                    <div id="followed-chat-subtitle" class="followed-chat-subtitle" data-channel-id="--">Channel ID: --</div>
-                                </div>
-
-                                <div class="followed-chat-window-actions">
-                                    <button id="btn-popout-followed-room" type="button"
-                                        class="followed-notification-toggle followed-popout-button"
-                                        onclick="popoutActiveFollowedRoom()" title="在独立小窗口中打开"
-                                        aria-label="在独立小窗口中打开">
-                                        <svg class="followed-popout-icon" aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                                            <polyline points="15 3 21 3 21 9"></polyline>
-                                            <line x1="10" y1="14" x2="21" y2="3"></line>
-                                        </svg>
-                                    </button>
-
-                                    <!-- <button id="btn-close-followed-chat" type="button"
-                                        class="followed-notification-toggle followed-close-chat-button"
-                                        onclick="closeActiveFollowedChat()" title="收起房间"
-                                        aria-label="收起房间">
-                                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                                        </svg>
-                                    </button> -->
+                                <div style="flex: 1; min-width: 0;">
+                                    <div id="followed-chat-title"
+                                        style="font-weight: bold; font-size: 16px; line-height: 20px; min-height: 20px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                        成员房间</div>
+                                    <div id="followed-chat-subtitle" data-channel-id="--"
+                                        style="font-size: 11px; color: var(--text-sub); margin-top: 2px;">Channel ID: --
+                                    </div>
                                 </div>
                             </div>
 
-                            <div class="followed-chat-header-actions">
-                                <div class="followed-chat-icon-actions">
-                                    <button id="btn-open-followed-flip-question" type="button"
-                                        class="followed-notification-toggle followed-flip-question-button"
-                                        onclick="openActiveFollowedFlipQuestion()" title="向当前成员翻牌提问"
-                                        aria-label="向当前成员翻牌提问">
-                                        <svg class="followed-flip-question-icon" aria-hidden="true" viewBox="0 0 24 24">
-                                            <path d="M20 7.4A9 9 0 1 0 20 16.6L12 12Z" />
-                                            <circle cx="11" cy="7.5" r="1" />
-                                        </svg>
-                                    </button>
+                            <div class="followed-chat-header-actions"
+                                style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+                                <div class="followed-chat-icon-actions"
+                                    style="display: flex; gap: 10px; align-items: center;">
+                                <button id="btn-open-followed-flip-question" type="button"
+                                    class="followed-notification-toggle followed-flip-question-button"
+                                    onclick="openActiveFollowedFlipQuestion()" title="向当前成员翻牌提问"
+                                    aria-label="向当前成员翻牌提问">
+                                    <svg class="followed-flip-question-icon" aria-hidden="true" viewBox="0 0 24 24">
+                                        <path d="M20 7.4A9 9 0 1 0 20 16.6L12 12Z" />
+                                        <circle cx="11" cy="7.5" r="1" />
+                                    </svg>
+                                </button>
 
-                                    <button id="btn-open-followed-room-album" type="button"
-                                        class="followed-notification-toggle followed-room-album-button"
-                                        onclick="openActiveFollowedRoomAlbum()" title="打开当前房间相册"
-                                        aria-label="打开当前房间相册">
-                                        <svg class="followed-room-album-icon" aria-hidden="true" viewBox="0 0 24 24">
-                                            <rect x="3" y="5" width="18" height="14" rx="2" />
-                                            <circle cx="8.5" cy="10" r="1.5" />
-                                            <path d="M3 16l5-5 4 4 3-3 6 6" />
-                                        </svg>
-                                    </button>
+                                <button id="btn-open-followed-room-album" type="button"
+                                    class="followed-notification-toggle followed-room-album-button"
+                                    onclick="openActiveFollowedRoomAlbum()" title="打开当前房间相册"
+                                    aria-label="打开当前房间相册">
+                                    <svg class="followed-room-album-icon" aria-hidden="true" viewBox="0 0 24 24">
+                                        <rect x="3" y="5" width="18" height="14" rx="2" />
+                                        <circle cx="8.5" cy="10" r="1.5" />
+                                        <path d="M3 16l5-5 4 4 3-3 6 6" />
+                                    </svg>
+                                </button>
 
-                                    <button id="btn-toggle-followed-notification" type="button"
-                                        class="followed-notification-toggle" onclick="toggleActiveFollowedRoomNotification()"
-                                        title="开启通知" aria-label="开启通知" aria-pressed="false">
-                                        <svg class="followed-notification-icon" aria-hidden="true" viewBox="0 0 24 24">
-                                            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
-                                            <path class="followed-notification-slash" d="M4 4l16 16" />
-                                        </svg>
-                                    </button>
+                                <button id="btn-toggle-followed-notification" type="button"
+                                    class="followed-notification-toggle" onclick="toggleActiveFollowedRoomNotification()"
+                                    title="开启通知" aria-label="开启通知" aria-pressed="false">
+                                    <svg class="followed-notification-icon" aria-hidden="true" viewBox="0 0 24 24">
+                                        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+                                        <path class="followed-notification-slash" d="M4 4l16 16" />
+                                    </svg>
+                                </button>
                                 </div>
 
-                                <div class="followed-chat-mode-actions">
-                                    <button id="btn-toggle-room-type" class="btn btn-secondary"
-                                        onclick="toggleFollowedRoomType()">
-                                        大房间
-                                    </button>
+                                <div class="followed-chat-mode-actions"
+                                    style="display: flex; gap: 10px; align-items: center;">
+                                <button id="btn-toggle-room-type" class="btn btn-secondary"
+                                    onclick="toggleFollowedRoomType()"
+                                    style="height: 30px; padding: 0 10px; font-size: 12px; display: flex; justify-content: center; align-items: center; transition: all 0.2s;">
+                                    大房间
+                                </button>
 
-                                    <button id="btn-toggle-followed-mode" class="btn btn-secondary"
-                                        onclick="toggleFollowedChatMode()">
-                                        成员消息
-                                    </button>
+                                <button id="btn-toggle-followed-mode" class="btn btn-secondary"
+                                    onclick="toggleFollowedChatMode()"
+                                    style="height: 30px; width: 85px; padding: 0; font-size: 12px; display: flex; justify-content: center; align-items: center;">
+                                    成员消息
+                                </button>
                                 </div>
                             </div>
                         </div>
@@ -799,19 +605,18 @@
                         <span style="white-space: nowrap; font-weight: bold; font-size: 14px;">团体</span>
                         <div id="live-group-wrapper" style="position: relative; width: 120px;">
                             <input type="hidden" id="live-group-value" value="all">
-                            <input type="text" id="live-group-display" class="input-control" value="全部团体" readonly
-                                onclick="toggleLiveGroupDropdown()" style="cursor: pointer; padding-right: 20px;">
+                            <input type="text" id="live-group-display" class="input-control" value="全部团体" readonly style="cursor: pointer; padding-right: 20px;">
                             <div
                                 style="position: absolute; right: 10px; top: 10px; pointer-events: none; color: var(--text-sub); font-size: 12px;">
                                 ▼</div>
                             <div id="live-group-dropdown" class="suggestion-box">
-                                <div class="suggestion-item" onclick="selectLiveGroup('all', '全部')">全部团体</div>
-                                <div class="suggestion-item" onclick="selectLiveGroup('snh', 'SNH48')">SNH48</div>
-                                <div class="suggestion-item" onclick="selectLiveGroup('gnz', 'GNZ48')">GNZ48</div>
-                                <div class="suggestion-item" onclick="selectLiveGroup('bej', 'BEJ48')">BEJ48</div>
-                                <div class="suggestion-item" onclick="selectLiveGroup('ckg', 'CKG48')">CKG48</div>
-                                <div class="suggestion-item" onclick="selectLiveGroup('cgt', 'CGT48')">CGT48</div>
-                                <div class="suggestion-item" onclick="selectLiveGroup('idft', 'IDFT')">IDFT</div>
+                                <div class="suggestion-item" data-media-value="all" data-media-label="全部">全部团体</div>
+                                <div class="suggestion-item" data-media-value="snh" data-media-label="SNH48">SNH48</div>
+                                <div class="suggestion-item" data-media-value="gnz" data-media-label="GNZ48">GNZ48</div>
+                                <div class="suggestion-item" data-media-value="bej" data-media-label="BEJ48">BEJ48</div>
+                                <div class="suggestion-item" data-media-value="ckg" data-media-label="CKG48">CKG48</div>
+                                <div class="suggestion-item" data-media-value="cgt" data-media-label="CGT48">CGT48</div>
+                                <div class="suggestion-item" data-media-value="idft" data-media-label="IDFT">IDFT</div>
                             </div>
                         </div>
                     </div>
@@ -820,23 +625,22 @@
                         <span style="white-space: nowrap; font-weight: bold; font-size: 14px;">类型</span>
                         <div id="live-type-wrapper" style="position: relative; width: 100px;">
                             <input type="hidden" id="live-type-value" value="all">
-                            <input type="text" id="live-type-display" class="input-control" value="全部" readonly
-                                onclick="toggleLiveTypeDropdown()" style="cursor: pointer; padding-right: 20px;">
+                            <input type="text" id="live-type-display" class="input-control" value="全部" readonly style="cursor: pointer; padding-right: 20px;">
                             <div
                                 style="position: absolute; right: 10px; top: 10px; pointer-events: none; color: var(--text-sub); font-size: 12px;">
                                 ▼</div>
                             <div id="live-type-dropdown" class="suggestion-box">
-                                <div class="suggestion-item" onclick="selectLiveType('all', '全部')">全部</div>
-                                <div class="suggestion-item" onclick="selectLiveType('video', '视频')">视频</div>
-                                <div class="suggestion-item" onclick="selectLiveType('radio', '电台')">电台</div>
-                                <div class="suggestion-item" onclick="selectLiveType('record', '录屏')">录屏</div>
+                                <div class="suggestion-item" data-media-value="all" data-media-label="全部">全部</div>
+                                <div class="suggestion-item" data-media-value="video" data-media-label="视频">视频</div>
+                                <div class="suggestion-item" data-media-value="radio" data-media-label="电台">电台</div>
+                                <div class="suggestion-item" data-media-value="record" data-media-label="录屏">录屏</div>
                             </div>
                         </div>
                     </div>
 
                     <div style="flex: 1; min-width: 200px;">
                         <input type="text" id="live-search-input" class="input-control" style="width: 100%;"
-                            placeholder="成员名 / 拼音 / 房间标题" oninput="handleLiveFilter()">
+                            placeholder="成员名 / 拼音 / 房间标题">
                     </div>
 
                     <button id="btn-auto-live-record" class="btn btn-secondary web-hidden"
@@ -845,7 +649,7 @@
                         自动录制
                     </button>
 
-                    <button id="btn-live-refresh" class="btn btn-secondary" onclick="fetchLiveList()"
+                    <button id="btn-live-refresh" class="btn btn-secondary"
                         style="white-space: nowrap; padding: 0 15px; height: 38px;">
                         刷新列表
                     </button>
@@ -857,8 +661,7 @@
                         <div style="display: flex; align-items: center; gap: 8px;">
                             <span style="white-space: nowrap; font-weight: bold; font-size: 14px;">团体</span>
                             <div id="vod-group-wrapper" style="position: relative; width: 120px;">
-                                <input type="text" id="vod-group-display" class="input-control" value="全部团体" readonly
-                                    onclick="toggleVodGroupDropdown()" style="cursor: pointer;">
+                                <input type="text" id="vod-group-display" class="input-control" value="全部团体" readonly style="cursor: pointer;">
                                 <div
                                     style="position: absolute; right: 10px; top: 10px; pointer-events: none; color: var(--text-sub); font-size: 12px;">
                                     ▼</div>
@@ -870,30 +673,29 @@
                             <span style="white-space: nowrap; font-weight: bold; font-size: 14px;">类型</span>
                             <div id="vod-type-wrapper" style="position: relative; width: 100px;">
                                 <input type="hidden" id="vod-type-filter" value="0">
-                                <input type="text" id="vod-type-display" class="input-control" value="全部" readonly
-                                    onclick="toggleVodTypeDropdown()" style="cursor: pointer;">
+                                <input type="text" id="vod-type-display" class="input-control" value="全部" readonly style="cursor: pointer;">
                                 <div
                                     style="position: absolute; right: 10px; top: 10px; pointer-events: none; color: var(--text-sub); font-size: 12px;">
                                     ▼</div>
                                 <div id="vod-type-dropdown" class="suggestion-box">
-                                    <div class="suggestion-item" onclick="selectVodType('0', '全部')">全部</div>
-                                    <div class="suggestion-item" onclick="selectVodType('1', '视频')">视频</div>
-                                    <div class="suggestion-item" onclick="selectVodType('2', '电台')">电台</div>
-                                    <div class="suggestion-item" onclick="selectVodType('record', '录屏')">录屏</div>
+                                    <div class="suggestion-item" data-media-value="0" data-media-label="全部">全部</div>
+                                    <div class="suggestion-item" data-media-value="1" data-media-label="视频">视频</div>
+                                    <div class="suggestion-item" data-media-value="2" data-media-label="电台">电台</div>
+                                    <div class="suggestion-item" data-media-value="record" data-media-label="录屏">录屏</div>
                                 </div>
                             </div>
                         </div>
 
                         <div style="position: relative; flex: 1; min-width: 240px;">
                             <input type="text" id="vod-member-filter" class="input-control" style="width: 100%;"
-                                placeholder="成员名 / 日期" oninput="handleMemberFilter()" autocomplete="off">
+                                placeholder="成员名 / 日期" autocomplete="off">
                             <div id="member-suggestions" class="suggestion-box"></div>
                         </div>
 
-                        <button id="load-all-btn" class="btn btn-secondary" onclick="handleLoadAllVod()"
+                        <button id="load-all-btn" class="btn btn-secondary"
                             style="white-space: nowrap; padding: 0 15px; height: 38px;">加载全部</button>
 
-                        <button id="refresh-btn" class="btn btn-secondary" onclick="handleRefreshList()"
+                        <button id="refresh-btn" class="btn btn-secondary"
                             style="white-space: nowrap; padding: 0 15px; height: 38px;">刷新列表</button>
                     </div>
                 </div>
@@ -908,7 +710,7 @@
                 <div id="vod-pagination-controls" class="pagination-container" style="padding-bottom: 20px;"></div>
 
                 <div id="live-player-view" style="display: none; height: 100%; flex-direction: column; padding: 0;">
-                    <div
+                    <div class="live-player-info-card"
                         style="padding: 15px 20px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; margin: 0 20px 15px 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); transition: box-shadow 0.3s ease;">
                         <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
                             <div style="display: flex; gap: 40px; flex-wrap: wrap;">
@@ -1023,9 +825,9 @@
                                                     id="live-gift-balance"
                                                     style="color: var(--primary); font-weight: bold; margin: 0 4px;">--</span>
                                                 🍗</span>
-                                            <a href="https://live.48.cn/Recharge/" target="_blank"
+                                            <a class="recharge-link" href="https://live.48.cn/Recharge/" target="_blank"
                                                 onclick="event.stopPropagation();"
-                                                style="margin-left: 10px; font-size: 12px; color: #1890ff; text-decoration: none; cursor: pointer; font-weight: bold;">
+                                                style="margin-left: 10px; font-size: 12px; color: #1890ff; text-decoration: none; cursor: pointer;">
                                                 充值
                                             </a>
                                         </div>
@@ -1162,9 +964,13 @@
                                 style="padding: 10px 20px; cursor: pointer; color: var(--text-sub); border-bottom: 2px solid transparent; transition: all 0.2s;">
                                 Token 登录
                             </div>
+                            <div id="tab-social" onclick="switchLoginTab('social')" hidden
+                                style="padding: 10px 20px; cursor: pointer; color: var(--text-sub); border-bottom: 2px solid transparent; transition: all 0.2s;">
+                                第三方登录
+                            </div>
                         </div>
 
-                        <div id="login-forms-container" style="min-height: 200px;">
+                        <div id="login-forms-container">
                             <div id="form-sms">
                                 <div style="margin-bottom: 15px;">
                                     <label
@@ -1198,17 +1004,36 @@
                                     </div>
                                 </div>
 
-                                <div style="margin-bottom: 20px;">
-                                    <label
-                                        style="font-size: 13px; font-weight: bold; color: var(--text); display: block; margin-bottom: 8px;">
-                                        验证码
-                                    </label>
-                                    <input type="text" id="login-code" class="input-control" placeholder="请输入短信验证码"
-                                        maxlength="6">
+                                <div class="login-code-row">
+                                    <div class="login-code-field">
+                                        <label for="login-code" class="login-field-label">验证码</label>
+                                        <input type="text" id="login-code" class="input-control" placeholder="请输入短信验证码"
+                                            maxlength="6">
+                                    </div>
+                                    <div id="sms-login-client-profile-slot">
+                                        <div id="login-client-profile-field" class="login-client-profile-field">
+                                            <label for="login-client-profile-trigger" class="login-field-label">登录身份</label>
+                                            <div class="flip-default-dropdown-wrapper login-client-profile-picker" onkeydown="handleLoginClientProfileKey(event)">
+                                                <input type="hidden" id="login-client-profile" value="pocket48">
+                                                <button type="button" id="login-client-profile-trigger" class="input-control login-client-profile-trigger"
+                                                    role="combobox" aria-label="登录身份" aria-haspopup="listbox" aria-expanded="false"
+                                                    aria-controls="login-client-profile-dropdown" onclick="toggleLoginClientProfileDropdown()">
+                                                    <span id="login-client-profile-display">口袋48</span>
+                                                </button>
+                                                <span class="flip-default-dropdown-arrow" aria-hidden="true">▼</span>
+                                                <div id="login-client-profile-dropdown" class="suggestion-box" role="listbox" aria-label="登录身份">
+                                                    <button type="button" class="suggestion-item" role="option" data-profile="pocket48" aria-selected="true"
+                                                        tabindex="-1" onclick="selectLoginClientProfile('pocket48')">口袋48</button>
+                                                    <button type="button" class="suggestion-item" role="option" data-profile="seine48" aria-selected="false"
+                                                        tabindex="-1" onclick="selectLoginClientProfile('seine48')">塞纳河48</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                                <button class="btn btn-primary btn-full" onclick="handleLoginByCode()"
+                                <button id="btn-login-by-code" class="btn btn-primary btn-full" onclick="handleLoginByCode()"
                                     style="height: 40px; font-size: 15px;">
-                                    登 录
+                                    登录
                                 </button>
                             </div>
 
@@ -1254,31 +1079,45 @@
                             </div>
 
                             <div id="form-token" style="display: none;">
-                                <div style="margin-bottom: 15px;">
-                                    <p style="font-size: 13px; color: var(--text-sub); margin-bottom: 8px;">
-                                        如果您已通过抓包获取了 Token，可直接粘贴：
-                                    </p>
-                                    <textarea id="login-token" class="input-control"
-                                        style="height: 100px; resize: none; padding: 10px;"
-                                        placeholder="在此粘贴 Token"></textarea>
+                                <div class="login-code-row">
+                                    <div class="login-code-field">
+                                        <label for="login-token" class="login-field-label">Token</label>
+                                        <input type="text" id="login-token" class="input-control"
+                                            placeholder="在此粘贴 Token">
+                                    </div>
+                                    <div id="token-login-client-profile-slot"></div>
                                 </div>
-                                <button class="btn btn-primary btn-full" onclick="checkToken()"
+                                <button class="btn btn-primary btn-full" onclick="checkToken(true)"
                                     style="height: 40px; font-size: 15px;">
                                     保存并验证
                                 </button>
                             </div>
-                        </div>
 
-                        <div id="login-msg"
-                            style="margin-top:15px; text-align:center; color:#ff4d4f; font-size:13px; min-height: 20px;">
+                            <div id="form-social" style="display: none;">
+                                <div id="pocket-social-login" class="pocket-social-login" hidden>
+                                    <div class="pocket-social-login-head">
+                                        <span class="pocket-social-login-label">选择登录方式</span>
+                                        <div id="social-login-client-profile-slot"></div>
+                                    </div>
+                                    <div class="pocket-social-login-buttons">
+                                        <button type="button" class="btn btn-secondary" data-social-provider="baidu" onclick="handleThirdPartyLogin('baidu')">百度贴吧</button>
+                                        <button type="button" class="btn btn-secondary" data-social-provider="sigua" onclick="handleThirdPartyLogin('sigua')">丝瓜</button>
+                                        <button type="button" class="btn btn-secondary" data-social-provider="wechat" onclick="handleThirdPartyLogin('wechat')" aria-disabled="true" title="微信登录暂不可用，需要官方移动应用授权签名">微信<span class="social-login-unavailable">暂不可用</span></button>
+                                        <button type="button" class="btn btn-secondary" data-social-provider="qq" onclick="handleThirdPartyLogin('qq')">QQ</button>
+                                        <button type="button" class="btn btn-secondary" data-social-provider="weibo" onclick="handleThirdPartyLogin('weibo')">微博</button>
+                                        <button type="button" id="pocket-social-login-cancel" class="btn btn-secondary" onclick="window.YayaPocketSocialLoginUi.cancel()" hidden>取消登录</button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
+                        <div id="login-msg" class="account-login-message" role="status" aria-live="polite"></div>
 
                         <div class="sms-login-limit-help" role="note">
                             <span class="sms-login-limit-help-icon" aria-hidden="true">!</span>
                             <div>
-                                如提示“今日短信发送次数已超过上限，请明日再试”，说明网站服务器今日发送验证码已达上限。
-                                请<span id="sms-limit-download-links"><a href="/downloads">下载桌面端使用</a></span>，或<button type="button"
-                                    onclick="switchLoginTab('token')">使用 Token 登录</button>。
+                                登录不了就是服务器被48ban了，请<span id="sms-limit-download-links"><a
+                                    href="https://gnz.hk/downloads/yaya_msg-v3.3-win.exe?v=20261118-v3.3.1"
+                                    title="下载 Windows 版本" download><strong>下载桌面端使用</strong></a></span>。
                             </div>
                         </div>
                     </div>
@@ -1291,9 +1130,10 @@
                                 <div class="account-state-main">
                                     <div class="account-state-name-row">
                                         <span class="account-state-name" id="user-nickname">用户</span>
-                                        <span class="account-state-badge">已登录</span>
+                                        <span id="logged-in-client-profile" class="account-state-badge account-client-profile-badge"
+                                            data-client-profile="pocket48">口袋48</span>
                                     </div>
-                                    <div id="user-id-display" class="account-state-id">ID: --</div>
+                                    <div id="user-id-display" class="account-state-id">ID --</div>
                                 </div>
                             </div>
                             <div class="account-state-actions">
@@ -1303,7 +1143,7 @@
                                     </button>
                                     <button class="btn btn-secondary" onclick="logout()"
                                         style="height: 36px; padding: 0 16px; font-size: 13px;">
-                                        注销 / 更换账号
+                                        退出账号
                                     </button>
                             </div>
                         </div>
@@ -1354,7 +1194,7 @@
                                             </div>
                                             <div class="account-balance-line">
                                                 <span>余额：<b id="account-chicken-balance">--</b> 🍗</span>
-                                                <button type="button" class="account-recharge-btn"
+                                                <button type="button" class="account-recharge-btn recharge-link"
                                                     onclick="openInBrowser('https://live.48.cn/Recharge/')">
                                                     充值
                                                 </button>
@@ -1366,43 +1206,18 @@
                             </div>
                         </div>
 
-                        <div class="Box-row account-section-card account-checkin-panel">
-                            <div class="account-checkin-head">
-                                <div>
-                                    <div class="account-section-title">自动签到</div>
-                                    <div class="account-section-subtitle">打开软件自动签到</div>
-                                </div>
-                                <button class="btn btn-secondary" id="btn-manual-checkin" onclick="handleManualCheckIn()"
-                                    style="height: 36px; padding: 0 16px; font-size: 13px;">
-                                    立即签到
-                                </button>
-                            </div>
-                            <label class="account-checkin-toggle">
-                                    <input type="checkbox" id="auto-checkin-toggle" onchange="toggleAutoCheckin(this.checked)">
-                                    <span>开启自动签到</span>
-                                </label>
-                            <div id="auto-checkin-status" class="account-checkin-status">
-                                登录成功后会在打开软件时自动尝试签到
-                            </div>
-                        </div>
-
                     </div>
 
                     <div class="Box-row account-section-card">
-                        <div
-                            style="display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 15px;">
-                            <div style="min-width: 0;">
-                                <label style="display:block; font-weight:bold; color:var(--text);">B站登录</label>
-                                <span id="bilibili-login-status"
-                                    style="font-size: 12px; color: var(--text-sub);">正在读取登录状态...</span>
+                        <div class="bilibili-login-row">
+                            <div class="bilibili-login-copy">
+                                <div class="account-section-title">B站登录</div>
+                                <span id="bilibili-login-status" class="account-section-subtitle">正在读取登录状态...</span>
                             </div>
-                            <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end;">
-                                <button class="btn btn-secondary" id="btn-bilibili-login"
-                                    onclick="startBilibiliLogin()">登录账号</button>
-                                <button class="btn btn-secondary" id="btn-bilibili-refresh"
-                                    onclick="refreshBilibiliLoginStatus()">刷新状态</button>
-                                <button class="btn btn-secondary" id="btn-bilibili-logout"
-                                    onclick="logoutBilibili()" style="color: #ff4d4f; display: none;">退出登录</button>
+                            <div class="bilibili-login-actions">
+                                <button class="btn btn-secondary" id="btn-bilibili-login">登录账号</button>
+                                <button class="btn btn-secondary" id="btn-bilibili-refresh">刷新状态</button>
+                                <button class="btn btn-secondary" id="btn-bilibili-logout" style="color: #ff4d4f; display: none;">退出登录</button>
                             </div>
                         </div>
                         <div id="bilibili-login-panel"
@@ -1447,6 +1262,16 @@
                             目前 Meet48 播放接口需要已登录请求头。导入登录后的 HAR 或手动填写后只保存到本机设置文件，不会写进代码或上传云端。
                         </div>
                     </div>
+                    <section id="saved-pocket-accounts" class="Box-row account-section-card" hidden>
+                        <div class="account-section-head saved-pocket-accounts-head">
+                            <div class="saved-pocket-accounts-heading">
+                                <h3 class="account-section-title">其它账号</h3>
+                                <div class="account-section-subtitle">可直接切换登录过的口袋账号</div>
+                            </div>
+                            <span id="saved-pocket-account-status" role="status" hidden></span>
+                        </div>
+                        <div id="saved-pocket-account-list" class="saved-pocket-account-list"></div>
+                    </section>
                 </div>
             </div>
 
@@ -1497,17 +1322,15 @@
                         </div>
                     </div>
                     <div class="melee-rank-panel">
-                        <div class="melee-rank-toolbar">
+                        <div class="melee-rank-toolbar member-search-toolbar">
                             <div class="search-wrapper melee-rank-search-wrap">
-                                <label
-                                    style="font-size: 12px; color: var(--text-sub); display:block; margin-bottom:5px;">搜索成员</label>
                                 <input type="hidden" id="melee-rank-member-id">
                                 <input type="text" id="melee-rank-member-input" class="input-control"
-                                    placeholder="请输入成员名" oninput="handleMeleeRankMemberInput(this.value)"
+                                    placeholder="请输入成员名" aria-label="成员名" oninput="handleMeleeRankMemberInput(this.value)"
                                     onfocus="handleMeleeRankMemberInput(this.value)">
                                 <div id="melee-rank-suggestions" class="suggestion-box melee-rank-suggestions"></div>
                             </div>
-                            <div class="melee-rank-actions">
+                            <div class="melee-rank-actions member-search-actions">
                                 <button class="btn btn-primary" id="btn-query-melee-rank"
                                     onclick="queryMeleeRankCurrentMode()">查询</button>
                                 <button class="btn btn-secondary melee-rank-mode-btn active" id="btn-query-person-melee-rank"
@@ -1727,109 +1550,16 @@
                         <h2 class="page-title">抓取消息</h2>
                     </div>
 
-                    <div class="Box-row">
-                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; align-items:end; margin-bottom:15px;">
-                            <div class="search-wrapper" style="margin-bottom: 0; min-width: 0;">
-                                <label
-                                    style="font-size: 12px; color: var(--text-sub); display:block; margin-bottom:5px;">搜索成员</label>
-                                <input type="text" id="member-search" class="input-control" placeholder="请输入成员名"
-                                    oninput="handleSearch(this.value)" onfocus="handleSearch(this.value)">
-                                <div id="search-results" class="suggestion-box"></div>
-                            </div>
-                            <span id="fetch-status" class="page-status"
-                                style="height:40px; display:flex; align-items:center; min-width:0; white-space:normal; padding:0 2px;"></span>
-                        </div>
-
-                        <div
-                            style="margin-bottom: 15px; padding: 10px; background: rgba(0,0,0,0.03); border-radius: 6px; border: 1px dashed var(--border);">
-                            <div style="font-size: 12px; color: var(--text-sub); margin-bottom: 8px;">房间参数</div>
-                            <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 106px; gap: 10px; align-items: flex-start;">
-                                <div style="min-width: 0; display: flex; flex-direction: column;">
-                                    <label
-                                        style="font-size: 11px; line-height: 16px; min-height: 16px; color: var(--text-sub); display:block; margin-bottom: 4px;">Server
-                                        ID</label>
-                                    <input type="text" id="tool-server" class="input-control" placeholder="Server ID">
-                                </div>
-                                <div style="min-width: 0; display: flex; flex-direction: column;">
-                                    <label id="tool-channel-label"
-                                        style="font-size: 11px; line-height: 16px; min-height: 16px; color: var(--text-sub); display:block; margin-bottom: 4px;">大房间 Channel
-                                        ID</label>
-                                    <input type="text" id="tool-channel" class="input-control" placeholder="大房间 Channel ID">
-                                </div>
-                                <div style="display: flex; flex-direction: column;">
-                                    <label
-                                        style="font-size: 11px; line-height: 16px; min-height: 16px; color: transparent; display:block; margin-bottom: 4px; user-select: none;">切换</label>
-                                    <button id="btn-toggle-fetch-room-type" class="btn btn-secondary"
-                                        onclick="toggleFetchRoomType()"
-                                        style="width: 100%; height: 40px; padding: 0 10px; font-size: 11px;">
-                                        大房间
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div style="margin-bottom: 15px; display: flex; flex-direction: column; gap: 10px;">
-                                    <div class="btn-grid" style="grid-template-columns: 1fr 1fr;">
-                                        <button class="btn btn-primary" onclick="fetchMsgs()"
-                                            id="btn-fetch-one">抓取最新</button>
-                                        <button class="btn btn-secondary" onclick="fetchAllMsgs()"
-                                            id="btn-fetch-all">加载全部</button>
-                                    </div>
-                                    <div class="btn-grid" style="grid-template-columns: 1fr 1fr;">
-                                        <button id="btn-toggle-mode" class="btn btn-secondary"
-                                            onclick="toggleFetchMode()">模式：只看成员</button>
-                                        <button id="btn-clear-fetch-boundary" class="btn btn-secondary"
-                                            onclick="clearFetchBoundary()">清除上次抓取位置</button>
-                                    </div>
-                                    <button class="btn btn-secondary btn-full" onclick="exportMsgsToJsonl()"
-                                        id="btn-export-jsonl" disabled>导出至消息检索</button>
-                                </div>
-
-                                <div id="msg-result"
-                                    style="margin-top: 15px; height: 300px; overflow-y: auto; background: var(--input-bg); border-radius: 6px; padding: 10px; font-size: 13px; border: 1px solid var(--border);">
-                                    <div style="color: var(--text-sub); text-align: center; margin-top: 50px;">
-                                        暂无消息<br>
-                                        <span style="font-size:12px; opacity:0.7">(请先选择成员并点击抓取)</span>
-                                    </div>
-                                </div>
-                    </div>
-
                     <div class="Box-row auto-fetch-card">
                         <section class="auto-fetch-panel" aria-labelledby="auto-fetch-title">
                             <div class="auto-fetch-panel-header">
-                                <div>
-                                    <div id="auto-fetch-title" class="auto-fetch-title">自动抓取</div>
-                                </div>
-                            </div>
-
-                            <div class="auto-fetch-mode-grid">
-                                <label class="auto-fetch-mode-option">
-                                    <span class="auto-fetch-mode-copy">
-                                        <strong>自动抓取</strong>
-                                        <small>登录状态下，每次打开软件自动执行一次</small>
-                                    </span>
-                                    <span class="auto-fetch-switch">
-                                        <input id="auto-fetch-startup-toggle" type="checkbox"
-                                            onchange="setStartupAutoMessageFetchEnabled(this.checked)">
-                                        <span>启用</span>
-                                    </span>
-                                </label>
-                                <label class="auto-fetch-mode-option">
-                                    <span class="auto-fetch-mode-copy">
-                                        <strong>定时抓取</strong>
-                                        <small>软件运行期间，按照设定间隔持续检查新消息</small>
-                                    </span>
-                                    <span class="auto-fetch-switch">
-                                        <input id="auto-fetch-schedule-toggle" type="checkbox"
-                                            onchange="setScheduledAutoMessageFetchEnabled(this.checked)">
-                                        <span>启用</span>
-                                    </span>
-                                </label>
+                                <h3 id="auto-fetch-title" class="fetch-section-title">自动抓取</h3>
+                                <div id="auto-fetch-status" class="auto-fetch-status" role="status">尚未添加自动抓取成员</div>
                             </div>
 
                             <div class="auto-fetch-controls">
                                 <div class="search-wrapper auto-fetch-member-search">
-                                    <label for="auto-fetch-member-input">抓取成员</label>
+                                    <label for="auto-fetch-member-input">搜索成员</label>
                                     <input id="auto-fetch-member-input" type="text" class="input-control"
                                         placeholder="搜索并选择成员"
                                         oninput="handleAutoFetchMemberSearch(this.value)"
@@ -1889,12 +1619,65 @@
                                         </div>
                                     </div>
                                 </div>
+                                <button id="btn-save-auto-fetch" type="button" class="btn btn-primary auto-fetch-save"
+                                    onclick="saveAutoMessageFetchSettings()" disabled>保存</button>
                             </div>
 
-                            <div id="auto-fetch-member-list" class="auto-fetch-member-list"></div>
-                            <div id="auto-fetch-status" class="auto-fetch-status">尚未添加自动抓取成员</div>
+                            <ul id="auto-fetch-member-list" class="auto-fetch-member-list" aria-label="已选抓取成员"></ul>
                         </section>
                     </div>
+
+                    <section class="Box-row manual-fetch-card" aria-labelledby="manual-fetch-title">
+                        <div class="manual-fetch-header">
+                            <h3 id="manual-fetch-title" class="fetch-section-title">手动抓取</h3>
+                            <span id="fetch-status" class="page-status"></span>
+                        </div>
+                        <div class="manual-fetch-search">
+                            <div class="search-wrapper">
+                                <label for="member-search">搜索成员</label>
+                                <input type="text" id="member-search" class="input-control" placeholder="搜索并选择成员"
+                                    oninput="handleSearch(this.value)" onfocus="handleSearch(this.value)">
+                                <div id="search-results" class="suggestion-box"></div>
+                            </div>
+                            <div class="manual-fetch-room-controls">
+                                <div>
+                                    <label for="tool-server">Server ID</label>
+                                    <input type="text" id="tool-server" class="input-control" placeholder="Server ID">
+                                </div>
+                                <div>
+                                    <label id="tool-channel-label" for="tool-channel">大房间 Channel ID</label>
+                                    <input type="text" id="tool-channel" class="input-control" placeholder="大房间 Channel ID">
+                                </div>
+                                <button id="btn-toggle-fetch-room-type" class="btn btn-secondary"
+                                    onclick="toggleFetchRoomType()">大房间</button>
+                            </div>
+                        </div>
+
+                        <div style="margin-bottom: 15px; display: flex; flex-direction: column; gap: 10px;">
+                                    <div class="btn-grid" style="grid-template-columns: 1fr 1fr;">
+                                        <button class="btn btn-primary" onclick="fetchMsgs()"
+                                            id="btn-fetch-one">抓取最新</button>
+                                        <button class="btn btn-secondary" onclick="fetchAllMsgs()"
+                                            id="btn-fetch-all">加载全部</button>
+                                    </div>
+                                    <div class="btn-grid" style="grid-template-columns: 1fr 1fr;">
+                                        <button id="btn-toggle-mode" class="btn btn-secondary"
+                                            onclick="toggleFetchMode()">模式：只看成员</button>
+                                        <button id="btn-clear-fetch-boundary" class="btn btn-secondary"
+                                            onclick="clearFetchBoundary()">清除上次抓取位置</button>
+                                    </div>
+                                    <button class="btn btn-secondary btn-full" onclick="exportMsgsToJsonl()"
+                                        id="btn-export-jsonl" disabled>导出至消息检索</button>
+                                </div>
+
+                                <div id="msg-result"
+                                    style="margin-top: 15px; height: 300px; overflow-y: auto; background: var(--input-bg); border-radius: 6px; padding: 10px; font-size: 13px; border: 1px solid var(--border);">
+                                    <div style="color: var(--text-sub); text-align: center; margin-top: 50px;">
+                                        暂无消息<br>
+                                        <span style="font-size:12px; opacity:0.7">(请先选择成员并点击抓取)</span>
+                                    </div>
+                                </div>
+                    </section>
                 </div>
             </div>
 
@@ -1926,7 +1709,7 @@
                             <div style="display:flex; align-items:center; gap:12px; min-width:0;">
                                 <button type="button" class="private-message-mobile-back"
                                     onclick="backToPrivateMessageList(event)">‹ 私信</button>
-                                <img id="private-message-detail-avatar" class="private-message-avatar" src="./icon.png"
+                                <img id="private-message-detail-avatar" class="private-message-avatar" src="./icon.png" data-avatar-fallback
                                     style="width:40px;height:40px;">
                                 <div style="min-width:0;">
                                     <div id="private-message-detail-title"
@@ -2033,10 +1816,10 @@
 
                     <div class="bilibili-live-room-strip" id="bilibili-live-room-strip"></div>
 
-                    <div id="bilibili-live-meta" class="bilibili-live-now-playing" style="visibility:hidden;">
+                    <div id="bilibili-live-meta" class="bilibili-live-now-playing">
                         <div class="bilibili-live-now-text">
-                            <div id="bilibili-live-title" class="bilibili-live-now-title"></div>
-                            <div id="bilibili-live-up" class="bilibili-live-now-subtitle"></div>
+                            <div id="bilibili-live-title" class="bilibili-live-now-title">直播信息</div>
+                            <div id="bilibili-live-up" class="bilibili-live-now-subtitle">正在加载直播信息…</div>
                         </div>
                         <div id="bilibili-live-room-meta" class="bilibili-live-now-meta"></div>
                     </div>
@@ -2285,9 +2068,9 @@
                                 style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px;">
                             </div>
 
-                            <div id="video-list-grid" style="display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-            gap: 15px;
+                            <div id="video-list-grid" style="display: grid; 
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); 
+            gap: 15px; 
             padding-bottom: 40px;
             align-content: start;">
                             </div>
@@ -2333,12 +2116,12 @@
                                     </div>
                                 </div>
 
-                                <div id="music-list-grid" style="width: 100%;
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-            gap: 15px;
-            padding-bottom: 20px;
-            min-height: 500px;
+                                <div id="music-list-grid" style="width: 100%; 
+            display: grid; 
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); 
+            gap: 15px; 
+            padding-bottom: 20px; 
+            min-height: 500px; 
             align-content: start;"> </div>
                             </div>
                         </div>
@@ -2745,7 +2528,7 @@
                                                 style="font-size: 18px; font-weight: bold; color: var(--primary); margin: 0 2px; line-height: 1;">0</span>
                                             <span style="font-size: 16px; line-height: 1;">🍗</span>
 
-                                            <a href="https://live.48.cn/Recharge/" target="_blank"
+                                            <a class="recharge-link" href="https://live.48.cn/Recharge/" target="_blank"
                                                 style="margin-left: 10px; font-size: 12px; color: #1890ff; text-decoration: none; cursor: pointer;">
                                                 充值
                                             </a>
@@ -2853,17 +2636,15 @@
                                 <span id="member-weibo-status" style="display: none;"></span>
                             </div>
 
-                            <div class="Box-row" style="z-index: 100; position: relative;">
+                            <div class="Box-row member-search-toolbar" style="z-index: 100; position: relative;">
                                 <div class="search-wrapper">
-                                    <label
-                                        style="font-size: 12px; color: var(--text-sub); display:block; margin-bottom:5px;">搜索成员</label>
                                     <input type="hidden" id="member-weibo-member-id">
                                     <input type="text" id="member-weibo-member-input" class="input-control"
-                                        placeholder="请输入成员名" oninput="handleMemberWeiboSearch(this.value)"
+                                        placeholder="请输入成员名" aria-label="成员名" oninput="handleMemberWeiboSearch(this.value)"
                                         onfocus="handleMemberWeiboSearch(this.value)">
                                     <div id="member-weibo-search-results" class="suggestion-box"></div>
                                 </div>
-                                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                                <div class="member-search-actions" style="display: flex; gap: 10px; margin-top: 10px;">
                                     <button id="btn-member-weibo-query" class="btn btn-primary" style="flex: 1;"
                                         onclick="fetchMemberWeibo(false)">查询最新</button>
                                     <button id="btn-member-weibo-all" class="btn btn-secondary" style="flex: 1;"
@@ -2882,17 +2663,15 @@
                                 <h2 class="page-title">成员动态</h2>
                             </div>
 
-                            <div class="Box-row" style="z-index: 100; position: relative;">
+                            <div class="Box-row member-search-toolbar" style="z-index: 100; position: relative;">
                                 <div class="search-wrapper">
-                                    <label
-                                        style="font-size: 12px; color: var(--text-sub); display:block; margin-bottom:5px;">搜索成员</label>
                                     <input type="hidden" id="member-dynamic-member-id">
                                     <input type="text" id="member-dynamic-member-input" class="input-control"
-                                        placeholder="请输入成员名" oninput="handleMemberDynamicSearch(this.value)"
+                                        placeholder="请输入成员名" aria-label="成员名" oninput="handleMemberDynamicSearch(this.value)"
                                         onfocus="handleMemberDynamicSearch(this.value)">
                                     <div id="member-dynamic-search-results" class="suggestion-box"></div>
                                 </div>
-                                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                                <div class="member-search-actions" style="display: flex; gap: 10px; margin-top: 10px;">
                                     <button id="btn-member-dynamic-query" class="btn btn-primary" style="flex: 1;"
                                         onclick="fetchMemberDynamic()">查询</button>
                                 </div>
@@ -2909,17 +2688,15 @@
                                 <h2 class="page-title">成员行程</h2>
                             </div>
 
-                            <div class="Box-row" style="z-index: 100; position: relative;">
+                            <div class="Box-row member-search-toolbar" style="z-index: 100; position: relative;">
                                 <div class="search-wrapper">
-                                    <label
-                                        style="font-size: 12px; color: var(--text-sub); display:block; margin-bottom:5px;">搜索成员（可选）</label>
                                     <input type="hidden" id="trip-member-id">
                                     <input type="text" id="trip-member-input" class="input-control"
-                                        placeholder="留空查看全部行程" oninput="handleTripSearch(this.value)"
+                                        placeholder="留空查看全部行程" aria-label="成员名，可留空查看全部行程" oninput="handleTripSearch(this.value)"
                                         onfocus="handleTripSearch(this.value)">
                                     <div id="trip-search-results" class="suggestion-box"></div>
                                 </div>
-                                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                                <div class="member-search-actions" style="display: flex; gap: 10px; margin-top: 10px;">
                                     <button id="btn-trip-query" class="btn btn-primary" style="flex: 1;"
                                         onclick="fetchTripList()">查询</button>
                                 </div>
@@ -2937,12 +2714,10 @@
                                 <span id="photos-status" style="display: none;"></span>
                             </div>
 
-                            <div class="Box-row" style="z-index: 100; position: relative;">
+                            <div class="Box-row photos-search-toolbar" style="z-index: 100; position: relative;">
                                 <div class="search-wrapper">
-                                    <label
-                                        style="font-size: 12px; color: var(--text-sub); display:block; margin-bottom:5px;">搜索成员</label>
                                     <input type="text" id="photo-member-input" class="input-control"
-                                        placeholder="请输入成员名" oninput="handlePhotoSearch(this.value)"
+                                        placeholder="请输入成员名" aria-label="成员名" oninput="handlePhotoSearch(this.value)"
                                         onfocus="handlePhotoSearch(this.value)">
                                     <input type="hidden" id="photo-member-id">
                                     <div id="photo-search-results" class="suggestion-box"></div>
@@ -2964,18 +2739,16 @@
                                 <h2 class="page-title">成员档案</h2>
                             </div>
 
-                            <div class="Box-row" style="z-index: 100; position: relative;">
+                            <div class="Box-row member-search-toolbar" style="z-index: 100; position: relative;">
                                 <div class="search-wrapper">
-                                    <label
-                                        style="font-size: 12px; color: var(--text-sub); display:block; margin-bottom:5px;">搜索成员</label>
                                     <input type="text" id="profile-member-input" class="input-control"
-                                        placeholder="请输入成员名" oninput="handleProfileSearch(this.value)"
+                                        placeholder="请输入成员名" aria-label="成员名" oninput="handleProfileSearch(this.value)"
                                         onfocus="handleProfileSearch(this.value)">
                                     <input type="hidden" id="profile-member-id">
                                     <div id="profile-search-results" class="suggestion-box"></div>
                                 </div>
                                 <button class="btn btn-primary" onclick="loadStarProfile()"
-                                    style="width: 100%;">获取档案</button>
+                                    style="width: 100%;">查询</button>
                             </div>
 
                             <div id="profile-result-container" style="margin-top: 20px;"></div>
@@ -3135,8 +2908,8 @@
                                         <span style="font-size: 12px; color: var(--text-sub);">设置一张喜欢的图片作为软件背景</span>
                                     </div>
                                     <div style="display: flex; gap: 10px;">
-                                        <button class="btn btn-secondary" onclick="triggerBgInput()">选择图片</button>
-                                        <button class="btn btn-secondary" onclick="resetBackground()"
+                                        <button class="btn btn-secondary" id="btn-choose-background">选择图片</button>
+                                        <button class="btn btn-secondary" id="btn-reset-background"
                                             style="color: #ff4d4f;">恢复默认</button>
                                     </div>
                                 </div>
@@ -3151,8 +2924,7 @@
                                         </div>
                                     </div>
                                     <label class="custom-sender-profile-toggle">
-                                        <input type="checkbox" id="custom-sender-profile-enabled"
-                                            onchange="toggleCustomSenderProfileControls()">
+                                        <input type="checkbox" id="custom-sender-profile-enabled">
                                         <span>启用</span>
                                     </label>
                                 </div>
@@ -3278,8 +3050,8 @@
 
                                 </div>
                                 <div class="custom-sender-profile-actions">
-                                    <button class="btn btn-primary" onclick="saveCustomSenderProfileSetting()">保存发送资料</button>
-                                    <button class="btn btn-secondary" onclick="resetCustomSenderProfileSetting()">恢复账号资料</button>
+                                    <button class="btn btn-primary" id="btn-save-sender-profile">保存发送资料</button>
+                                    <button class="btn btn-secondary" id="btn-reset-sender-profile">恢复账号资料</button>
                                 </div>
                                 <div class="custom-sender-profile-note">
                                     留空使用账号资料或软件默认值；月卡徽章用于成员房间和直播，sessionRole、榜单标记和客户端信息用于直播。保存后对下一条消息生效。
@@ -3293,9 +3065,9 @@
                                     <label>直播</label>
                                     <div class="download-path-controls">
                                         <input type="text" id="path-live" class="input-control"
-                                            placeholder="默认路径 (未设置)" onchange="saveCustomPaths()">
+                                            placeholder="默认路径 (未设置)">
                                         <button class="btn btn-secondary"
-                                            onclick="triggerSelectPath('path-live')">选择文件夹</button>
+                                            data-settings-path="path-live">选择文件夹</button>
                                     </div>
                                 </div>
 
@@ -3303,29 +3075,27 @@
                                     <label>回放</label>
                                     <div class="download-path-controls">
                                         <input type="text" id="path-video" class="input-control"
-                                            placeholder="默认路径 (未设置)" onchange="saveCustomPaths()">
+                                            placeholder="默认路径 (未设置)">
                                         <button class="btn btn-secondary"
-                                            onclick="triggerSelectPath('path-video')">选择文件夹</button>
+                                            data-settings-path="path-video">选择文件夹</button>
                                     </div>
                                 </div>
 
                                 <div class="download-path-row">
                                     <label>上麦</label>
                                     <div class="download-path-controls">
-                                        <input type="text" id="path-room-radio" class="input-control" placeholder="默认路径 (未设置)"
-                                            onchange="saveCustomPaths()">
+                                        <input type="text" id="path-room-radio" class="input-control" placeholder="默认路径 (未设置)">
                                         <button class="btn btn-secondary"
-                                            onclick="triggerSelectPath('path-room-radio')">选择文件夹</button>
+                                            data-settings-path="path-room-radio">选择文件夹</button>
                                     </div>
                                 </div>
 
                                 <div class="download-path-row">
                                     <label>切片</label>
                                     <div class="download-path-controls">
-                                        <input type="text" id="path-clip" class="input-control" placeholder="默认路径 (未设置)"
-                                            onchange="saveCustomPaths()">
+                                        <input type="text" id="path-clip" class="input-control" placeholder="默认路径 (未设置)">
                                         <button class="btn btn-secondary"
-                                            onclick="triggerSelectPath('path-clip')">选择文件夹</button>
+                                            data-settings-path="path-clip">选择文件夹</button>
                                     </div>
                                 </div>
 
@@ -3333,9 +3103,9 @@
                                     <label>弹幕</label>
                                     <div class="download-path-controls">
                                         <input type="text" id="path-danmu" class="input-control"
-                                            placeholder="默认路径 (未设置)" onchange="saveCustomPaths()">
+                                            placeholder="默认路径 (未设置)">
                                         <button class="btn btn-secondary"
-                                            onclick="triggerSelectPath('path-danmu')">选择文件夹</button>
+                                            data-settings-path="path-danmu">选择文件夹</button>
                                     </div>
                                 </div>
 
@@ -3343,19 +3113,18 @@
                                     <label>相册</label>
                                     <div class="download-path-controls">
                                         <input type="text" id="path-media" class="input-control"
-                                            placeholder="默认路径 (未设置)" onchange="saveCustomPaths()">
+                                            placeholder="默认路径 (未设置)">
                                         <button class="btn btn-secondary"
-                                            onclick="triggerSelectPath('path-media')">选择文件夹</button>
+                                            data-settings-path="path-media">选择文件夹</button>
                                     </div>
                                 </div>
 
                                 <div class="download-path-row">
                                     <label>翻牌</label>
                                     <div class="download-path-controls">
-                                        <input type="text" id="path-flip" class="input-control" placeholder="默认路径 (未设置)"
-                                            onchange="saveCustomPaths()">
+                                        <input type="text" id="path-flip" class="input-control" placeholder="默认路径 (未设置)">
                                         <button class="btn btn-secondary"
-                                            onclick="triggerSelectPath('path-flip')">选择文件夹</button>
+                                            data-settings-path="path-flip">选择文件夹</button>
                                     </div>
                                 </div>
                             </div>
@@ -3406,6 +3175,15 @@
                                     </div>
                                 </div>
                             </div>
+                            <div id="auto-checkin-settings-card" class="Box-row">
+                                <label id="auto-checkin-setting" class="account-checkin-toggle">
+                                    <span>
+                                        <strong>自动签到</strong>
+                                        <span id="auto-checkin-status" class="account-checkin-status" role="status"></span>
+                                    </span>
+                                    <input type="checkbox" id="auto-checkin-toggle" aria-label="自动签到" checked onchange="toggleAutoCheckin(this.checked)">
+                                </label>
+                            </div>
                             <div class="Box-row" style="margin-bottom: 30px;">
                                 <h3 style="margin-top: 0; color: var(--text);">代理设置</h3>
 
@@ -3417,7 +3195,7 @@
                                         <span style="font-size: 12px; color: var(--text-sub);">海外网络无法直连口袋48接口时，通过 api.gnz.hk 代为请求</span>
                                     </div>
                                     <label style="display: inline-flex; align-items: center; gap: 10px; color: var(--text); white-space: nowrap; font-size: 16px; line-height: 1;">
-                                        <input type="checkbox" id="use-yaya-api-proxy" onchange="saveYayaApiProxySetting()" style="width: 16px; height: 16px; margin: 0; transform: translateY(1px);">
+                                        <input type="checkbox" id="use-yaya-api-proxy" style="width: 16px; height: 16px; margin: 0; transform: translateY(1px);">
                                         <span>使用 yaya-api 代理</span>
                                     </label>
                                 </div>
@@ -3427,13 +3205,11 @@
                                     <h3 class="window-close-settings-label">关闭软件</h3>
                                     <div id="window-close-behavior" class="window-close-behavior-options">
                                         <label class="window-close-behavior-option">
-                                            <input type="radio" name="window-close-behavior" value="minimize-to-tray"
-                                                onchange="saveWindowCloseBehaviorSetting()">
+                                            <input type="radio" name="window-close-behavior" value="minimize-to-tray">
                                             <span>最小化到托盘</span>
                                         </label>
                                         <label class="window-close-behavior-option">
-                                            <input type="radio" name="window-close-behavior" value="quit"
-                                                onchange="saveWindowCloseBehaviorSetting()">
+                                            <input type="radio" name="window-close-behavior" value="quit">
                                             <span>退出软件</span>
                                         </label>
                                     </div>
@@ -3719,57 +3495,24 @@
             </div>
         </div>
     </div>
-    <script src="./src/common/sender-profile.js"></script>
+    <script src="./src/common/gift-pricing.js"></script>
+    <script src="./src/common/gift-prices.snapshot.js"></script>
     <script src="./src/renderer/bootstrap-shared.js"></script>
+    <script src="./src/renderer/vendor/renderer-entry.js?v=__YAYA_BUILD_VERSION__"></script>
     <script src="./src/renderer/database-embed.js"></script>
-    <script src="./src/renderer/theme-feature.js"></script>
-    <script src="./src/renderer/yk1z-home-feature.js"></script>
-    <script src="./src/renderer/bilibili-live-feature.js"></script>
-    <script src="./src/renderer/music-lyrics-feature.js"></script>
-    <script src="./src/renderer/official-media-feature.js"></script>
-    <script src="./src/renderer/official-site-music-feature.js"></script>
-    <script src="./src/renderer/openlive-feature.js"></script>
-    <script src="./src/renderer/performance-feature.js"></script>
-    <script src="./src/renderer/media-utils-feature.js"></script>
-    <script src="./src/renderer/community-feature.js"></script>
-    <script src="./src/renderer/member-lookup-feature.js"></script>
-    <script src="./src/renderer/member-photos-feature.js"></script>
-    <script src="./src/renderer/profile-feature.js"></script>
-    <script src="./src/renderer/room-album-feature.js"></script>
-    <script src="./src/renderer/member-dynamic-feature.js"></script>
-    <script src="./src/renderer/member-weibo-feature.js"></script>
-    <script src="./src/renderer/trip-feature.js"></script>
-    <script src="./src/renderer/room-radio-feature.js"></script>
-    <script src="./src/renderer/live-danmu-virtual-list.js"></script>
-    <script src="./src/renderer/desktop-live-gift-animation.js"></script>
-    <script src="./src/renderer/nim-chatroom-feature.js"></script>
-    <script src="./src/renderer/danmu-timeline-feature.js"></script>
-    <script src="./src/renderer/analysis-feature.js"></script>
-    <script src="./src/renderer/flip-analysis-feature.js"></script>
-    <script src="./src/renderer/melee-rank-feature.js"></script>
-    <script src="./src/renderer/flip-feature.js"></script>
-    <script src="./src/renderer/live-gift-feature.js"></script>
-    <script src="./src/renderer/live-tools-feature.js"></script>
-    <script src="./src/renderer/replay-download-feature.js"></script>
-    <script src="./src/renderer/player-core-feature.js"></script>
-    <script src="./src/renderer/custom-media-player-feature.js"></script>
-    <script src="./src/renderer/followed-rooms-feature.js"></script>
-    <script src="./src/renderer/member-room-gift-feature.js"></script>
-    <script src="./src/renderer/member-room-gift-effects.js"></script>
-    <script src="./src/renderer/member-room-realtime.js"></script>
-    <script src="./src/renderer/followed-chat-feature.js"></script>
-    <script src="./src/renderer/room-popup-feature.js"></script>
-    <script src="./src/renderer/announcement-feature.js"></script>
-    <script src="./src/renderer/avatar-cache-feature.js"></script>
-    <script src="./src/renderer/private-message-formatters-feature.js"></script>
-    <script src="./src/renderer/private-messages-feature.js"></script>
     <script src="./src/renderer/app-legacy.js"></script>
+    <script src="./src/renderer/desktop-cloud-home-feature.js"></script>
+    <script src="./src/renderer/home-workspace-feature.js"></script>
+    <script src="./src/web/archive-profile-embed.js?v=__YAYA_BUILD_VERSION__"></script>
     <script src="./src/web/web-navigation.js?v=__YAYA_BUILD_VERSION__"></script>
     <script src="./src/renderer/invoice-feature.js"></script>
     <script src="./src/common/netface-model.js"></script>
     <script src="./src/renderer/netface-feature.js"></script>
-    <script type="module" src="./src/renderer/sdk-init.js"></script>
-    <script src="./src/renderer/fetch-legacy.js"></script>
+    <script src="./src/common/pocket-registration.js"></script>
+    <script src="./src/renderer/pocket-registration-feature.js"></script>
+    <script src="./src/renderer/pocket-social-login-feature.js"></script>
+    <script src="./src/common/deep-link.js"></script>
+    <script src="./src/renderer/deep-link-feature.js"></script>
 
     <button id="backToTopBtn" class="back-to-top-btn" onclick="scrollToTop()" title="回到顶部">
         <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2.5" fill="none"
@@ -3813,6 +3556,38 @@
             </div>
         </div>
     </div>
+    <div id="pocket-sigua-login-modal" class="modal-overlay pocket-registration-overlay">
+        <section class="modal-content pocket-registration-dialog" role="dialog" aria-modal="true" aria-labelledby="sigua-login-title">
+            <div class="modal-header"><strong id="sigua-login-title">丝瓜账号登录</strong><button type="button" class="btn btn-secondary" data-close-sigua-login aria-label="关闭">×</button></div>
+            <form id="pocket-sigua-login-form" class="pocket-registration-form pocket-sigua-login-form">
+                <label class="login-field-label" for="sigua-login-account">丝瓜账号</label>
+                <input id="sigua-login-account" class="input-control" autocomplete="username" maxlength="256" placeholder="请输入丝瓜账号" required>
+                <label class="login-field-label" for="sigua-login-password">密码</label>
+                <input id="sigua-login-password" class="input-control" type="password" autocomplete="current-password" maxlength="1024" placeholder="请输入丝瓜密码" required>
+                <div id="sigua-login-status" class="registration-status" role="status" aria-live="polite"></div>
+                <button id="sigua-login-submit" type="submit" class="btn btn-primary btn-full">登录</button>
+            </form>
+        </section>
+    </div>
+    <div id="pocket-registration-modal" class="modal-overlay pocket-registration-overlay">
+        <section class="modal-content pocket-registration-dialog" role="dialog" aria-modal="true" aria-labelledby="registration-title">
+            <div class="modal-header"><strong id="registration-title">设置口袋48密码</strong><button type="button" class="btn btn-secondary" data-close-pocket-registration aria-label="关闭">×</button></div>
+            <form id="pocket-registration-form" class="pocket-registration-form">
+                <div id="registration-password-fields">
+                    <label for="registration-password">密码</label><input id="registration-password" type="password" class="input-control" autocomplete="new-password" minlength="6" maxlength="1024" placeholder="至少 6 位" required>
+                    <label for="registration-confirmation">确认密码</label><input id="registration-confirmation" type="password" class="input-control" autocomplete="new-password" minlength="6" maxlength="1024" placeholder="再次输入密码" required>
+                </div>
+                <label id="registration-agreement-row" class="registration-agreement"><input id="registration-agreement" type="checkbox"><span>我已阅读并同意
+                    <a href="https://h5.48.cn/pocket_agreement/privacy/home/service.html" target="_blank" rel="noopener noreferrer">《口袋48用户协议》</a>、
+                    <a href="https://h5.48.cn/pocket_agreement/privacy/home/privacy.html" target="_blank" rel="noopener noreferrer">《隐私政策》</a>和
+                    <a href="https://h5.48.cn/pocket_agreement/privacy/home/children.html" target="_blank" rel="noopener noreferrer">《未成年人个人信息保护指引》</a></span></label>
+                <div id="registration-status" class="registration-status" role="status" aria-live="polite"></div>
+                <button id="registration-submit" type="submit" class="btn btn-primary btn-full">注册并登录</button>
+            </form>
+        </section>
+    </div>
+    <script src="./src/renderer/room-window-feature.js"></script>
+    <script src="./src/renderer/live-window-feature.js"></script>
 </body>
 
 </html>

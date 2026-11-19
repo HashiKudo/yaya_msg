@@ -1,19 +1,35 @@
 const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
-const { ensureStoragePaths } = require('../../common/storage-paths');
+const { ensureStoragePaths: ensureDefaultStoragePaths } = require('../../common/storage-paths');
 const { reportIgnoredError } = require('../../common/error-utils');
+const { normalizeMessageRoomIds, getMessageRoomMetadata } = require('../../common/message-room-filter');
+const { resolveGiftPrice, messageContext, isScoringGift, normalizeGiftInfo } = require('../../common/gift-pricing');
 
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 200;
-const MESSAGE_INDEX_SCHEMA_VERSION = 3;
+const MESSAGE_INDEX_SCHEMA_VERSION = 4;
 let database = null;
+let hasTrigramSearch = false;
 let syncPromise = null;
 let messageDirectoryWatcher = null;
 let messageWatcherTimer = null;
 let messageWatcherDirty = false;
 let messageWatcherSyncing = false;
 let messageWatcherListener = null;
+let configuredStoragePaths = null;
+
+function configureMessageIndexStorage(paths) {
+    if (database || messageDirectoryWatcher) throw new Error('消息索引已启动，不能更改存储位置');
+    if (!paths || !path.isAbsolute(paths.htmlDir || '') || !path.isAbsolute(paths.messageIndexFile || '')) {
+        throw new Error('无效的消息索引存储位置');
+    }
+    configuredStoragePaths = { ...paths };
+}
+
+function ensureStoragePaths() {
+    return configuredStoragePaths || ensureDefaultStoragePaths();
+}
 
 function hasCurrentMessageSchema(db) {
     const columns = db.prepare('PRAGMA table_info(messages)').all();
@@ -28,10 +44,12 @@ function hasCurrentMessageSchema(db) {
 }
 
 function initializeDatabase(db) {
+    db.exec('PRAGMA busy_timeout = 5000');
     if (!hasCurrentMessageSchema(db)) {
         db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
         db.exec('PRAGMA journal_mode = DELETE');
         db.exec(`
+            DROP TABLE IF EXISTS message_trigrams;
             DROP TABLE IF EXISTS messages;
             DROP TABLE IF EXISTS message_files;
         `);
@@ -39,7 +57,7 @@ function initializeDatabase(db) {
     }
 
     db.exec(`
-        PRAGMA journal_mode = DELETE;
+        PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;
         PRAGMA temp_store = MEMORY;
         CREATE TABLE IF NOT EXISTS message_files (
@@ -74,21 +92,78 @@ function initializeDatabase(db) {
             record_length INTEGER NOT NULL
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_file_key ON messages(file_id, message_key);
+        CREATE INDEX IF NOT EXISTS idx_messages_file_time ON messages(file_id, sort_time, id);
         CREATE INDEX IF NOT EXISTS idx_messages_time ON messages(sort_time, id);
         CREATE INDEX IF NOT EXISTS idx_messages_member_time ON messages(member_name, sort_time, id);
         CREATE INDEX IF NOT EXISTS idx_messages_type_time ON messages(message_type, sort_time, id);
         CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_name, user_id);
         PRAGMA user_version = ${MESSAGE_INDEX_SCHEMA_VERSION};
     `);
+    const columns = new Set(db.prepare('PRAGMA table_info(messages)').all().map(column => column.name));
+    if (!columns.has('room_type') || !columns.has('channel_id')) {
+        db.exec('BEGIN IMMEDIATE');
+        try {
+            if (!columns.has('room_type')) db.exec("ALTER TABLE messages ADD COLUMN room_type TEXT NOT NULL DEFAULT ''");
+            if (!columns.has('channel_id')) db.exec("ALTER TABLE messages ADD COLUMN channel_id TEXT NOT NULL DEFAULT ''");
+            db.exec('UPDATE message_files SET indexed_size = 0');
+            db.exec('COMMIT');
+        } catch (error) { db.exec('ROLLBACK'); throw error; }
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_messages_room_time ON messages(room_type, sort_time, id)');
+    return initializeTrigramIndex(db);
+}
+
+function initializeTrigramIndex(db) {
+    const exists = db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'message_trigrams'");
+    if (exists.get()) return true;
+
+    try {
+        db.exec('BEGIN IMMEDIATE');
+        if (exists.get()) {
+            db.exec('COMMIT');
+            return true;
+        }
+        db.exec(`
+            CREATE VIRTUAL TABLE message_trigrams USING fts5(
+                search_text, content='messages', content_rowid='id', tokenize='trigram'
+            );
+            CREATE TRIGGER message_trigrams_insert AFTER INSERT ON messages BEGIN
+                INSERT INTO message_trigrams(rowid, search_text) VALUES (new.id, new.search_text);
+            END;
+            CREATE TRIGGER message_trigrams_delete AFTER DELETE ON messages BEGIN
+                INSERT INTO message_trigrams(message_trigrams, rowid, search_text)
+                    VALUES ('delete', old.id, old.search_text);
+            END;
+            CREATE TRIGGER message_trigrams_update AFTER UPDATE OF id, search_text ON messages
+            WHEN old.id IS NOT new.id OR old.search_text IS NOT new.search_text BEGIN
+                INSERT INTO message_trigrams(message_trigrams, rowid, search_text)
+                    VALUES ('delete', old.id, old.search_text);
+                INSERT INTO message_trigrams(rowid, search_text) VALUES (new.id, new.search_text);
+            END;
+            INSERT INTO message_trigrams(message_trigrams) VALUES ('rebuild');
+        `);
+        db.exec('COMMIT');
+        return true;
+    } catch (error) {
+        if (db.isTransaction) db.exec('ROLLBACK');
+        console.warn('无法建立消息文本索引，将使用普通检索:', error.message);
+        return false;
+    }
 }
 
 function getDatabase() {
     if (database) return database;
 
     const { messageIndexFile } = ensureStoragePaths();
-    database = new DatabaseSync(messageIndexFile);
-    initializeDatabase(database);
-    return database;
+    const db = new DatabaseSync(messageIndexFile);
+    try {
+        hasTrigramSearch = initializeDatabase(db);
+        database = db;
+        return database;
+    } catch (error) {
+        db.close();
+        throw error;
+    }
 }
 
 async function listJsonlFiles(rootDir) {
@@ -138,9 +213,11 @@ function normalizeRecordForIndex(record, sourcePath, recordOffset, recordLength)
     const messageType = getRecordMessageType(record);
     const memberName = path.basename(path.dirname(sourcePath)) || '未命名成员';
     const messageKey = String(record.key);
+    const explicitGiftCost = resolveGiftPrice(giftInfo).unitCost;
 
     return {
         memberName,
+        ...getMessageRoomMetadata(record, sourcePath),
         messageKey,
         sortTime: Number(record.sortTime || record.msgTime || 0),
         messageType,
@@ -155,7 +232,7 @@ function normalizeRecordForIndex(record, sourcePath, recordOffset, recordLength)
         giftId: String(giftInfo.giftId || giftInfo.id || ''),
         giftName: String(giftInfo.giftName || giftInfo.name || ''),
         giftCount: Number(giftInfo.giftNum || giftInfo.num || giftInfo.count || 0) || 0,
-        giftUnitCost: Number(giftInfo.money || giftInfo.cost) || 0,
+        giftUnitCost: isScoringGift(giftInfo) ? -3 : explicitGiftCost === null ? -1 : explicitGiftCost === 0 ? -2 : explicitGiftCost,
         replyTargetName: getReplyTargetName(record),
         recordOffset: Number(recordOffset) || 0,
         recordLength: Number(recordLength) || 0
@@ -236,8 +313,8 @@ function indexFileRecords(db, fileId, filePath, records, replaceSource) {
             message_type, sender_name, user_id, search_text,
             has_image, has_video, has_audio, is_reply, is_live,
             gift_id, gift_name, gift_count, gift_unit_cost, reply_target_name,
-            record_offset, record_length
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            record_offset, record_length, room_type, channel_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_id, message_key) DO UPDATE SET
             member_name = excluded.member_name,
             sort_time = excluded.sort_time,
@@ -255,6 +332,8 @@ function indexFileRecords(db, fileId, filePath, records, replaceSource) {
             gift_count = excluded.gift_count,
             gift_unit_cost = excluded.gift_unit_cost,
             reply_target_name = excluded.reply_target_name,
+            room_type = excluded.room_type,
+            channel_id = excluded.channel_id,
             record_offset = excluded.record_offset,
             record_length = excluded.record_length
     `);
@@ -274,7 +353,7 @@ function indexFileRecords(db, fileId, filePath, records, replaceSource) {
             item.sortTime, item.messageType, item.senderName, item.userId, item.searchText,
             item.hasImage, item.hasVideo, item.hasAudio, item.isReply, item.isLive,
             item.giftId, item.giftName, item.giftCount, item.giftUnitCost, item.replyTargetName,
-            item.recordOffset, item.recordLength
+            item.recordOffset, item.recordLength, item.roomType, item.channelId
         );
         indexedCount += 1;
     }
@@ -469,7 +548,7 @@ function escapeLike(value) {
     return String(value || '').replace(/[\\%_]/g, match => `\\${match}`);
 }
 
-function buildQueryConditions(filters = {}, includeCursor = true) {
+function buildQueryConditions(filters = {}, includeCursor = true, useTrigrams = false) {
     const where = [];
     const params = [];
     const member = String(filters.member || '').trim();
@@ -479,11 +558,40 @@ function buildQueryConditions(filters = {}, includeCursor = true) {
     }
 
     const query = String(filters.query || '').trim().toLowerCase();
+    if (filters.roomType === 'big' || filters.roomType === 'small') {
+        const ids = normalizeMessageRoomIds(filters.channelIds);
+        if (!ids.length) {
+            where.push('messages.room_type = ?');
+            params.push(filters.roomType);
+        } else {
+            where.push(`(messages.room_type = ? OR (messages.room_type = '' AND (
+                messages.channel_id IN (SELECT value FROM json_each(?))
+                OR (messages.channel_id = '' AND messages.file_id IN (
+                SELECT file_id FROM message_files
+                WHERE EXISTS (
+                    SELECT 1 FROM json_each(?) AS room_channel
+                    WHERE message_files.path LIKE '%-' || room_channel.value || '.jsonl'
+                )
+            )))))`);
+            params.push(filters.roomType, JSON.stringify(ids), JSON.stringify(ids));
+        }
+    }
     if (query) {
-        const terms = query.split('|').map(term => term.trim()).filter(Boolean);
-        if (terms.length) {
-            where.push(`(${terms.map(() => "search_text LIKE ? ESCAPE '\\'").join(' OR ')})`);
-            terms.forEach(term => params.push(`%${escapeLike(term)}%`));
+        const terms = Array.from(new Set(query.split('|').map(term => term.trim()).filter(Boolean)));
+        if (useTrigrams && terms.length > 0 && terms.length <= 32
+            && terms.every(term => term.length <= 256 && !term.includes('\u0000') && [...term].length >= 3)) {
+            where.push('messages.id IN (SELECT rowid FROM message_trigrams WHERE message_trigrams MATCH ?)');
+            params.push(terms.map(term => '"' + term.replaceAll('"', '""') + '"').join(' OR '));
+        }
+        if (terms.length === 1) {
+            where.push("search_text LIKE ? ESCAPE '\\'");
+            params.push(`%${escapeLike(terms[0])}%`);
+        } else if (terms.length) {
+            where.push(`EXISTS (
+                SELECT 1 FROM json_each(?) AS search_term
+                WHERE search_text LIKE search_term.value ESCAPE '\\'
+            )`);
+            params.push(JSON.stringify(terms.map(term => `%${escapeLike(term)}%`)));
         }
     }
 
@@ -499,6 +607,7 @@ function buildQueryConditions(filters = {}, includeCursor = true) {
     if (type === 'audio') where.push('has_audio = 1 AND is_reply = 0');
     if (type === 'reply') where.push('is_reply = 1');
     if (type === 'live-record') where.push('is_live = 1');
+    if (type === 'gift') where.push("message_type IN ('GIFT_TEXT', 'CHANNEL_PRESENT_TEXT', 'PRESENT_TEXT')");
     if (type === 'text') where.push('has_image = 0 AND has_video = 0 AND has_audio = 0 AND is_reply = 0 AND is_live = 0');
 
     const drilldown = String(filters.drilldown || '');
@@ -609,11 +718,30 @@ function hydrateIndexedRows(rows, options = {}) {
     }
 }
 
+function getMessageIndexContext(payload = {}) {
+    const db = getDatabase();
+    const id = Number(payload.indexId);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error('缺少目标消息 ID');
+    const radius = Math.max(1, Math.min(50, Math.trunc(Number(payload.radius) || 10)));
+    const target = db.prepare('SELECT id, file_id, sort_time FROM messages WHERE id = ?').get(id);
+    if (!target) throw new Error('目标消息已不在索引中，请刷新检索结果');
+    const select = `SELECT messages.id, message_files.path AS source_path, member_name,
+        record_offset, record_length FROM messages
+        JOIN message_files ON message_files.file_id = messages.file_id`;
+    const neighbors = (operator, direction) => db.prepare(`${select}
+        WHERE messages.file_id = ? AND (sort_time ${operator} ? OR (sort_time = ? AND messages.id ${operator} ?))
+        ORDER BY sort_time ${direction}, messages.id ${direction} LIMIT ?
+    `).all(target.file_id, target.sort_time, target.sort_time, target.id, radius);
+    const before = neighbors('<', 'DESC').reverse();
+    const center = db.prepare(`${select} WHERE messages.id = ?`).get(id);
+    return { records: hydrateIndexedRows([...before, center, ...neighbors('>', 'ASC')]), targetId: id };
+}
+
 function queryMessageIndexPage(filters = {}) {
     const db = getDatabase();
     const limit = Math.max(1, Math.min(MAX_PAGE_SIZE, Math.trunc(Number(filters.limit) || DEFAULT_PAGE_SIZE)));
-    const query = buildQueryConditions(filters, true);
-    const countQuery = buildQueryConditions(filters, false);
+    const query = buildQueryConditions(filters, true, hasTrigramSearch);
+    const countQuery = buildQueryConditions(filters, false, hasTrigramSearch);
     const direction = query.sortOrder === 'asc' ? 'ASC' : 'DESC';
     const rows = db.prepare(`
         SELECT messages.id, message_files.path AS source_path, member_name, sort_time,
@@ -717,18 +845,18 @@ function queryLatestSenderRecords(db, whereSql, params = []) {
 
 function queryDateAnalysis(db, payload) {
     const filters = payload?.filters || {};
-    const query = buildQueryConditions({ member: filters.member }, false);
-    const memberNames = Array.from(new Set(Array.isArray(payload?.memberNames) ? payload.memberNames.map(String).filter(Boolean) : [])).slice(0, 2000);
-    const memberIds = Array.from(new Set(Array.isArray(payload?.memberIds) ? payload.memberIds.map(String).filter(Boolean) : [])).slice(0, 2000);
+    const query = buildQueryConditions({ member: filters.member, roomType: filters.roomType, channelIds: filters.channelIds }, false);
+    const memberNames = Array.from(new Set(Array.isArray(payload?.memberNames) ? payload.memberNames.map(String).filter(Boolean) : []));
+    const memberIds = Array.from(new Set(Array.isArray(payload?.memberIds) ? payload.memberIds.map(String).filter(Boolean) : []));
     const memberChecks = ['is_reply = 1', 'sender_name = member_name'];
     const memberParams = [];
     if (memberNames.length) {
-        memberChecks.push(`sender_name IN (${memberNames.map(() => '?').join(', ')})`);
-        memberParams.push(...memberNames);
+        memberChecks.push('sender_name IN (SELECT value FROM json_each(?))');
+        memberParams.push(JSON.stringify(memberNames));
     }
     if (memberIds.length) {
-        memberChecks.push(`user_id IN (${memberIds.map(() => '?').join(', ')})`);
-        memberParams.push(...memberIds);
+        memberChecks.push('user_id IN (SELECT value FROM json_each(?))');
+        memberParams.push(JSON.stringify(memberIds));
     }
 
     const rows = db.prepare(`
@@ -752,7 +880,7 @@ function queryDateAnalysis(db, payload) {
 }
 
 function querySpeechAnalysis(db, payload) {
-    const query = buildQueryConditions(payload?.filters || {}, false);
+    const query = buildQueryConditions(payload?.filters || {}, false, hasTrigramSearch);
     const whereSql = appendAnalysisCondition(query, "message_type <> 'GIFT_TEXT' AND sender_name <> ''");
     const latestRecords = queryLatestSenderRecords(db, whereSql, query.params);
 
@@ -776,35 +904,59 @@ function querySpeechAnalysis(db, payload) {
 }
 
 function queryGiftAnalysis(db, payload) {
-    const query = buildQueryConditions(payload?.filters || {}, false);
+    const query = buildQueryConditions(payload?.filters || {}, false, hasTrigramSearch);
     const whereSql = appendAnalysisCondition(query, "message_type = 'GIFT_TEXT'");
     const rows = db.prepare(`
-        SELECT sender_name, user_id, sort_time,
+        SELECT messages.id, messages.file_id, message_files.path AS source_path, member_name,
+            record_offset, record_length, sender_name, user_id, sort_time,
             gift_id, gift_name, gift_count, gift_unit_cost
         FROM messages
+        JOIN message_files ON message_files.file_id = messages.file_id
         ${whereSql}
         ORDER BY sort_time ASC, id ASC
     `).all(...query.params);
-    const giftPrices = new Map();
-    (Array.isArray(payload?.giftPrices) ? payload.giftPrices : []).slice(0, 10000).forEach(gift => {
-        const cost = Number(gift?.cost) || 0;
-        if (gift?.id !== null && gift?.id !== undefined) giftPrices.set(`id:${gift.id}`, cost);
-        if (gift?.name) giftPrices.set(`name:${gift.name}`, cost);
-    });
+    const giftPrices = (Array.isArray(payload?.giftPrices) ? payload.giftPrices : []).slice(0, 10000);
     const users = new Map();
     let totalRevenue = 0;
+    let unknownRecords = 0;
+    const legacySources = new Map(), legacyUpdates = [];
     const latestSenders = new Map(queryLatestSenderRecords(db, whereSql, query.params).map(({ row, record }) => {
         const key = String(row.user_id || row.sender_name || '未知用户');
         return [key, getIndexedSender(record, { senderName: row.sender_name, userId: row.user_id })];
     }));
 
-    rows.forEach(row => {
+    try { rows.forEach(row => {
         const giftName = String(row.gift_name || '未知礼物');
         const giftCount = Number(row.gift_count) || 1;
-        const unitCost = Number(row.gift_unit_cost)
-            || giftPrices.get(`id:${row.gift_id}`)
-            || giftPrices.get(`name:${giftName}`)
-            || 0;
+        let storedCost = Number(row.gift_unit_cost);
+        const gift = { giftId: row.gift_id, giftName, giftNum: giftCount };
+        if (storedCost === -3 || isScoringGift(gift)) {
+            if (storedCost === 0) legacyUpdates.push([-3, row.id]);
+            return;
+        }
+        if (storedCost === 0 || !gift.giftId || (gift.giftId === String(Number('1320115721784332288')) && giftName === '弦月回响')) {
+            let handle = legacySources.get(row.source_path);
+            if (handle === undefined) {
+                if (legacySources.size >= 32) {
+                    const [file, fd] = legacySources.entries().next().value;
+                    fs.closeSync(fd); legacySources.delete(file);
+                }
+                handle = fs.openSync(row.source_path, 'r'); legacySources.set(row.source_path, handle);
+            }
+            const content = getIndexedContent(readIndexedRecord(row, handle));
+            const originalGift = normalizeGiftInfo(content.giftInfo || content, { rules: payload?.giftPriceRules || [] });
+            if (isScoringGift(originalGift)) { legacyUpdates.push([-3, row.id]); return; }
+            const original = resolveGiftPrice(originalGift).unitCost;
+            if (storedCost === 0 || !gift.giftId) {
+                Object.assign(gift, originalGift);
+                storedCost = original === null ? -1 : original === 0 ? -2 : original;
+                legacyUpdates.push([storedCost, row.id]);
+            }
+        }
+        if (storedCost > 0 || storedCost === -2) gift.money = storedCost === -2 ? 0 : storedCost;
+        const unitCost = resolveGiftPrice(gift, { prices: giftPrices,
+            rules: payload?.giftPriceRules || [], historical: true,
+            ...messageContext({ sourcePath: row.source_path, sortTime: row.sort_time }) }).unitCost;
         const key = String(row.user_id || row.sender_name || '未知用户');
         const latestSender = latestSenders.get(key) || {};
         if (!users.has(key)) {
@@ -814,24 +966,32 @@ function queryGiftAnalysis(db, payload) {
                 name: latestSender.name || String(row.sender_name || '未知用户'),
                 totalCost: 0,
                 totalCount: 0,
+                unknownCount: 0,
                 avatarUrl: latestSender.avatarUrl || '',
                 latestTime: Number(row.sort_time) || 0
             });
         }
         const user = users.get(key);
-        user.totalCost += unitCost * giftCount;
+        if (unitCost === null) { user.unknownCount++; unknownRecords++; }
+        else { user.totalCost += unitCost * giftCount; totalRevenue += unitCost * giftCount; }
         user.totalCount += giftCount;
-        totalRevenue += unitCost * giftCount;
         if (Number(row.sort_time) >= user.latestTime) {
             user.name = latestSender.name || String(row.sender_name || user.name);
             user.avatarUrl = latestSender.avatarUrl || user.avatarUrl;
             user.latestTime = Number(row.sort_time) || user.latestTime;
         }
-    });
+    }); } finally { for (const handle of legacySources.values()) fs.closeSync(handle); }
+    if (legacyUpdates.length) {
+        const update = db.prepare('UPDATE messages SET gift_unit_cost = ? WHERE id = ? AND gift_unit_cost IN (0, -1, -2)');
+        db.exec('BEGIN IMMEDIATE');
+        try { for (const values of legacyUpdates) update.run(...values); db.exec('COMMIT'); }
+        catch (error) { db.exec('ROLLBACK'); throw error; }
+    }
 
     return {
         items: Array.from(users.values()).sort((left, right) => right.totalCost - left.totalCost),
-        totalRevenue
+        totalRevenue,
+        unknownRecords
     };
 }
 
@@ -844,7 +1004,7 @@ function getReplyTargetName(record) {
 
 function queryInteractionAnalysis(db, payload) {
     const filters = payload?.filters || {};
-    const memberQuery = buildQueryConditions({ member: filters.member }, false);
+    const memberQuery = buildQueryConditions({ member: filters.member, roomType: filters.roomType, channelIds: filters.channelIds }, false);
     const aliasRows = db.prepare(`
         SELECT sender_name, user_id, MAX(sort_time) AS latest_time
         FROM messages
@@ -930,14 +1090,17 @@ function closeMessageIndex() {
     if (!database) return;
     database.close();
     database = null;
+    hasTrigramSearch = false;
 }
 
 module.exports = {
+    configureMessageIndexStorage,
     syncMessageIndex,
     startMessageIndexWatcher,
     stopMessageIndexWatcher,
     getMessageIndexSummary,
     queryMessageIndexPage,
+    getMessageIndexContext,
     queryMessageAnalysis,
     getAllMessageIndexRecords,
     closeMessageIndex

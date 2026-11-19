@@ -18,6 +18,8 @@
             destroyPlayers,
             backToLiveList,
             setCurrentPlayingItem,
+            getCurrentPlayingItem,
+            getPlaybackViewToken,
             setReturnToOpenLive,
             setReturnToPerformance,
             startPlayer,
@@ -29,7 +31,16 @@
         let openLiveNextTime = 0;
         let isOpenLiveAutoLoading = false;
         let currentOpenLiveParticipantsRequestId = 0;
+        let openLivePlaybackRevision = 0;
+        const invalidateOpenLiveRequests = () => {
+            openLivePlaybackRevision += 1;
+            currentOpenLiveParticipantsRequestId += 1;
+        };
+        window.addEventListener?.('yaya:view-changed', invalidateOpenLiveRequests);
+        window.addEventListener?.('yaya:account-state-changed', invalidateOpenLiveRequests);
         const ENABLE_OPENLIVE_PARTICIPANTS = true;
+        const SHOW_MEMBER_RANK = window.desktop?.platform !== 'web';
+        const PARTICIPANTS_LABEL = SHOW_MEMBER_RANK ? '成员榜' : '参与成员';
 
         function getOpenLiveSearchResultBox() {
             return document.getElementById('openlive-search-results');
@@ -133,13 +144,18 @@
             const statusEl = document.getElementById('openlive-participants-modal-status');
             const listEl = document.getElementById('openlive-participants-modal-list');
             const shouldShow = ENABLE_OPENLIVE_PARTICIPANTS && visible;
+            const titleEl = document.getElementById('openlive-participants-modal-title');
+            if (titleEl) titleEl.textContent = window.YayaRendererUtils.t(PARTICIPANTS_LABEL);
             if (buttonEl) {
                 buttonEl.style.display = shouldShow ? 'inline-flex' : 'none';
-                buttonEl.textContent = window.YayaRendererUtils.t('参与成员');
+                buttonEl.textContent = window.YayaRendererUtils.t(PARTICIPANTS_LABEL);
             }
             if (statusEl) statusEl.textContent = text || '';
             if (listEl) listEl.replaceChildren();
-            if (!shouldShow) closeOpenLiveParticipantsModal();
+            if (!shouldShow) {
+                currentOpenLiveParticipantsRequestId = 0;
+                closeOpenLiveParticipantsModal();
+            }
         }
 
         function normalizeOpenLiveParticipantName(value) {
@@ -263,18 +279,23 @@
                 );
                 const team = getOpenLiveParticipantTeam(participant, member, participantGroup);
 
-                return { name, userId, avatar, team, teamLabel: team };
+                const rank = Number(participant?.rank);
+                const hot = participant?.hot;
+                return { name, userId, avatar, team, teamLabel: team, teamColor: String(participant?.teamColor || '').trim(),
+                    rank: Number.isInteger(rank) && rank > 0 ? rank : null,
+                    hot: hot !== '' && hot != null && Number.isFinite(Number(hot)) ? Number(hot) : null };
             }).filter(Boolean);
         }
 
         function renderOpenLiveParticipants(participants, groupHint = '') {
             const normalizedParticipants = enrichOpenLiveParticipants(participants, groupHint);
+            if (SHOW_MEMBER_RANK) normalizedParticipants.sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity));
             const buttonEl = document.getElementById('btn-player-participants');
             const statusEl = document.getElementById('openlive-participants-modal-status');
             const listEl = document.getElementById('openlive-participants-modal-list');
             if (buttonEl) {
                 buttonEl.style.display = 'inline-flex';
-                buttonEl.textContent = window.YayaRendererUtils.t('参与成员');
+                buttonEl.textContent = window.YayaRendererUtils.t(PARTICIPANTS_LABEL);
             }
             if (statusEl) statusEl.textContent = window.YayaRendererUtils.t(`共 ${normalizedParticipants.length} 位成员`);
             if (!listEl) return;
@@ -307,13 +328,33 @@
                     const team = document.createElement('span');
                     team.className = 'team-tag openlive-participant-team';
                     team.textContent = participant.teamLabel;
-                    if (typeof getTeamStyle === 'function') {
+                    const officialColor = participant.teamColor.replace(/^#/, '');
+                    if (/^[0-9a-f]{6}$/i.test(officialColor)) {
+                        const rgb = [0, 2, 4].map(index => parseInt(officialColor.slice(index, index + 2), 16)).join(', ');
+                        team.style.setProperty('--team-rgb', rgb);
+                    } else if (typeof getTeamStyle === 'function') {
                         team.style.cssText = getTeamStyle(participant.team, false) || '';
                     }
                     details.appendChild(team);
                 }
 
                 chip.append(avatar, details);
+                if (SHOW_MEMBER_RANK) {
+                    const rank = document.createElement('span');
+                    rank.className = `rank-num openlive-participant-rank${participant.rank && participant.rank <= 3 ? ` rank-${participant.rank}` : ''}`;
+                    rank.textContent = participant.rank == null ? '—' : String(participant.rank);
+                    chip.dataset.rank = String(participant.rank || '');
+                    const score = document.createElement('span');
+                    score.className = 'openlive-participant-score';
+                    const value = document.createElement('span');
+                    value.className = 'openlive-participant-score-value';
+                    value.textContent = participant.hot == null ? '—' : String(participant.hot);
+                    const label = document.createElement('span');
+                    label.className = 'openlive-participant-score-label';
+                    label.textContent = '贡献值';
+                    score.append(value, label);
+                    chip.append(rank, score);
+                }
 
                 if (participant.userId && typeof window.openFollowedUserProfile === 'function') {
                     chip.addEventListener('click', () => {
@@ -339,7 +380,7 @@
             if (modalEl) modalEl.style.display = 'none';
         }
 
-        async function loadOpenLiveParticipants(liveId, title = '', startTime = '', groupHint = '') {
+        async function loadOpenLiveParticipants(liveId, title = '', startTime = '', groupHint = '', pageId = '') {
             if (!ENABLE_OPENLIVE_PARTICIPANTS) {
                 setOpenLiveParticipantsText('', false);
                 return;
@@ -353,11 +394,14 @@
 
             const requestId = Date.now() + Math.random();
             currentOpenLiveParticipantsRequestId = requestId;
-            setOpenLiveParticipantsText('正在读取参与成员...', true);
+            setOpenLiveParticipantsText(`正在读取${PARTICIPANTS_LABEL}...`, true);
 
             try {
                 const result = await ipcRenderer.invoke('fetch-open-live-participants', {
+                    token: getAppToken ? getAppToken() : '',
+                    pa: window.getPA ? window.getPA() : null,
                     liveId: normalizedLiveId,
+                    pageId: String(pageId || '').trim(),
                     title,
                     dateHint: startTime,
                     groupHint
@@ -369,11 +413,16 @@
                 const participants = Array.isArray(result?.content?.participants) ? result.content.participants : [];
 
                 if (!participants.length) {
-                    setOpenLiveParticipantsText('未获取到参与成员', true);
+                    setOpenLiveParticipantsText(`未获取到${PARTICIPANTS_LABEL}`, true);
                     return;
                 }
 
-                if (!getMemberDataLoaded() && typeof loadMemberData === 'function') {
+                const needsMemberData = participants.some(participant => (
+                    !(participant.memberId || participant.userId || participant.ownerId)
+                    || !(participant.avatar || participant.avatarUrl || participant.headImg || participant.headImgUrl)
+                    || !(participant.teamName || participant.team)
+                ));
+                if (needsMemberData && !getMemberDataLoaded() && typeof loadMemberData === 'function') {
                     try {
                         await loadMemberData();
                     } catch (error) {
@@ -386,7 +435,7 @@
             } catch (error) {
                 console.error('[公演记录] 读取参与成员失败:', error);
                 if (currentOpenLiveParticipantsRequestId === requestId) {
-                    setOpenLiveParticipantsText('参与成员加载失败', true);
+                    setOpenLiveParticipantsText(`${PARTICIPANTS_LABEL}加载失败`, true);
                 }
             }
         }
@@ -577,7 +626,7 @@
             });
         }
 
-        async function fetchOpenLiveStreamUrl(liveId) {
+        async function fetchOpenLiveStreamUrl(liveId, onDetail) {
             const token = getAppToken ? getAppToken() : (typeof window.getAppToken === 'function' ? window.getAppToken() : '');
             const pa = window.getPA ? window.getPA() : null;
             const result = await ipcRenderer.invoke('fetch-open-live-one', { token, pa, liveId });
@@ -586,6 +635,8 @@
                 console.warn('[公演记录] API返回错误:', result?.msg);
                 return '';
             }
+
+            if (typeof onDetail === 'function') onDetail(result.content);
 
             const highQuality = result.content.playStreams.find(stream => stream.streamType === 2);
             return highQuality ? highQuality.streamPath : result.content.playStreams[0].streamPath;
@@ -601,6 +652,10 @@
             isLiveContent = false,
             participantGroupHint = ''
         ) {
+            const revision = ++openLivePlaybackRevision;
+            const token = getAppToken?.() || window.getAppToken?.() || '';
+            const accountGeneration = window.getPocketAccountSessionGeneration?.();
+            const viewToken = getPlaybackViewToken?.();
             if (typeof destroyPlayers === 'function') {
                 destroyPlayers({ clearTimeline: true, clearAuxPanels: true });
             }
@@ -633,7 +688,8 @@
             if (paginationControls) paginationControls.style.display = 'none';
             if (mediaListArea) mediaListArea.style.display = 'none';
             if (liveControls) liveControls.style.display = 'none';
-            if (rankButton) rankButton.style.display = 'none';
+            const showPerformanceRank = sourceView === 'performance' && window.desktop?.platform !== 'web';
+            if (rankButton) rankButton.style.display = showPerformanceRank ? 'inline-flex' : 'none';
             if (rankContainer) rankContainer.style.display = 'none';
 
             setReturnToOpenLive(sourceView === 'openlive');
@@ -687,25 +743,28 @@
                 if (timeEl) timeEl.textContent = '';
             }
 
-            setCurrentPlayingItem({ liveId, title, nickname, startTime, openLivePageId });
+            const playingItem = { liveId, title, nickname, startTime, openLivePageId,
+                ...(showPerformanceRank ? { rankSource: 'performance' } : {}) };
+            setCurrentPlayingItem(playingItem);
+            const isCurrent = () => revision === openLivePlaybackRevision
+                && token === (getAppToken?.() || window.getAppToken?.() || '')
+                && accountGeneration === window.getPocketAccountSessionGeneration?.()
+                && viewToken === getPlaybackViewToken?.()
+                && (typeof getCurrentPlayingItem !== 'function' || getCurrentPlayingItem() === playingItem);
             if (typeof resetClipTool === 'function') {
                 resetClipTool();
             }
             setOpenLiveParticipantsText('', false);
-            const queueParticipantLoad = () => {
-                if (!ENABLE_OPENLIVE_PARTICIPANTS) return;
-                Promise.resolve()
-                    .then(() => loadOpenLiveParticipants(
-                        openLivePageId || liveId,
-                        title,
-                        startTime,
-                        participantGroupHint
-                    ))
+            if (ENABLE_OPENLIVE_PARTICIPANTS) {
+                void loadOpenLiveParticipants(liveId, title, startTime, participantGroupHint, openLivePageId)
                     .catch(error => console.error('[公演记录] 异步读取参与成员失败:', error));
-            };
+            }
 
             try {
-                const streamUrl = await fetchOpenLiveStreamUrl(liveId);
+                const streamUrl = await fetchOpenLiveStreamUrl(liveId, detail => {
+                    if (isCurrent()) playingItem.rankType = detail.type;
+                });
+                if (!isCurrent()) return;
                 if (!streamUrl) {
                     console.warn(`[播放失败] liveId:${liveId} 无可用流`);
                     showToast('该场公演尚未开始或暂无播放源');
@@ -717,9 +776,9 @@
                     if (typeof backToLiveList === 'function') backToLiveList();
                     return;
                 }
-                startPlayer(streamUrl, title, isLiveContent, null, [], { clearAuxPanels: true });
-                queueParticipantLoad();
+                await startPlayer(streamUrl, title, isLiveContent, null, [], { clearAuxPanels: true });
             } catch (error) {
+                if (!isCurrent()) return;
                 console.error('[网络/系统错误]', error);
                 showToast('公演播放地址获取失败，请稍后重试');
                 if (typeof backToLiveList === 'function') backToLiveList();

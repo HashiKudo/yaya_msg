@@ -6,12 +6,14 @@ web-dist/
 html/
 tmp/
 reports/
-# Keep only desktop build scripts in Git.
 /scripts/*
 !/scripts/build-web.js
 !/scripts/build-desktop-gift-player.js
+!/scripts/build-desktop-shell.js
+!/scripts/build-renderer-entry.js
 !/scripts/copy-ffmpeg.js
 !/scripts/run-builder.js
+!/scripts/build-profile-photo-history.py
 tools/
 .agents/
 /.codex-*/
@@ -27,17 +29,25 @@ dist-next/
 !.env.example
 data/
 *.db
+*.db-wal
+*.db-shm
+*.db-journal
 *.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
 *.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 __pycache__/
 *.py[cod]
 
-# Generated app assets
+/desktop.html
 /src/renderer/database/runtime.js
 /src/renderer/database/tailwind.css
 /src/renderer/vendor/
 
-# Local QA artifacts
 /design-qa.md
 /message-layout-*.png
 /screenshots/
@@ -54,13 +64,11 @@ wrangler-*.log
 *.swp
 *~
 
-# Test and tooling caches
 /coverage/
 /.nyc_output/
 /.cache/
 .eslintcache
 
-# Local editor settings
 /.idea/
 /.vscode/
 *.code-workspace
@@ -71,7 +79,10 @@ Thumbs.db
 codex-start.err.log
 codex-start.out.log
 
-# Website-only source and Cloudflare deployment files stay local.
+/cloud/
+/docs/
+/gift-site/
+/vote-site/
 /src/web/
 /server/
 /workers/

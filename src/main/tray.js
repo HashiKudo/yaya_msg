@@ -1,12 +1,14 @@
+const { isMainFrameSender } = require('./desktop-document');
 const { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } = require('electron');
 const path = require('path');
-const { createWindow, getMainWindow, showMainWindow } = require('./window');
+const { showMainWindow } = require('./window');
 const settingsService = require('./services/settings-service');
 const { getAppIconPath } = require('./services/app-icon-service');
 
 let tray = null;
 let trayMenuWindow = null;
 let trayMenuShowTimer = null;
+let trayMenuReleaseTimer = null;
 let trayMenuReady = false;
 const TRAY_MENU_WIDTH = 136;
 const TRAY_MENU_HEIGHT = 82;
@@ -23,19 +25,11 @@ function createTrayIcon() {
     }
     if (process.platform === 'win32') return sourceIcon;
 
-    const traySize = process.platform === 'darwin' ? 18 : 22;
-    const resizedIcon = sourceIcon.resize({ width: traySize, height: traySize, quality: 'best' });
-    for (const scaleFactor of [2, 3]) {
-        resizedIcon.addRepresentation({
-            scaleFactor,
-            buffer: sourceIcon.resize({
-                width: traySize * scaleFactor,
-                height: traySize * scaleFactor,
-                quality: 'best'
-            }).toPNG()
-        });
+    const resizedIcon = sourceIcon.resize({ width: 18, height: 18 });
+    if (process.platform === 'darwin') {
+        resizedIcon.setTemplateImage(false);
+        resizedIcon.addRepresentation({ scaleFactor: 2, buffer: sourceIcon.resize({ width: 36, height: 36 }).toPNG() });
     }
-    if (process.platform === 'darwin') resizedIcon.setTemplateImage(true);
     return resizedIcon;
 }
 
@@ -55,6 +49,13 @@ function concealTrayMenu() {
     if (!trayMenuWindow || trayMenuWindow.isDestroyed()) return;
     trayMenuWindow.setOpacity(0);
     trayMenuWindow.setIgnoreMouseEvents(true);
+    if (trayMenuReleaseTimer) clearTimeout(trayMenuReleaseTimer);
+    const menuWindow = trayMenuWindow;
+    trayMenuReleaseTimer = setTimeout(() => {
+        trayMenuReleaseTimer = null;
+        if (trayMenuWindow === menuWindow && !menuWindow.isDestroyed()) menuWindow.destroy();
+    }, 30_000);
+    trayMenuReleaseTimer.unref?.();
 }
 
 function primeTrayMenuWindow(menuWindow) {
@@ -140,6 +141,8 @@ function getTrayMenuPosition(bounds) {
 }
 
 function showTrayMenu(bounds) {
+    if (trayMenuReleaseTimer) clearTimeout(trayMenuReleaseTimer);
+    trayMenuReleaseTimer = null;
     const menuWindow = createTrayMenuWindow();
     const position = getTrayMenuPosition(bounds);
     menuWindow.setPosition(position.x, position.y, false);
@@ -166,7 +169,8 @@ function showTrayMenu(bounds) {
 }
 
 ipcMain.on('tray-menu-action', (event, action) => {
-    if (!trayMenuWindow || trayMenuWindow.isDestroyed() || event.sender !== trayMenuWindow.webContents) return;
+    if (!trayMenuWindow || trayMenuWindow.isDestroyed() || event.sender !== trayMenuWindow.webContents
+        || !isMainFrameSender(event)) return;
     concealTrayMenu();
     if (action === 'show') {
         showMainWindow();
@@ -176,7 +180,6 @@ ipcMain.on('tray-menu-action', (event, action) => {
 });
 
 function createTray() {
-    if (process.platform === 'darwin') return null;
     if (tray && !tray.isDestroyed()) return tray;
     const icon = createTrayIcon();
     if (!icon) return null;
@@ -188,7 +191,6 @@ function createTray() {
         tray.setContextMenu(createNativeTrayMenu());
     } else {
         tray.on('right-click', (_event, bounds) => showTrayMenu(bounds));
-        createTrayMenuWindow();
     }
     return tray;
 }
@@ -200,6 +202,8 @@ function updateTrayIcon() {
 }
 
 function destroyTray() {
+    if (trayMenuReleaseTimer) clearTimeout(trayMenuReleaseTimer);
+    trayMenuReleaseTimer = null;
     if (trayMenuShowTimer) {
         clearTimeout(trayMenuShowTimer);
         trayMenuShowTimer = null;

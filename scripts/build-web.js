@@ -3,22 +3,36 @@ const fs = require('fs');
 const path = require('path');
 const esbuild = require('esbuild');
 const postcss = require('postcss');
-const tailwindcss = require('tailwindcss');
+const tailwindcss = require('@tailwindcss/postcss');
+const { brotliCompressSync, gzipSync, constants: zlibConstants } = require('zlib');
+const { buildRendererEntry } = require('./build-renderer-entry');
 
 const scopeDatabaseTailwind = {
     postcssPlugin: 'scope-database-tailwind',
-    Rule(rule) {
-        if (rule.parent?.type === 'atrule' && /keyframes$/i.test(rule.parent.name || '')) return;
-        rule.selectors = rule.selectors.flatMap((selector) => {
-            const trimmed = selector.trim();
-            if (!trimmed || trimmed.startsWith('#database-root')) return [trimmed];
-            if ([':root', 'html', ':host', 'body'].includes(trimmed)) return ['#database-root'];
-            if (trimmed === '*') return ['#database-root', '#database-root *'];
-            if (trimmed === ':before' || trimmed === ':after') {
-                return [`#database-root${trimmed}`, `#database-root *${trimmed}`];
+    Once(root) {
+        const baseRules = new Set();
+        root.walkAtRules('layer', layer => {
+            if (layer.params === 'base') layer.walkRules(rule => baseRules.add(rule));
+            if (['theme', 'base', 'components', 'utilities'].includes(layer.params) && layer.nodes) {
+                layer.replaceWith(...layer.nodes);
             }
-            if (trimmed === '::backdrop') return ['#database-root::backdrop'];
-            return [`#database-root ${trimmed}`];
+        });
+        root.walkRules(rule => {
+            for (let parent = rule.parent; parent; parent = parent.parent) {
+                if (parent.type === 'rule' || (parent.type === 'atrule' && /keyframes$/i.test(parent.name))) return;
+            }
+            const scoped = rule.selectors.flatMap(selector => {
+                const trimmed = selector.trim();
+                if ([':root', 'html', ':host', 'body'].includes(trimmed)) return ['#database-root'];
+                if (trimmed === '*') return ['#database-root', '#database-root *'];
+                if (/^::?(?:before|after|backdrop)$/.test(trimmed)) {
+                    return [`#database-root${trimmed}`, `#database-root *${trimmed}`];
+                }
+                return [`#database-root ${trimmed}`];
+            });
+            rule.selectors = [...new Set(baseRules.has(rule)
+                ? scoped.map(selector => selector.replace('#database-root', ':where(#database-root)'))
+                : scoped)];
         });
     }
 };
@@ -27,6 +41,19 @@ const projectRoot = path.join(__dirname, '..');
 const outputDir = path.join(projectRoot, 'web-dist');
 const buildDesktopRuntimeOnly = process.argv.includes('--database-runtime-only')
     || process.argv.includes('--desktop-runtime-only');
+const excludedWebScripts = new Set([
+    'src/renderer/invoice-feature.js', 'src/renderer/pocket-social-login-feature.js',
+    'src/renderer/deep-link-feature.js', 'src/renderer/desktop-live-gift-animation.js',
+    'src/renderer/desktop-cloud-home-feature.js',
+    'src/renderer/home-workspace-feature.js',
+    'src/renderer/private-message-notifications.js', 'src/renderer/desktop-startup-features.mjs',
+    'src/renderer/room-radio-feature.js', 'src/renderer/live-gift-feature.js',
+    'src/renderer/room-window-feature.js', 'src/renderer/live-window-feature.js',
+    'src/renderer/private-messages-feature.js', 'src/renderer/yk1z-home-feature.js',
+    'src/common/deep-link.js'
+]);
+const localWebScript = /(<script\b[^>]*?\ssrc=")(\.\/src\/[\w./-]+\.m?js)(\?[^"\s]*)?"/g;
+const standaloneWebRendererScripts = ['src/renderer/followed-chat-feature.js'];
 
 function copyFile(relativePath, targetRelativePath = relativePath) {
     const source = path.join(projectRoot, relativePath);
@@ -35,23 +62,23 @@ function copyFile(relativePath, targetRelativePath = relativePath) {
     fs.copyFileSync(source, target);
 }
 
-function copyDir(relativePath) {
+function copyDir(relativePath, shouldCopy = () => true) {
     const sourceDir = path.join(projectRoot, relativePath);
     if (!fs.existsSync(sourceDir)) return;
     for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
         const child = path.join(relativePath, entry.name);
-        if (entry.isDirectory()) copyDir(child);
-        if (entry.isFile()) copyFile(child);
+        if (entry.isDirectory()) copyDir(child, shouldCopy);
+        if (entry.isFile() && shouldCopy(child.replaceAll(path.sep, '/'))) copyFile(child);
     }
 }
 
-function collectFiles(relativePath) {
-    const absolutePath = path.join(projectRoot, relativePath);
+function collectFiles(relativePath, root = projectRoot) {
+    const absolutePath = path.join(root, relativePath);
     if (!fs.existsSync(absolutePath)) return [];
     const stat = fs.statSync(absolutePath);
     if (stat.isFile()) return [absolutePath];
     return fs.readdirSync(absolutePath, { withFileTypes: true })
-        .flatMap((entry) => collectFiles(path.join(relativePath, entry.name)));
+        .flatMap((entry) => collectFiles(path.join(relativePath, entry.name), root));
 }
 
 function getBuildVersion() {
@@ -60,10 +87,12 @@ function getBuildVersion() {
         'index.html',
         'style.css',
         'scripts/build-web.js',
+        'scripts/build-renderer-entry.js',
         'src/renderer',
         'src/web',
-        'rust-wasm-browser.js'
-    ].flatMap(collectFiles).sort().forEach((filePath) => {
+        'src/common/pocket-pa-format.js',
+        'src/common/sender-profile.js'
+    ].flatMap(file => collectFiles(file)).sort().forEach((filePath) => {
         hash.update(path.relative(projectRoot, filePath));
         hash.update(fs.readFileSync(filePath));
     });
@@ -76,6 +105,16 @@ function getContentVersion(content) {
 
 function getFileVersion(filePath) {
     return getContentVersion(fs.readFileSync(filePath));
+}
+
+function versionWebHomePoster() {
+    const poster = './src/web/assets/home-feature-20260610-v2-poster.jpg';
+    const versioned = `${poster}?v=${getFileVersion(path.join(outputDir, poster))}`;
+    const homeScript = path.join(outputDir, 'src/web/pocket-home.js');
+    const source = fs.readFileSync(homeScript, 'utf8');
+    if (!source.includes(poster)) throw new Error(`Missing static asset reference: ${poster}`);
+    fs.writeFileSync(homeScript, source.replaceAll(poster, versioned));
+    return versioned;
 }
 
 async function buildDatabaseRuntime(sourcePath, runtimePath, banner) {
@@ -109,9 +148,13 @@ async function buildDatabaseRuntime(sourcePath, runtimePath, banner) {
 async function buildMediaVendors() {
     const outputPath = path.join(projectRoot, 'src', 'renderer', 'vendor', 'media-vendors.js');
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    await esbuild.build({
-        entryPoints: [path.join(projectRoot, 'src', 'renderer', 'media-vendor-loader.js')],
-        outfile: outputPath,
+    await Promise.all([
+        ['media-vendor-loader.js', 'media-vendors.js'],
+        ['player-vendor-loader.js', 'player-vendors.js'],
+        ['pinyin-vendor-loader.js', 'pinyin-vendor.js']
+    ].map(([entry, output]) => esbuild.build({
+        entryPoints: [path.join(projectRoot, 'src', 'renderer', entry)],
+        outfile: path.join(path.dirname(outputPath), output),
         bundle: true,
         format: 'iife',
         platform: 'browser',
@@ -122,33 +165,18 @@ async function buildMediaVendors() {
         define: {
             'process.env.NODE_ENV': '"production"'
         }
-    });
+    })));
 }
 
 async function buildDatabaseTailwind() {
-    const outputPath = path.join(projectRoot, 'src', 'renderer', 'database', 'tailwind.css');
-    const result = await postcss([
-        tailwindcss({
-            content: [
-                path.join(projectRoot, 'src', 'renderer', 'database', 'app.jsx'),
-                path.join(projectRoot, 'src', 'renderer', 'database', 'index.html')
-            ],
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        gray: { 750: '#2d3748', 850: '#1a202c', 950: '#0d1117' },
-                        gold: { 500: '#EAB308', 100: '#FEF9C3' },
-                        silver: { 500: '#94A3B8', 100: '#F1F5F9' },
-                        bronze: { 500: '#B45309', 100: '#FFEDD5' }
-                    }
-                }
-            }
-        }),
-        scopeDatabaseTailwind
-    ]).process('@tailwind base; @tailwind components; @tailwind utilities;', { from: undefined });
+    const directory = path.join(projectRoot, 'src', 'renderer', 'database');
+    const sourcePath = path.join(directory, 'tailwind.input.css');
+    const compiled = await postcss([tailwindcss({ optimize: false })]).process(
+        fs.readFileSync(sourcePath, 'utf8'), { from: sourcePath }
+    );
+    const result = await postcss([scopeDatabaseTailwind]).process(compiled.css, { from: sourcePath });
     const minified = await esbuild.transform(result.css, { loader: 'css', minify: true });
-    fs.writeFileSync(outputPath, minified.code, 'utf8');
+    fs.writeFileSync(path.join(directory, 'tailwind.css'), minified.code, 'utf8');
 }
 
 function copyDesktopVendorFiles() {
@@ -166,23 +194,6 @@ async function buildDesktopRuntime() {
     );
     await Promise.all([buildMediaVendors(), buildDatabaseTailwind()]);
     copyDesktopVendorFiles();
-}
-
-function getRendererBundlePaths(indexHtml) {
-    const startMarker = '<script src="./src/renderer/bootstrap-shared.js"></script>';
-    const endMarker = '<script src="./src/renderer/app-legacy.js"></script>';
-    const startIndex = indexHtml.indexOf(startMarker);
-    const endMarkerIndex = indexHtml.indexOf(endMarker);
-    if (startIndex < 0 || endMarkerIndex < startIndex) {
-        throw new Error('Web renderer bundle script block not found');
-    }
-    const endIndex = endMarkerIndex + endMarker.length;
-    const block = indexHtml.slice(startIndex, endIndex);
-    const paths = Array.from(
-        block.matchAll(/src="\.\/(src\/renderer\/[^"?]+\.js)"/g),
-        (match) => match[1]
-    );
-    return { startIndex, endIndex, paths };
 }
 
 async function writeRendererChunk(label, source, options = {}) {
@@ -203,49 +214,19 @@ async function writeRendererChunk(label, source, options = {}) {
     return `<script defer src="./src/renderer/${chunkName}"></script>`;
 }
 
-async function bundleRenderer(indexHtml) {
-    const { startIndex, endIndex, paths } = getRendererBundlePaths(indexHtml);
-    const bootstrapPath = paths[0];
-    const appLegacyPath = paths[paths.length - 1];
-    if (!bootstrapPath.endsWith('/bootstrap-shared.js') || !appLegacyPath.endsWith('/app-legacy.js')) {
-        throw new Error('Unexpected web renderer bundle boundaries');
+async function bundleLegacyRenderer(indexHtml) {
+    for (const [file, label, preserveTopLevelNames] of [
+        ['bootstrap-shared.js', 'web-bootstrap', true],
+        ['app-legacy.js', 'web-app-core', false]
+    ]) {
+        const relativePath = `src/renderer/${file}`;
+        const tag = `<script src="./${relativePath}"></script>`;
+        if (!indexHtml.includes(tag)) throw new Error(`Missing legacy renderer script: ${relativePath}`);
+        const source = fs.readFileSync(path.join(projectRoot, relativePath), 'utf8');
+        const chunkTag = await writeRendererChunk(label, source, { preserveTopLevelNames });
+        indexHtml = indexHtml.replace(tag, chunkTag);
     }
-
-    const readRendererSource = (relativePath) => fs.readFileSync(path.join(outputDir, relativePath), 'utf8');
-    const tags = [];
-    tags.push(await writeRendererChunk(
-        'web-bootstrap',
-        readRendererSource(bootstrapPath),
-        { preserveTopLevelNames: true }
-    ));
-
-    const featurePaths = paths.slice(1, -1);
-    const targetChunkBytes = 280 * 1024;
-    const featureChunks = [];
-    let currentChunk = [];
-    let currentChunkBytes = 0;
-    featurePaths.forEach((relativePath) => {
-        const source = readRendererSource(relativePath);
-        const sourceBytes = Buffer.byteLength(source);
-        if (currentChunk.length && currentChunkBytes + sourceBytes > targetChunkBytes) {
-            featureChunks.push(currentChunk);
-            currentChunk = [];
-            currentChunkBytes = 0;
-        }
-        currentChunk.push({ relativePath, source });
-        currentChunkBytes += sourceBytes;
-    });
-    if (currentChunk.length) featureChunks.push(currentChunk);
-
-    for (let index = 0; index < featureChunks.length; index += 1) {
-        const source = featureChunks[index]
-            .map(({ relativePath, source: fileSource }) => `// ${relativePath}\n${fileSource}\n;`)
-            .join('\n');
-        tags.push(await writeRendererChunk(`web-features-${index + 1}`, source));
-    }
-
-    tags.push(await writeRendererChunk('web-app-core', readRendererSource(appLegacyPath)));
-    return indexHtml.slice(0, startIndex) + tags.join('\n    ') + indexHtml.slice(endIndex);
+    return indexHtml;
 }
 
 function configureLazyWebMediaVendors(indexHtml) {
@@ -255,9 +236,11 @@ function configureLazyWebMediaVendors(indexHtml) {
     fs.copyFileSync(mediaVendorsPath, path.join(outputDir, versionedRelativePath));
 
     const browserShimTag = '    <script src="./src/web/browser-shim.js?v=__YAYA_BUILD_VERSION__"></script>';
-    const lazyBrowserShimTag = `    <script src="./src/web/browser-shim.js?v=__YAYA_BUILD_VERSION__" data-media-vendors-url="./${versionedRelativePath}"></script>`;
+    const lazyBrowserShimTag = `    <script src="./src/web/member-room-client.js?v=__YAYA_BUILD_VERSION__"></script>
+    <script src="./src/web/browser-shim.js?v=__YAYA_BUILD_VERSION__" data-media-vendors-url="./${versionedRelativePath}"></script>`;
     return indexHtml
         .replace(/^[ \t]*<script src="\.\/src\/renderer\/vendor\/media-vendors\.js\?v=__YAYA_BUILD_VERSION__"><\/script>\r?\n/m, '')
+        .replace(/^[ \t]*<script src="\.\/src\/renderer\/(?:vendor\/pinyin-vendor|desktop-media-loader)\.js\?v=__YAYA_BUILD_VERSION__"><\/script>\r?\n/gm, '')
         .replace(browserShimTag, lazyBrowserShimTag);
 }
 
@@ -282,13 +265,13 @@ function configureSolidWebBackground(indexHtml) {
         .replace(rendererThemeTag, webThemeTag);
 }
 
-function configureWebFeedbackContentSecurityPolicy(indexHtml) {
+function configureWebContentSecurityPolicy(indexHtml) {
     const originalPolicy = "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' file: https: data: blob:; media-src 'self' file: https: http: data: blob:; connect-src 'self' file: https: http: ws: wss: data: blob:; font-src 'self' data:;";
-    const feedbackPolicy = "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: https://*.tawk.to https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://*.tawk.to https://fonts.googleapis.com https://cdn.jsdelivr.net; img-src 'self' file: https: data: blob:; media-src 'self' file: https: http: data: blob:; connect-src 'self' file: https: http: ws: wss: data: blob:; font-src 'self' data: https://*.tawk.to https://fonts.gstatic.com; frame-src https://*.tawk.to; form-action 'self' https://*.tawk.to;";
+    const webPolicy = "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net https://cdn.dingxiang-inc.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; img-src 'self' file: https: data: blob:; media-src 'self' file: https: http: data: blob:; connect-src 'self' file: https: http: ws: wss: data: blob:; font-src 'self' data: https://fonts.gstatic.com; frame-src https://*.dingxiang-inc.com; form-action 'self';";
     if (!indexHtml.includes(originalPolicy)) {
         throw new Error('Web Content Security Policy block not found');
     }
-    return indexHtml.replace(originalPolicy, feedbackPolicy);
+    return indexHtml.replace(originalPolicy, webPolicy);
 }
 
 function configureEarlyWebLocale(indexHtml) {
@@ -296,9 +279,14 @@ function configureEarlyWebLocale(indexHtml) {
     if (!indexHtml.includes(titleTag)) {
         throw new Error('Web document title tag not found');
     }
+    const localeAssets = Object.fromEntries(['zh-CN', 'zh-TW', 'zh-HK', 'en', 'ko', 'ja'].map(locale => {
+        const asset = `src/web/i18n/${locale}.js`;
+        return [locale, `./${asset}?v=${getFileVersion(path.join(outputDir, asset))}`];
+    }));
     const bootstrap = `    <title></title>
     <script>
         (() => {
+            window.YayaLocaleAssets = ${JSON.stringify(localeAssets)};
             const normalizeLocale = (value) => {
                 const locale = String(value || '').trim().replace('_', '-');
                 if (/^zh-(?:Hant-)?(?:HK|MO)$/i.test(locale)) return 'zh-HK';
@@ -315,7 +303,6 @@ function configureEarlyWebLocale(indexHtml) {
                 urlLocale = normalizeLocale(new URL(window.location.href).searchParams.get('lang'));
                 storedLocale = normalizeLocale(window.localStorage.getItem('yaya_web_locale_v1'));
             } catch (_) {
-                // Storage can be unavailable in restricted browsing modes.
             }
             const locale = urlLocale
                 || storedLocale
@@ -331,9 +318,18 @@ function configureEarlyWebLocale(indexHtml) {
                 ja: 'yaya msg'
             };
             document.documentElement.dataset.initialLocale = locale;
+            document.documentElement.dataset.platform = 'web';
+            document.documentElement.classList.add('web-shell-pending');
             document.documentElement.lang = locale;
             if (locale !== 'zh-CN') document.documentElement.classList.add('web-i18n-pending');
             document.title = titles[locale] || titles['zh-CN'];
+            if (locale !== 'zh-CN') {
+                const preload = document.createElement('link');
+                preload.rel = 'preload';
+                preload.as = 'script';
+                preload.href = window.YayaLocaleAssets[locale];
+                document.head.appendChild(preload);
+            }
         })();
     </script>`;
     return indexHtml.replace(titleTag, bootstrap);
@@ -345,7 +341,7 @@ function configureWebLocalePacks(indexHtml) {
     if (!indexHtml.includes(shellTag) || !indexHtml.includes(homeTag)) {
         throw new Error('Web locale script anchors not found');
     }
-    const packTags = ['zh-CN', 'zh-TW', 'zh-HK', 'en', 'ko', 'ja']
+    const packTags = ['zh-CN']
         .map((locale) => `    <script src="./src/web/i18n/${locale}.js?v=__YAYA_BUILD_VERSION__"></script>`)
         .join('\n');
     const translatorTag = '    <script src="./src/web/i18n/page-translator.js?v=__YAYA_BUILD_VERSION__"></script>';
@@ -354,9 +350,69 @@ function configureWebLocalePacks(indexHtml) {
         .replace(homeTag, `${homeTag}\n${translatorTag}`);
 }
 
+function configureDeferredWebScripts(indexHtml) {
+    return indexHtml.replace(/<script\b([^>]*\bsrc="([^"]+)"[^>]*)>/g, (tag, attributes, source) => {
+        if (/(?:\b(?:defer|async)(?:\s|=|$)|\btype\s*=)/.test(attributes)
+            || source.includes('/solid-background.js')) return tag;
+        return `<script defer${attributes}>`;
+    }).replace("const platform = (window.desktop && window.desktop.platform) || '';",
+        "const platform = (window.desktop && window.desktop.platform) || document.documentElement.dataset.platform || '';"
+    );
+}
+
+async function optimizeWebTextAssets(assets) {
+    for (const relativePath of assets.filter(file => /\.(?:m?js|css)$/.test(file))) {
+        const target = path.join(outputDir, relativePath);
+        let source = fs.readFileSync(target, 'utf8');
+        if (relativePath === 'src/web/pocket-home.css') {
+            source = source.replace(/^@import[^;]+;\s*/, '');
+        }
+        if (relativePath === 'src/web/vendor/phosphor/style.css') {
+            source = source.replace('font-display: block', 'font-display: swap');
+        }
+        const result = await esbuild.transform(source, {
+            loader: relativePath.endsWith('.css') ? 'css' : 'js',
+            minifyWhitespace: true,
+            minifyIdentifiers: false,
+            minifySyntax: false,
+            legalComments: 'none'
+        });
+        fs.writeFileSync(target, result.code);
+    }
+}
+
+async function copyReferencedRendererScripts(indexHtml) {
+    const scripts = new Set(standaloneWebRendererScripts);
+    for (const [, , source] of indexHtml.matchAll(localWebScript)) {
+        if (source.startsWith('./src/renderer/')) scripts.add(source.slice(2));
+    }
+    const missing = [...scripts].filter(file => !fs.existsSync(path.join(outputDir, file)));
+    for (const file of missing) copyFile(file);
+    await optimizeWebTextAssets(missing);
+}
+
+function precompressWebAssets() {
+    const walk = directory => fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+        const target = path.join(directory, entry.name);
+        return entry.isDirectory() ? walk(target) : [target];
+    });
+    for (const target of walk(outputDir).filter(file => /\.(?:js|css)$/.test(file))) {
+        const source = fs.readFileSync(target);
+        if (source.length < 1024) continue;
+        fs.writeFileSync(`${target}.br`, brotliCompressSync(source, {
+            params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 }
+        }));
+        fs.writeFileSync(`${target}.gz`, gzipSync(source));
+    }
+}
+
 function versionWebIndexAssets(indexHtml, fallbackVersion) {
+    const withScriptVersions = indexHtml.replace(localWebScript, (tag, prefix, source, query) => {
+        if (query || /\.[0-9a-f]{12}\.m?js$/.test(source)) return tag;
+        return `${prefix}${source}?v=__YAYA_BUILD_VERSION__"`;
+    });
     const versionedReference = /((?:src|href)="\.\/|(?:src|href)=")([^"?]+)\?v=__YAYA_BUILD_VERSION__(")/g;
-    const withPerFileVersions = indexHtml.replace(versionedReference, (match, prefix, assetPath, suffix) => {
+    const withPerFileVersions = withScriptVersions.replace(versionedReference, (match, prefix, assetPath, suffix) => {
         const relativePath = assetPath.replace(/^\.\//, '').replaceAll('/', path.sep);
         const filePath = path.join(outputDir, relativePath);
         if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return match;
@@ -365,15 +421,47 @@ function versionWebIndexAssets(indexHtml, fallbackVersion) {
     return withPerFileVersions.replaceAll('__YAYA_BUILD_VERSION__', fallbackVersion);
 }
 
+function configureWebHomeMarkup(indexHtml) {
+    const links = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/web/home-links.json'), 'utf8'));
+    links.forEach(({ title, description, url }) => {
+        if (!title || !description || new URL(url).protocol !== 'https:') {
+            throw new Error('Invalid Web homepage link');
+        }
+    });
+    const mount = '<div id="view-home" class="web-home-view"></div>';
+    if (!indexHtml.includes(mount)) throw new Error('Web homepage mount not found');
+    const data = JSON.stringify(links).replace(/</g, '\\u003c');
+    const home = `<div id="view-home" class="web-home-view">
+                <script type="application/json" id="web-home-links">${data}</script>
+            </div>`;
+    return indexHtml.replace(mount, () => home);
+}
+
+function configureWebDesktopDownload(indexHtml) {
+    const shell = fs.readFileSync(path.join(projectRoot, 'src/web/web-shell.js'), 'utf8');
+    const version = shell.match(/const DESKTOP_VERSION = '([^']+)'/)[1];
+    const stamp = shell.match(/Windows: '([^']+)'/)[1];
+    const href = `https://gnz.hk/downloads/yaya_msg-${version}-win.exe?v=${stamp}`;
+    const pattern = /(<span id="sms-limit-download-links">[\s\S]*?\bhref=")[^"]+/g;
+    if ([...indexHtml.matchAll(pattern)].length !== 1) throw new Error('Desktop download fallback link not found');
+    return indexHtml.replace(pattern, (_, prefix) => prefix + href);
+}
+
 async function buildWebAssets() {
     await buildDesktopRuntime();
     fs.rmSync(outputDir, { recursive: true, force: true });
     fs.mkdirSync(outputDir, { recursive: true });
-    ['index.html', 'style.css', 'web-icon.png', '2.wasm', 'rust-wasm-browser.js']
+    ['index.html', 'style.css', 'web-icon.png', '_headers']
         .forEach((relativePath) => copyFile(relativePath));
     copyFile('web-icon.png', 'icon.png');
-    copyDir('src/renderer');
+    copyDir('src/renderer', file => !file.endsWith('.mjs') && file !== 'src/renderer/vendor/renderer-entry.js'
+        && (!file.endsWith('.js') || /^src\/renderer\/(?:vendor|database)\//.test(file)));
     copyDir('src/web');
+    copyFile('src/common/gift-pricing.js');
+    copyFile('src/common/gift-prices.snapshot.js');
+    copyFile('src/common/message-room-filter.js');
+    copyFile('src/common/pocket-registration.js');
+    copyFile('src/common/netface-model.js');
     copyFile('src/web/service-worker.js', 'service-worker.js');
     copyFile('node_modules/@ffmpeg/ffmpeg/dist/ffmpeg.min.js', 'src/renderer/vendor/ffmpeg/ffmpeg.min.js');
     copyFile('node_modules/@ffmpeg/core/dist/ffmpeg-core.js', 'src/renderer/vendor/ffmpeg/ffmpeg-core.js');
@@ -385,6 +473,15 @@ async function buildWebAssets() {
         path.join(outputDir, 'src', 'renderer', 'database', 'runtime.js'),
         '// Generated with esbuild by scripts/build-web.js. Do not edit web-dist output directly.'
     );
+
+    const { prepareWebIconAssets } = require('./web-icon-assets.cjs');
+    prepareWebIconAssets(projectRoot, outputDir);
+    const poster = versionWebHomePoster();
+    const copiedAssets = ['style.css', 'src/web', 'src/renderer']
+        .flatMap(file => collectFiles(file, outputDir))
+        .map(file => path.relative(outputDir, file).replaceAll(path.sep, '/'));
+    await optimizeWebTextAssets(copiedAssets);
+    buildRendererEntry(outputDir, { web: true });
 
     const buildVersion = getBuildVersion();
     const onlineAssetDir = path.join(outputDir, 'src', 'web');
@@ -401,15 +498,49 @@ async function buildWebAssets() {
     }
     const indexPath = path.join(outputDir, 'index.html');
     let indexHtml = fs.readFileSync(indexPath, 'utf8');
+    const databaseDir = path.join(outputDir, 'src', 'renderer', 'database');
+    const databaseRuntime = path.join(databaseDir, 'runtime.js');
+    const versionedDatabaseRuntime = `runtime.${getFileVersion(databaseRuntime)}.js`;
+    fs.copyFileSync(databaseRuntime, path.join(databaseDir, versionedDatabaseRuntime));
+    indexHtml = indexHtml.replace('<head>', `<head>\n    <meta name="yaya-database-runtime" content="/src/renderer/database/${versionedDatabaseRuntime}">`);
     indexHtml = configureWebDocumentBase(indexHtml);
     indexHtml = configureSolidWebBackground(indexHtml);
-    indexHtml = configureWebFeedbackContentSecurityPolicy(indexHtml);
+    indexHtml = configureWebContentSecurityPolicy(indexHtml);
     indexHtml = configureEarlyWebLocale(indexHtml);
     indexHtml = configureWebLocalePacks(indexHtml);
+    indexHtml = configureWebHomeMarkup(indexHtml);
+    indexHtml = configureWebDesktopDownload(indexHtml);
     indexHtml = configureLazyWebMediaVendors(indexHtml);
-    indexHtml = await bundleRenderer(indexHtml);
+    indexHtml = await bundleLegacyRenderer(indexHtml);
+    indexHtml = indexHtml.replace(/^[ \t]*<script\b[^>]*src="\.\/([^"?]+)(?:\?[^"]*)?"[^>]*><\/script>\r?\n/gm,
+        (tag, relativePath) => excludedWebScripts.has(relativePath) ? '' : tag);
+    await copyReferencedRendererScripts(indexHtml);
+    indexHtml = configureDeferredWebScripts(indexHtml);
+    indexHtml = indexHtml.replace('<link rel="stylesheet" href="./src/web/pocket-home.css',
+        `<link rel="stylesheet" href="./src/web/vendor/phosphor/style.css?v=__YAYA_BUILD_VERSION__">\n    <link rel="preload" as="image" href="${poster}">\n    <link rel="stylesheet" href="./src/web/pocket-home.css`);
     indexHtml = versionWebIndexAssets(indexHtml, buildVersion);
     fs.writeFileSync(indexPath, indexHtml, 'utf8');
+    const statusPath = path.join(outputDir, 'src', 'web', 'status-page.txt');
+    if (fs.existsSync(statusPath)) {
+        const { STATUS_SERVICES, STATUS_HISTORY } = await import('../workers/api-status.mjs');
+        const escapeHtml = value => String(value).replace(/[&<>"']/g, char => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        })[char]);
+        const bars = '<span class="day-bar" data-state="unknown" aria-hidden="true"></span>'
+            .repeat(STATUS_HISTORY.days * 24 / STATUS_HISTORY.intervalHours);
+        const placeholder = [...new Set(STATUS_SERVICES.map(service => service.group))].map(group =>
+            `<section class="service-group"><h3 class="group-title">${escapeHtml(group)}</h3>`
+            + STATUS_SERVICES.filter(service => service.group === group).map(service =>
+                `<article class="service"><button class="service-toggle" type="button" disabled aria-expanded="false">`
+                + `<span class="service-name"><span class="chevron">›</span><span>${escapeHtml(service.name)}</span></span>`
+                + '<span class="service-state" data-state="unknown"><span class="status-dot" data-state="unknown"></span><span>暂无请求记录</span></span></button>'
+                + `<div class="history-bars" role="group" aria-label="${escapeHtml(service.name)}最近${STATUS_HISTORY.days}天历史，每格${STATUS_HISTORY.intervalHours}小时">${bars}</div>`
+                + `<div class="history-caption"><span>${STATUS_HISTORY.days} 天前</span><span>现在</span></div></article>`
+            ).join('') + '</section>'
+        ).join('');
+        const statusHtml = fs.readFileSync(statusPath, 'utf8').replace('<!-- STATUS_SERVICE_PLACEHOLDER -->', placeholder);
+        fs.writeFileSync(statusPath, versionWebIndexAssets(statusHtml, buildVersion), 'utf8');
+    }
     const onlinePath = path.join(outputDir, 'src', 'web', 'online-page.txt');
     if (fs.existsSync(onlinePath)) {
         const onlineHtml = fs.readFileSync(onlinePath, 'utf8')
@@ -421,10 +552,24 @@ async function buildWebAssets() {
             'utf8'
         );
     }
+    precompressWebAssets();
     console.log(`Web assets built with esbuild (${buildVersion}) at ${outputDir}`);
 }
 
-const buildTask = buildDesktopRuntimeOnly ? buildDesktopRuntime() : buildWebAssets();
+async function prepareGiftPriceSnapshot() {
+    const syncScript = path.join(__dirname, 'sync-gift-price-catalog.mjs');
+    const localCatalog = path.join(projectRoot, 'server', 'gift', 'prices.json');
+    if (fs.existsSync(syncScript) && fs.existsSync(localCatalog)) {
+        const module = await import('./sync-gift-price-catalog.mjs');
+        module.syncGiftPriceCatalog();
+    } else {
+        const snapshot = require('../src/common/gift-prices.snapshot');
+        require('../src/common/gift-pricing').validateSnapshot(snapshot);
+    }
+}
+
+const buildTask = prepareGiftPriceSnapshot()
+    .then(() => buildDesktopRuntimeOnly ? buildDesktopRuntime() : buildWebAssets());
 buildTask
     .then(() => console.log(buildDesktopRuntimeOnly ? 'Local runtime assets built' : 'Web build completed'))
     .catch((error) => {

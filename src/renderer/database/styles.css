@@ -93,13 +93,22 @@
             color: var(--db-text-sub) !important;
         }
 
-        .db-app .shadow-sm,
+        .db-app .shadow-xs,
         .db-app .hover\:shadow-md:hover {
             box-shadow: 0 8px 22px rgba(0, 0, 0, 0.05) !important;
         }
 
         .db-member-card {
             min-height: 72px;
+        }
+
+        .db-app .db-member-card[data-group="IDFT"] {
+            background: color-mix(in srgb, var(--db-member-accent) 9%, var(--db-card)) !important;
+            border-color: color-mix(in srgb, var(--db-member-accent) 38%, var(--db-border)) !important;
+        }
+
+        .dark .db-app .db-member-card[data-group="IDFT"] {
+            background: color-mix(in srgb, var(--db-member-accent) 22%, var(--db-card)) !important;
         }
 
         .db-member-card-avatar {

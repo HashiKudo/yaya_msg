@@ -108,7 +108,10 @@
             if (typeof value === 'object' && !Array.isArray(value)) return value;
             if (typeof value !== 'string') return null;
             try {
-                const parsed = JSON.parse(value);
+                const parsed = JSON.parse(value.replace(
+                    /("(?:userId|sourceId|liveId|id)"\s*:\s*)(-?\d{16,})(?=\s*[,}])/g,
+                    '$1"$2"'
+                ));
                 return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
             } catch (error) {
                 return null;
@@ -149,11 +152,6 @@
                 .map(value => readRawJsonId(value, 'sourceId'))
                 .find(Boolean) || '';
             if (rawSourceId) extension.__rawSourceId = rawSourceId;
-            const rawUserId = candidates
-                .filter(value => typeof value === 'string')
-                .map(value => readRawJsonId(value, 'userId'))
-                .find(Boolean) || '';
-            if (rawUserId) extension.__rawUserId = rawUserId;
             return extension;
         }
 
@@ -204,7 +202,7 @@
                     || msg?.nick
                     || ''
                 ).trim(),
-                userId: String(extension.__rawUserId || user.userId || user.id || extension.userId || msg?.from || '').trim(),
+                userId: String(user.userId || user.id || extension.userId || msg?.from || '').trim(),
                 avatar: String(user.avatar || user.avatarUrl || msg?.fromAvatar || '').trim()
             };
         }
@@ -524,6 +522,7 @@
         }
 
         function appendLiveDanmuListItem(item) {
+            if (window.desktop?.isLiveWindow) return;
             if (!item?.text) return;
             const list = document.getElementById('live-danmu-list-body');
             if (!list) return;
@@ -656,6 +655,7 @@
 
         function showDesktopGiftEffect(item, player) {
             if (!window.desktop?.platform || window.desktop.platform === 'web') return;
+            if (window.YayaGiftEffectSettings?.isEnabled('live') === false) return;
             const parent = player?.template?.$player || document.getElementById('live-player-container');
             if (!parent) return;
             if (!document.getElementById('yaya-desktop-gift-effect-style')) {
@@ -714,11 +714,19 @@
             giftEffectTimers.add(timer);
         }
 
-        function clearDanmuOverlay() {
+        function clearGiftVisuals() {
             giftAnimationPlayer?.clear();
             giftEffectTimers.forEach(timer => clearTimeout(timer));
             giftEffectTimers.clear();
             document.querySelectorAll('.yaya-desktop-gift-effects').forEach(node => node.remove());
+        }
+
+        window.addEventListener('yaya:gift-effects-setting-changed', event => {
+            if (event.detail?.scope === 'live' && !event.detail.enabled) clearGiftVisuals();
+        });
+
+        function clearDanmuOverlay() {
+            clearGiftVisuals();
             resetLiveDanmuList();
         }
 
@@ -829,7 +837,7 @@
             if (!countNode) return;
             const count = Number(value);
             countNode.textContent = Number.isFinite(count) && count >= 0
-                ? new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 }).format(Math.round(count))
+                ? String(Math.round(count))
                 : '--';
         }
 
@@ -1037,25 +1045,15 @@
             }
         }
 
-        async function initLiveDanmu(chatroomId, options = {}) {
-            return connectLiveDanmu(chatroomId, deps.getDp?.(), options);
-        }
-
         async function initArtLiveDanmu(chatroomId, art, options = {}) {
             if (!art) return null;
             return connectLiveDanmu(chatroomId, art, options);
         }
 
-        async function initDanmuForDPlayer(chatroomId, options = {}) {
-            return initLiveDanmu(chatroomId, options);
-        }
-
         return {
             disconnectLiveDanmu,
             ensureNimChatroomSdkLoaded,
-            initLiveDanmu,
             initArtLiveDanmu,
-            initDanmuForDPlayer,
             parseChatroomMessage: normalizeChatroomMessage,
             renderLiveDanmu: drawLiveDanmu,
             ensureDanmakuComposer,

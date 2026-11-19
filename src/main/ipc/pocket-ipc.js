@@ -1,9 +1,13 @@
-const { ipcMain } = require('electron');
+const { ipcMain, BrowserWindow, app } = require('electron');
+const { handleDesktop } = require('./desktop-sender');
 const pocketService = require('../services/pocket-service');
 const settingsService = require('../services/settings-service');
 const { runLiveReadRequest } = require('../services/live-read-request');
 const { withDesktopLiveRoom } = require('../services/live-room-routing');
 const { POCKET_CHANNEL_METHODS } = require('../../common/pocket-channel-config');
+const { createPocketSocialLoginService } = require('../services/pocket-social-login-service');
+const { getMainWindow } = require('../window');
+const { traceNetfaceRequest } = require('../services/netface-log');
 
 const YAYA_API_PROXY_SETTING_KEY = 'useYayaApiProxy';
 const DEFAULT_YAYA_API_BASE = 'https://api.gnz.hk';
@@ -134,7 +138,9 @@ async function invokeYayaPocketApiProxy(payload, baseUrl) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             path: payload?.path,
-            postData: payload?.postData || {}
+            postData: payload?.postData || {},
+            clientProfile: payload?.clientProfile,
+            deviceId: payload?.deviceId
         })
     });
     const { response, text, data, parseFailed, transientFailure } = result;
@@ -169,7 +175,7 @@ async function invokeYayaPocketApiProxy(payload, baseUrl) {
 }
 
 async function handlePocketRequest(channel, payload, localHandler) {
-    if (channel === 'send-live-gift' || channel.includes('netface')) return localHandler(payload);
+    if (channel === 'send-live-gift' || channel === 'register-by-code' || channel === 'login-by-password' || channel === 'login-by-thirdparty' || channel.includes('netface')) return localHandler(payload);
     const proxySettings = readYayaApiProxySettings();
     if (proxySettings.enabled) {
         try {
@@ -208,14 +214,25 @@ async function handlePocketApiPathRequest(payload) {
 }
 
 function registerPocketIpc() {
+    const socialLogin = createPocketSocialLoginService({ BrowserWindow, invokePocket: (channel, payload) => pocketService.invoke(channel, payload) });
+    const isMainPage = event => event.sender === getMainWindow()?.webContents;
+    handleDesktop(ipcMain, 'pocket-social-login-start', (event, payload) => isMainPage(event)
+        ? socialLogin.start(event.sender, payload) : { success: false, msg: '请从账号设置发起登录' });
+    handleDesktop(ipcMain, 'pocket-social-login-cancel', (event, payload) => isMainPage(event)
+        ? socialLogin.cancel(event.sender, payload?.attemptId) : { success: false });
+    app.on('before-quit', socialLogin.closeAll);
     const handle = (channel) => {
-        ipcMain.handle(channel, async (event, payload) => {
-            const result = await handlePocketRequest(channel, payload, preparedPayload => pocketService.invoke(channel, preparedPayload));
+        handleDesktop(ipcMain, channel, async (event, payload) => {
+            const action = () => handlePocketRequest(channel, payload, preparedPayload => pocketService.invoke(channel, preparedPayload));
+            const result = channel.includes('netface') ? await traceNetfaceRequest(channel, payload, action, {
+                boundary: 'ipc', ticketId: payload?.ticketId, eventId: payload?.eventId, senderId: event.sender?.id,
+                route: 'direct'
+            }) : await action();
             return channel === 'fetch-live-one' ? withDesktopLiveRoom(result) : result;
         });
     };
 
-    ipcMain.handle('fetch-pocket-api', (event, payload) => handlePocketApiPathRequest(payload));
+    handleDesktop(ipcMain, 'fetch-pocket-api', (event, payload) => handlePocketApiPathRequest(payload));
     Object.keys(POCKET_CHANNEL_METHODS).forEach(handle);
 }
 

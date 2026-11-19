@@ -19,8 +19,7 @@
             replaceTencentEmoji,
             showConfirm,
             showToast,
-            switchView,
-            downloadMediaFileIconMode
+            switchView
         } = deps;
 
         let followedAutoRefreshEnabled = false;
@@ -37,12 +36,14 @@
         let scheduleFollowedRoomPoll = null;
         let followedAutoRefreshCycle = 0;
         let activeFollowedMainChannel = '';
+        let activeFollowedSmallChannel = '';
         let isFollowedSmallRoomMode = false;
         let followedStickToBottom = true;
         let followedUserScrollLockUntil = 0;
         let followedLastScrollTop = 0;
         let followedAutoScrollToken = 0;
         let followedPendingBottomTimer = null;
+        let followedBottomFollowCleanup = null;
         let followedPendingHtml = '';
         let followedPendingCount = 0;
         let followedPendingMessageIds = new Set();
@@ -56,6 +57,7 @@
         let memberRoomReconnectAttempt = 0;
         let memberRoomNeedsCatchup = false;
         const isDesktopRoom = Boolean(window.desktop?.platform && window.desktop.platform !== 'web');
+        const supportsMemberRoomRealtime = isDesktopRoom || window.desktop?.capabilities?.memberRoomRealtime === true;
         const roomRealtime = window.YayaRendererFeatures.memberRoomRealtime;
         let followedRoomEssenceMessages = [];
         let followedRoomEssenceIndex = 0;
@@ -66,6 +68,7 @@
         let followedUserProfileCurrentEntry = null;
         let followedProfileVideoCoverObserver = null;
         let followedProfileDynamicStatsObserver = null;
+        let followedPreviewMediaObserver = null;
         const followedUserProfileHistory = [];
         const followedServerDetailCache = new Map();
         const followedProfileDynamicStatsCache = new Map();
@@ -85,12 +88,113 @@
         let memberRoomComposerReconnectPromise = null;
         let memberRoomConnectionGeneration = 0;
         let memberRoomComposerSending = false;
-        let memberRoomSessionHeld = false;
-        const MEMBER_ROOM_IDLE_DISCONNECT_MS = 5 * 60 * 1000;
-        let memberRoomIdleTimer = null;
         let memberRoomReplyTarget = null;
         let memberRoomContextMenu = null;
         const memberRoomMessageActions = new Map();
+        const followedRoomSnapshots = new Map();
+        let followedRoomSnapshotAccount = '';
+        let renderedFollowedRoom = null;
+        const FOLLOWED_ROOM_SNAPSHOT_LIMIT = 4;
+        const FOLLOWED_ROOM_SNAPSHOT_MAX_MESSAGES = 120;
+        const FOLLOWED_ROOM_SNAPSHOT_TTL = 2 * 60 * 1000;
+
+        function followedRoomSnapshotKey() {
+            return JSON.stringify([String(activeFollowedServer || ''), String(activeFollowedChannel || ''), isFollowedChatAllMode]);
+        }
+
+        function syncFollowedRoomSnapshotAccount() {
+            const account = String(getAppToken() || '');
+            if (account !== followedRoomSnapshotAccount) {
+                followedRoomSnapshots.clear();
+                renderedFollowedRoom = null;
+                followedRoomSnapshotAccount = account;
+            }
+            return account;
+        }
+
+        function saveFollowedRoomSnapshot() {
+            if (!isDesktopRoom) return;
+            const account = syncFollowedRoomSnapshotAccount();
+            const box = document.getElementById('followed-chat-messages');
+            if (!account || !box || !renderedFollowedRoom
+                || renderedFollowedRoom.key !== followedRoomSnapshotKey()
+                || Date.now() - renderedFollowedRoom.updatedAt > FOLLOWED_ROOM_SNAPSHOT_TTL
+                || box.querySelectorAll('.msg-item').length > FOLLOWED_ROOM_SNAPSHOT_MAX_MESSAGES) return;
+            box.querySelectorAll('audio, video').forEach(media => media.pause());
+            const key = renderedFollowedRoom.key;
+            followedRoomSnapshots.delete(key);
+            followedRoomSnapshots.set(key, {
+                ...renderedFollowedRoom,
+                nodes: Array.from(box.childNodes),
+                actions: new Map(memberRoomMessageActions),
+                nextTime: activeFollowedNextTime
+            });
+            while (followedRoomSnapshots.size > FOLLOWED_ROOM_SNAPSHOT_LIMIT) {
+                followedRoomSnapshots.delete(followedRoomSnapshots.keys().next().value);
+            }
+        }
+
+        function prepareFollowedRoomMessages() {
+            followedPreviewMediaObserver?.disconnect();
+            const box = document.getElementById('followed-chat-messages');
+            if (!isDesktopRoom) {
+                box.style.transition = 'opacity 0.2s';
+                box.style.opacity = '0.4';
+                box.style.pointerEvents = 'none';
+                return;
+            }
+            syncFollowedRoomSnapshotAccount();
+            const key = followedRoomSnapshotKey();
+            const snapshot = followedRoomSnapshots.get(key);
+            followedRoomSnapshots.delete(key);
+            renderedFollowedRoom = null;
+            memberRoomMessageActions.clear();
+            box.style.transition = 'none';
+            box.style.opacity = '1';
+            box.style.pointerEvents = 'auto';
+            box.replaceChildren();
+            if (snapshot && Date.now() - snapshot.updatedAt <= FOLLOWED_ROOM_SNAPSHOT_TTL) {
+                box.append(...snapshot.nodes);
+                snapshot.actions.forEach((value, actionKey) => memberRoomMessageActions.set(actionKey, value));
+                activeFollowedNextTime = snapshot.nextTime;
+                renderedFollowedRoom = { key, signature: snapshot.signature, updatedAt: snapshot.updatedAt };
+                hydrateFollowedPreviewMedia(box);
+                scrollFollowedToBottom(box);
+            }
+        }
+
+        function refreshFollowedRoomExtras(requestRevision) {
+            const refresh = () => {
+                if (requestRevision !== followedChatRequestRevision) return;
+                if (isDesktopRoom && (document.getElementById('view-followed-rooms')?.style.display === 'none'
+                    || document.getElementById('followed-room-composer')?.style.display === 'none')) return;
+                if (activeFollowedServer) void refreshFollowedChatTitle();
+                void loadFollowedRoomEssence(requestRevision);
+                if (!window.desktop?.isRoomWindow) {
+                    window.autoConnectFollowedRoomRadio?.(
+                        activeFollowedChannel, activeFollowedServer, activeFollowedMemberId, activeFollowedName
+                    );
+                    window.ensureRoomRadioScanFresh?.({ preferredChannelId: activeFollowedChannel,
+                        preferredServerId: activeFollowedServer, preferredMemberName: activeFollowedName, prioritizeCurrent: true });
+                }
+            };
+            if (isDesktopRoom) window.requestAnimationFrame(() => setTimeout(refresh, 0));
+            else refresh();
+        }
+
+        if (isDesktopRoom) window.addEventListener('yaya:account-state-changed', () => {
+            const previousAccount = followedRoomSnapshotAccount;
+            syncFollowedRoomSnapshotAccount();
+            if (previousAccount !== followedRoomSnapshotAccount) {
+                followedChatRequestRevision++;
+                isFollowedChatLoading = false;
+                hideMemberRoomComposer();
+                activeFollowedChannel = '';
+                activeFollowedServer = '';
+                memberRoomMessageActions.clear();
+                document.getElementById('followed-chat-messages')?.replaceChildren();
+            }
+        });
         const memberRoomGiftEffects = window.desktop?.platform && window.desktop.platform !== 'web'
             ? window.YayaRendererFeatures.createMemberRoomGiftEffects?.({
                 ipcRenderer,
@@ -102,24 +206,30 @@
                 getTarget: () => ({ serverId: activeFollowedServer, channelId: activeFollowedChannel, name: activeFollowedName }),
                 getSessionKey: getAppToken,
                 onGiftSent: target => {
-                    touchMemberRoomActivity();
                     scheduleMemberRoomHistoryRefresh(target.serverId, target.channelId, 350);
                     scheduleMemberRoomHistoryRefresh(target.serverId, target.channelId, 1200);
                 }
             }) : null;
+
+        const roomFlipUsers = window.YayaRendererFeatures.createRoomFlipUserFeature?.({
+            ipcRenderer,
+            getToken: () => getAppToken ? getAppToken() : '',
+            getPa: () => window.getPA ? window.getPA() : '',
+            openProfile: (...args) => openFollowedUserProfile(...args)
+        });
 
         function isMemberRoomSendingAvailable() {
             return Boolean(ipcRenderer && typeof ipcRenderer.invoke === 'function');
         }
 
         function reconnectMemberRoomFromComposer() {
-            if (!memberRoomConnected) return;
             const webSessionNeedsRefresh = window.desktop?.platform === 'web'
+                && memberRoomConnected
                 && memberRoomConnectedAt > 0
                 && Date.now() - memberRoomConnectedAt >= WEB_MEMBER_ROOM_RECONNECT_AFTER_MS;
-            if (!webSessionNeedsRefresh || memberRoomComposerReconnectPromise) return;
+            if ((memberRoomConnected && !webSessionNeedsRefresh) || memberRoomComposerReconnectPromise) return;
             if (!activeFollowedServer || !activeFollowedChannel) return;
-            memberRoomConnected = false;
+            if (webSessionNeedsRefresh) memberRoomConnected = false;
             memberRoomComposerReconnectPromise = Promise.resolve()
                 .then(() => ensureMemberRoomConnection())
                 .catch(error => {
@@ -135,7 +245,6 @@
                 form: document.getElementById('followed-room-composer'),
                 input: document.getElementById('followed-room-message-input'),
                 button: document.getElementById('followed-room-message-send'),
-                toggleBtn: document.getElementById('followed-room-connect-toggle'),
                 replyPreview: document.getElementById('followed-room-reply-preview'),
                 replyName: document.getElementById('followed-room-reply-name'),
                 replyText: document.getElementById('followed-room-reply-text')
@@ -146,50 +255,22 @@
             const elements = getMemberRoomComposerElements();
             if (!elements.form) return;
             elements.form.dataset.state = state;
-            const isConnected = state === 'connected';
-            const isConnecting = state === 'connecting';
-            const connectedMessage = '已连接，可输入消息';
-
+            const connectedMessage = '已连接';
             if (elements.input) {
-                let inlineMessage = message;
-                if (!inlineMessage) {
-                    if (isConnected) {
-                        inlineMessage = connectedMessage;
-                    } else if (isConnecting) {
-                        inlineMessage = '正在连接房间发言通道...';
-                    } else {
-                        inlineMessage = '未连接发言';
-                    }
-                }
-                if (isConnected && message === '正在发送') {
+                let inlineMessage = message || (state === 'connected'
+                    ? connectedMessage
+                    : (state === 'connecting' ? '正在连接成员房间' : '未连接'));
+                if (state === 'connected' && message === '正在发送') {
                     inlineMessage = '正在发送';
-                } else if (isConnected && message === '已发送') {
+                } else if (state === 'connected' && message === '已发送') {
                     inlineMessage = '已发送';
                 }
                 elements.input.placeholder = inlineMessage;
                 elements.input.setAttribute('aria-label', inlineMessage);
-                elements.input.readOnly = !isConnected;
             }
             if (elements.button) {
-                elements.button.disabled = !isConnected || memberRoomComposerSending;
+                elements.button.disabled = state !== 'connected' || memberRoomComposerSending;
                 elements.button.textContent = memberRoomComposerSending ? '发送中' : '发送';
-                elements.button.style.display = isConnected ? '' : 'none';
-            }
-            if (elements.toggleBtn) {
-                elements.toggleBtn.disabled = isConnecting || memberRoomComposerSending;
-                if (isConnected) {
-                    elements.toggleBtn.textContent = '断开发言';
-                    elements.toggleBtn.className = 'btn btn-secondary followed-room-connect-btn followed-room-disconnect-active';
-                    elements.toggleBtn.title = '断开房间长连接（断开后可让手机重新登录）';
-                } else if (isConnecting) {
-                    elements.toggleBtn.textContent = '连接中...';
-                    elements.toggleBtn.className = 'btn btn-secondary followed-room-connect-btn';
-                    elements.toggleBtn.title = '正在连接云信...';
-                } else {
-                    elements.toggleBtn.textContent = '连接发言';
-                    elements.toggleBtn.className = 'btn btn-secondary followed-room-connect-btn';
-                    elements.toggleBtn.title = '连接房间发言（注意：连接将导致手机端口袋48被顶下线）';
-                }
             }
         }
 
@@ -217,12 +298,10 @@
                     <div class="followed-room-message-field">
                         <textarea id="followed-room-message-input" class="followed-room-message-input"
                             rows="2" autocomplete="off"
-                            placeholder="未连接发言" readonly></textarea>
+                            placeholder="正在连接成员房间"></textarea>
                     </div>
-                    <button id="followed-room-connect-toggle" class="btn btn-secondary followed-room-connect-btn"
-                        type="button">连接发言</button>
                     <button id="followed-room-message-send" class="btn btn-primary followed-room-message-send"
-                        type="submit" disabled style="display: none;">发送</button>
+                        type="submit" disabled>发送</button>
                 </div>`;
             composerHost.appendChild(form);
             memberRoomGifts?.mount(form);
@@ -231,29 +310,24 @@
                 void sendActiveMemberRoomMessage();
             });
             const input = form.querySelector('.followed-room-message-input');
-            const toggleBtn = form.querySelector('#followed-room-connect-toggle');
-
-            toggleBtn?.addEventListener('click', () => {
-                if (memberRoomConnected) {
-                    void destroyMemberRoomConnections();
-                    setMemberRoomComposerState('disconnected', '已断开发言连接');
-                    showToast('已断开房间连接');
+            input?.addEventListener('keydown', event => {
+                if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+                if (event.ctrlKey || event.metaKey) {
+                    event.preventDefault();
+                    if (!input.disabled && !input.readOnly) {
+                        input.setRangeText('\n', input.selectionStart, input.selectionEnd, 'end');
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
                     return;
                 }
-                ensureMemberRoomConnection().catch(error => {
-                    showToast(formatMemberRoomError(error, '连接失败'));
-                });
-            });
-
-            const touchOnInput = () => touchMemberRoomActivity();
-            input?.addEventListener('input', touchOnInput);
-            input?.addEventListener('focus', touchOnInput);
-            input?.addEventListener('click', () => {
-                touchMemberRoomActivity();
-                if (!memberRoomConnected) {
-                    showToast('当前处于浏览只读模式。如需发消息，请点击右侧“连接发言”');
+                if (event.shiftKey) return;
+                event.preventDefault();
+                if (!event.repeat && !form.querySelector('#followed-room-message-send')?.disabled) {
+                    form.requestSubmit();
                 }
             });
+            input?.addEventListener('pointerdown', reconnectMemberRoomFromComposer);
+            input?.addEventListener('focus', reconnectMemberRoomFromComposer);
             form.querySelector('.followed-room-reply-close')?.addEventListener('click', clearMemberRoomReply);
             return form;
         }
@@ -274,13 +348,8 @@
 
         function setMemberRoomReply(target) {
             memberRoomReplyTarget = target;
-            touchMemberRoomActivity();
             renderMemberRoomReplyTarget();
-            if (!memberRoomConnected) {
-                showToast('已选定回复目标。请先点击“连接发言”开启连接后再发送');
-            } else {
-                getMemberRoomComposerElements().input?.focus();
-            }
+            getMemberRoomComposerElements().input?.focus();
         }
 
         function closeMemberRoomContextMenu() {
@@ -288,126 +357,31 @@
             memberRoomContextMenu = null;
         }
 
-        const memberRoomSentMessageIds = new Set();
-
-        function recordSentOwnMemberRoomMessage(msg) {
-            if (!msg) return;
-            const ids = roomRealtime ? roomRealtime.aliases(msg) : [];
-            [
-                msg.msgIdClient,
-                msg.msgidClient,
-                msg.msgIdServer,
-                msg.msgId,
-                msg.id,
-                ...ids
-            ].forEach(id => {
-                if (id != null && String(id).trim() && String(id) !== '0') {
-                    memberRoomSentMessageIds.add(String(id).trim());
-                }
-            });
-            while (memberRoomSentMessageIds.size > 500) {
-                memberRoomSentMessageIds.delete(memberRoomSentMessageIds.keys().next().value);
-            }
-        }
-
-        function isSentOwnMemberRoomMessage(target) {
-            if (!target || !memberRoomSentMessageIds.size) return false;
-            const ids = [
-                target.msgIdClient,
-                target.msgidClient,
-                target.msgIdServer,
-                target.msgId,
-                target.id,
-                ...(roomRealtime ? roomRealtime.aliases(target) : [])
-            ];
-            return ids.some(id => id != null && memberRoomSentMessageIds.has(String(id).trim()));
-        }
-
-        function extractSenderIdentityIds(target) {
-            if (!target) return [];
-            if (Array.isArray(target.senderIdentityIds) && target.senderIdentityIds.length) {
-                return target.senderIdentityIds;
-            }
-            if (target._senderIdsCache) return target._senderIdsCache;
-            const ids = [
-                target.senderUserId,
-                target.senderId,
-                target.uid,
-                target.fromAccount
-            ];
-            let ext = target.extInfo || target.ext;
-            if (typeof ext === 'string' && ext.charCodeAt(0) === 123 /* '{' */) {
-                try { ext = JSON.parse(ext); } catch (_) { ext = null; }
-            }
-            if (ext && typeof ext === 'object') {
-                const user = ext.user;
-                if (user && typeof user === 'object') {
-                    ids.push(user.userId, user.id);
-                }
-            }
-            const result = ids.map(value => String(value || '').trim()).filter(Boolean);
-            target._senderIdsCache = result;
-            return result;
-        }
-
-        let cachedCustomSenderProfileUserId = undefined;
-        let cachedCustomSenderProfileTime = 0;
-
-        function getCustomSenderProfileUserId() {
-            const now = Date.now();
-            if (cachedCustomSenderProfileUserId !== undefined && now - cachedCustomSenderProfileTime < 10000) {
-                return cachedCustomSenderProfileUserId;
-            }
-            cachedCustomSenderProfileTime = now;
-            try {
-                const customProfile = typeof window.readStoredJsonSetting === 'function'
-                    ? window.readStoredJsonSetting('customSenderProfile', {})
-                    : {};
-                cachedCustomSenderProfileUserId = customProfile?.enabled === true
-                    ? String(customProfile.userId || '').trim()
-                    : '';
-            } catch (_) {
-                cachedCustomSenderProfileUserId = '';
-            }
-            return cachedCustomSenderProfileUserId;
-        }
-
-        let cachedMemberRoomIdentities = null;
-        let cachedMemberRoomIdentitiesKey = '';
-
         function getCurrentMemberRoomIdentityIds() {
-            const myUserId = (typeof currentPocketUserId !== 'undefined' && currentPocketUserId)
-                ? String(currentPocketUserId).trim()
-                : '';
-            const currentUserId = typeof getCurrentUserId === 'function' ? String(getCurrentUserId() || '').trim() : '';
-            const customUserId = getCustomSenderProfileUserId();
-            const key = `${currentUserId}:${myUserId}:${memberRoomUserId}:${memberRoomAccountId}:${customUserId}`;
-            if (cachedMemberRoomIdentities && cachedMemberRoomIdentitiesKey === key) {
-                return cachedMemberRoomIdentities;
-            }
-            cachedMemberRoomIdentitiesKey = key;
-            cachedMemberRoomIdentities = new Set([
-                currentUserId,
-                myUserId,
+            const identityIds = new Set([
+                getCurrentUserId(),
                 memberRoomUserId,
-                memberRoomAccountId,
-                customUserId
-            ].filter(Boolean));
-            return cachedMemberRoomIdentities;
+                memberRoomAccountId
+            ].map(value => String(value || '').trim()).filter(Boolean));
+            const customProfile = typeof window.readStoredJsonSetting === 'function'
+                ? window.readStoredJsonSetting('customSenderProfile', {})
+                : {};
+            if (customProfile?.enabled === true) {
+                const customUserId = String(customProfile.userId || '').trim();
+                if (customUserId) identityIds.add(customUserId);
+            }
+            return identityIds;
         }
 
-        function isOwnMemberRoomMessage(target, identityIds) {
-            if (!target) return false;
-            if (isSentOwnMemberRoomMessage(target)) return true;
-            const currentIdentityIds = identityIds || getCurrentMemberRoomIdentityIds();
-            const sUserId = String(target.senderUserId || '').trim();
-            if (sUserId && currentIdentityIds.has(sUserId)) return true;
-            const sId = String(target.senderId || '').trim();
-            if (sId && currentIdentityIds.has(sId)) return true;
-            const fromAcc = String(target.fromAccount || '').trim();
-            if (fromAcc && currentIdentityIds.has(fromAcc)) return true;
-            const senderIdentityIds = extractSenderIdentityIds(target);
-            return senderIdentityIds.some(identityId => currentIdentityIds.has(identityId));
+        function isOwnMemberRoomMessage(target) {
+            const currentIdentityIds = getCurrentMemberRoomIdentityIds();
+            const senderIdentityIds = Array.isArray(target?.senderIdentityIds)
+                ? target.senderIdentityIds
+                : [target?.senderUserId];
+            return senderIdentityIds
+                .map(value => String(value || '').trim())
+                .filter(Boolean)
+                .some(identityId => currentIdentityIds.has(identityId));
         }
 
         function openMemberRoomContextMenu(event, target) {
@@ -454,7 +428,7 @@
                 msgTime: target.msgTime
             });
             if (!result?.success) throw new Error(result?.msg || '删除失败');
-            if (isDesktopRoom && roomRealtime) {
+            if (supportsMemberRoomRealtime && roomRealtime) {
                 const ids = roomRealtime.aliases(target);
                 ids.forEach(id => memberRoomDeletedIds.add(id));
                 while (memberRoomDeletedIds.size > 2000) memberRoomDeletedIds.delete(memberRoomDeletedIds.values().next().value);
@@ -494,30 +468,7 @@
             return /云信连接(?:已关闭|已断开|超时)|成员房间连接已断开|ECONNRESET|ETIMEDOUT|socket hang up/i.test(message);
         }
 
-        function clearMemberRoomIdleTimer() {
-            clearTimeout(memberRoomIdleTimer);
-            memberRoomIdleTimer = null;
-        }
-
-        // 记录一次用户操作（输入、发送、回复、切换房间等），重新开始 5 分钟闲置计时
-        function touchMemberRoomActivity() {
-            clearMemberRoomIdleTimer();
-            if (!memberRoomConnected && !memberRoomConnectPromise) return;
-            memberRoomIdleTimer = setTimeout(function onIdle() {
-                memberRoomIdleTimer = null;
-                if (!memberRoomConnected && !memberRoomConnectPromise) return;
-                if (memberRoomComposerSending) {
-                    memberRoomIdleTimer = setTimeout(onIdle, 10000);
-                    return;
-                }
-                void destroyMemberRoomConnections();
-                setMemberRoomComposerState('disconnected', '已闲置 5 分钟，自动断开发言连接');
-                showToast('已闲置 5 分钟，自动断开房间连接');
-            }, MEMBER_ROOM_IDLE_DISCONNECT_MS);
-        }
-
         async function destroyMemberRoomConnections() {
-            clearMemberRoomIdleTimer();
             const connectionId = memberRoomConnectionId;
             memberRoomConnectionId = '';
             memberRoomConnected = false;
@@ -557,7 +508,7 @@
         }
 
         function scheduleMemberRoomFallback(delay = 1000) {
-            if (!isDesktopRoom || memberRoomFallbackTimer) return;
+            if (!supportsMemberRoomRealtime || memberRoomFallbackTimer) return;
             const serverId = String(activeFollowedServer || '');
             const channelId = String(activeFollowedChannel || '');
             memberRoomFallbackTimer = setTimeout(() => {
@@ -571,7 +522,7 @@
         }
 
         function scheduleMemberRoomReconnect() {
-            if (!isDesktopRoom || memberRoomReconnectTimer || memberRoomConnected || !getAppToken()) return;
+            if (!supportsMemberRoomRealtime || memberRoomReconnectTimer || memberRoomConnected || !getAppToken()) return;
             const serverId = String(activeFollowedServer || '');
             const channelId = String(activeFollowedChannel || '');
             const delay = [1000, 3000, 10000, 30000][Math.min(memberRoomReconnectAttempt++, 3)];
@@ -588,11 +539,8 @@
             memberRoomRealtimeFlushScheduled = false;
             if (isFollowedChatLoading || !memberRoomRealtimeQueue.length
                 || document.getElementById('view-followed-rooms')?.style.display === 'none') return;
-            const currentIdentityIds = getCurrentMemberRoomIdentityIds();
-            const currentServer = String(activeFollowedServer);
-            const currentChannel = String(activeFollowedChannel);
-            const list = memberRoomRealtimeQueue.splice(0).filter(record => record.serverId === currentServer
-                && record.channelId === currentChannel && shouldShowMemberRoomRealtime(record, currentIdentityIds) === true);
+            const list = memberRoomRealtimeQueue.splice(0).filter(record => record.serverId === String(activeFollowedServer)
+                && record.channelId === String(activeFollowedChannel) && shouldShowMemberRoomRealtime(record) === true);
             list.sort((a, b) => b.msgTime - a.msgTime);
             if (list.length) {
                 try { renderFollowedChatMessages(list, { isAutoRefresh: true }); }
@@ -603,26 +551,16 @@
             }
         }
 
-        function shouldShowMemberRoomRealtime(record, identityIds) {
+        function shouldShowMemberRoomRealtime(record) {
             if (isFollowedChatAllMode) return true;
-            if (isOwnMemberRoomMessage(record, identityIds)) return true;
-            let ownerId = String(activeFollowedMemberId || '');
-            if (!ownerId) {
-                const member = getMemberData().find(item => String(item.channelId || '') === String(activeFollowedMainChannel)
-                    || item.ownerName === activeFollowedName);
-                if (member) {
-                    activeFollowedMemberId = String(member.id || member.userId || '').trim();
-                    ownerId = activeFollowedMemberId;
-                }
-            }
-            if (!ownerId) return null;
-            if (String(record.senderUserId || '').trim() === ownerId) return true;
-            const senderIds = extractSenderIdentityIds(record);
-            return senderIds.includes(ownerId);
+            const member = getMemberData().find(item => String(item.channelId || '') === String(activeFollowedMainChannel)
+                || item.ownerName === activeFollowedName);
+            const ownerId = String(activeFollowedMemberId || member?.id || member?.userId || '');
+            return ownerId ? record.senderUserId === ownerId : null;
         }
 
         function receiveMemberRoomRealtime(message) {
-            if (!isDesktopRoom || !roomRealtime) return false;
+            if (!supportsMemberRoomRealtime || !roomRealtime) return false;
             const result = roomRealtime.normalize(message);
             if (!result.handled) return false;
             const record = result.record;
@@ -669,6 +607,7 @@
 
         async function ensureMemberRoomConnection() {
             if (!isMemberRoomSendingAvailable()) throw new Error('当前环境不支持成员房间发言');
+            const requestRevision = followedChatRequestRevision;
             const pocketToken = String(getAppToken() || '').trim();
             if (!pocketToken) {
                 await destroyMemberRoomConnections();
@@ -685,17 +624,13 @@
             if (memberRoomConnectPromise
                 && memberRoomTargetServer === serverId
                 && memberRoomTargetChannel === channelId) return memberRoomConnectPromise;
-            // 桌面端：已连接时切换房间不断开云信会话，直接转到新房间（见主进程 connectMemberRoom）
-            const keepSession = isDesktopRoom && memberRoomSessionHeld && Boolean(memberRoomConnectionId);
-            if (keepSession) {
-                memberRoomConnected = false;
-                memberRoomConnectedAt = 0;
-                memberRoomConnectPromise = null;
-                clearMemberRoomReply();
-                closeMemberRoomContextMenu();
-            } else if (memberRoomConnectionId || memberRoomConnectPromise) {
+            if (memberRoomConnectionId || memberRoomConnectPromise) {
                 await destroyMemberRoomConnections();
             }
+
+            if (requestRevision !== followedChatRequestRevision || pocketToken !== getAppToken()
+                || serverId !== String(activeFollowedServer || '')
+                || channelId !== String(activeFollowedChannel || '')) throw new Error('成员房间连接已取消');
 
             const generation = ++memberRoomConnectionGeneration;
             const connectionId = `member-${Date.now()}-${generation}`;
@@ -741,8 +676,8 @@
                 memberRoomConnected = true;
                 memberRoomConnectedAt = Date.now();
                 memberRoomReconnectAttempt = 0;
-                if (isDesktopRoom) scheduleFollowedRoomPoll?.();
-                if (isDesktopRoom && memberRoomNeedsCatchup) {
+                if (supportsMemberRoomRealtime) scheduleFollowedRoomPoll?.();
+                if (supportsMemberRoomRealtime && memberRoomNeedsCatchup) {
                     memberRoomNeedsCatchup = false;
                     scheduleMemberRoomFallback(200);
                 }
@@ -752,8 +687,6 @@
                 memberRoomUserId = String(result.userId || getCurrentUserId() || '').trim();
                 memberRoomAccountName = String(result.accountName || '口袋账号');
                 setMemberRoomComposerState('connected', '已连接');
-                memberRoomSessionHeld = true;
-                if (!memberRoomIdleTimer) touchMemberRoomActivity();
                 return resolvedConnectionId;
             })().catch(error => {
                 if (generation === memberRoomConnectionGeneration) {
@@ -762,8 +695,6 @@
                         message: String(error?.message || error?.msg || '')
                     }));
                     memberRoomConnected = false;
-                    memberRoomSessionHeld = false;
-                    clearMemberRoomIdleTimer();
                     memberRoomConnectedAt = 0;
                     memberRoomConnectionId = '';
                     memberRoomTargetServer = '';
@@ -790,30 +721,18 @@
                 setMemberRoomComposerState('error', '当前房间缺少发送目标');
                 return;
             }
-            // 默认不自动连接云信，避免顶掉手机端；需用户点击“连接发言”后才连接
-            // 但已连接时切换房间不断开，直接把连接转到新房间，直到手动断开或闲置 5 分钟
-            const serverId = String(activeFollowedServer || '');
-            const channelId = String(activeFollowedChannel || '');
-            const sameTarget = memberRoomTargetServer === serverId && memberRoomTargetChannel === channelId;
-            if (sameTarget && memberRoomConnected) {
-                setMemberRoomComposerState('connected', '已连接');
-                touchMemberRoomActivity();
-            } else if (sameTarget && memberRoomConnectPromise) {
-                setMemberRoomComposerState('connecting', '正在连接成员房间');
-            } else if (isDesktopRoom && memberRoomSessionHeld && memberRoomConnectionId) {
-                touchMemberRoomActivity();
-                ensureMemberRoomConnection().catch(error => {
-                    console.warn('[成员房间] 切换房间连接失败:', formatMemberRoomError(error));
-                });
-            } else {
-                if (memberRoomConnectionId || memberRoomConnectPromise) void destroyMemberRoomConnections();
-                setMemberRoomComposerState('disconnected');
-            }
+            const requestRevision = followedChatRequestRevision;
+            void ensureMemberRoomConnection().catch(error => {
+                if (requestRevision !== followedChatRequestRevision) return;
+                console.warn('[成员房间] QChat 连接失败:', formatMemberRoomError(error));
+                scheduleMemberRoomReconnect();
+            });
         }
 
         function hideMemberRoomComposer() {
+            if (isDesktopRoom) invalidateFollowedAutoScrollJobs();
             resetMemberRoomRealtime();
-            if (isDesktopRoom) {
+            if (supportsMemberRoomRealtime) {
                 followedAutoRefreshEnabled = false;
                 followedAutoRefreshCycle++;
                 clearTimeout(followedAutoRefreshTimer);
@@ -824,8 +743,7 @@
             memberRoomGiftEffects?.clear();
             const form = document.getElementById('followed-room-composer');
             if (form) form.style.display = 'none';
-            // 桌面端保持云信连接（仅手动断开或闲置 5 分钟后断开）；Web 端维持原行为
-            if (!isDesktopRoom) void destroyMemberRoomConnections();
+            void destroyMemberRoomConnections();
         }
 
         async function sendActiveMemberRoomMessage() {
@@ -834,7 +752,6 @@
             const serverId = String(activeFollowedServer || '');
             const channelId = String(activeFollowedChannel || '');
             const sendingRevision = followedChatRequestRevision;
-            touchMemberRoomActivity();
             try {
                 memberRoomComposerSending = true;
                 setMemberRoomComposerState('connected', '正在发送');
@@ -855,12 +772,7 @@
                 elements.input.value = '';
                 clearMemberRoomReply();
                 setMemberRoomComposerState('connected', '已发送');
-                showToast('消息已发送到成员房间');
-                followedStickToBottom = true;
-                followedUserScrollLockUntil = 0;
-                recordSentOwnMemberRoomMessage(result);
-                if (result.message) recordSentOwnMemberRoomMessage(result.message);
-                if (isDesktopRoom && result.message) {
+                if (supportsMemberRoomRealtime && result.message) {
                     if (!receiveMemberRoomRealtime(result.message)) scheduleMemberRoomFallback();
                 } else {
                     scheduleMemberRoomHistoryRefresh(serverId, channelId, 350);
@@ -873,7 +785,6 @@
                 }
                 const message = formatMemberRoomError(error, '发送失败', { sending: true });
                 setMemberRoomComposerState(memberRoomConnected ? 'connected' : 'error', message);
-                showToast(message);
             } finally {
                 memberRoomComposerSending = false;
                 const state = memberRoomConnected ? 'connected' : 'error';
@@ -890,8 +801,8 @@
                 clearTimeout(memberRoomReconnectTimer);
                 memberRoomReconnectTimer = null;
                 memberRoomReconnectAttempt = 0;
-                if (isDesktopRoom) scheduleFollowedRoomPoll?.();
-                if (isDesktopRoom && memberRoomNeedsCatchup) {
+                if (supportsMemberRoomRealtime) scheduleFollowedRoomPoll?.();
+                if (supportsMemberRoomRealtime && (memberRoomNeedsCatchup || payload.catchup)) {
                     memberRoomNeedsCatchup = false;
                     scheduleMemberRoomFallback(200);
                 }
@@ -900,29 +811,24 @@
                 return;
             }
             memberRoomConnected = false;
-            memberRoomSessionHeld = false;
-            clearMemberRoomIdleTimer();
-            clearTimeout(memberRoomReconnectTimer);
-            memberRoomReconnectTimer = null;
             memberRoomConnectedAt = 0;
             setMemberRoomComposerState('disconnected', payload.message || '成员房间连接已断开');
-            if (isDesktopRoom) {
+            if (supportsMemberRoomRealtime) {
                 memberRoomNeedsCatchup = true;
                 scheduleFollowedRoomPoll?.();
                 scheduleMemberRoomFallback(100);
+                scheduleMemberRoomReconnect();
             }
         });
 
         ipcRenderer?.on?.('member-room-message', (_event, payload = {}) => {
             if (!payload.connectionId || payload.connectionId !== memberRoomConnectionId) return;
-            // 已返回房间列表（连接仍保留）时不处理实时消息
-            if (document.getElementById('followed-room-composer')?.style.display === 'none') return;
             const serverId = payload.message?.serverId;
             const channelId = payload.message?.channelId;
             if (String(serverId || '') === String(activeFollowedServer || '')
                 && String(channelId || '') === String(activeFollowedChannel || '')) {
                 memberRoomGiftEffects?.receive(payload.message);
-                if (isDesktopRoom) {
+                if (supportsMemberRoomRealtime) {
                     if (!receiveMemberRoomRealtime(payload.message)) scheduleMemberRoomFallback();
                 } else scheduleMemberRoomHistoryRefresh(serverId, channelId, 200);
             }
@@ -1268,71 +1174,6 @@
                 .replace(/'/g, '&#39;');
         }
 
-        function findMemberInfo(senderId, displayName) {
-            const list = typeof getMemberData === 'function' ? getMemberData() : [];
-            if (!Array.isArray(list)) return null;
-            // 1. Try matching userId
-            let found = list.find((m) => m.userId && String(m.userId) === String(senderId));
-            if (found) return found;
-            // 2. Try matching id
-            found = list.find((m) => m.id && String(m.id) === String(senderId));
-            if (found) return found;
-            // 3. Try matching memberId
-            found = list.find((m) => m.memberId && String(m.memberId) === String(senderId));
-            if (found) return found;
-            // 4. Try matching ownerName (displayName)
-            found = list.find((m) => m.ownerName && String(m.ownerName) === String(displayName));
-            if (found) return found;
-            return null;
-        }
-
-        async function showMemberProfile(memberInfo, senderId) {
-            if (!memberInfo) {
-                memberInfo = findMemberInfo(senderId, '');
-            }
-            if (!memberInfo) {
-                // Try creating a minimal member object if we only have senderId
-                memberInfo = {
-                    id: String(senderId),
-                    ownerName: '未知用户',
-                    team: '-'
-                };
-            }
-
-            if (typeof window.showDatabaseMemberDetail !== 'function') {
-                if (typeof window.mountDatabaseView === 'function') {
-                    if (typeof showToast === 'function') {
-                        showToast('正在加载并初始化成员档案...', 1500);
-                    }
-                    try {
-                        await window.mountDatabaseView();
-                        // Wait up to 2 seconds for React to finish mounting and register the helper
-                        for (let i = 0; i < 20; i++) {
-                            if (typeof window.showDatabaseMemberDetail === 'function') {
-                                break;
-                            }
-                            await new Promise((resolve) => setTimeout(resolve, 100));
-                        }
-                    } catch (e) {
-                        console.error('Failed to mount database view', e);
-                    }
-                }
-            }
-
-            if (typeof window.showDatabaseMemberDetail === 'function') {
-                window.showDatabaseMemberDetail(memberInfo);
-            } else {
-                const memberId = memberInfo.id || memberInfo.userId || memberInfo.memberId;
-                if (memberId && typeof window.showMemberProfileModal === 'function') {
-                    window.showMemberProfileModal(memberId);
-                } else {
-                    if (typeof showToast === 'function') {
-                        showToast('无法启动成员档案查看器');
-                    }
-                }
-            }
-        }
-
         function normalizeFollowedPocketMediaUrl(mediaPath) {
             const rawPath = String(mediaPath || '').trim();
             if (!rawPath) return '';
@@ -1341,7 +1182,9 @@
                 return `https://${rawPath.replace(/^\/+/, '')}`;
             }
 
-            return rawPath.startsWith('/') ? `https://source3.48.cn${rawPath}` : `https://source3.48.cn/${rawPath}`;
+            return rawPath.startsWith('/')
+                ? `https://source3.48.cn${rawPath}`
+                : `https://source3.48.cn/${rawPath}`;
         }
 
         function normalizeFollowedSourceUrl(mediaPath) {
@@ -1352,7 +1195,9 @@
                 return `https://${rawPath.replace(/^\/+/, '')}`;
             }
 
-            return rawPath.startsWith('/') ? `https://source.48.cn${rawPath}` : `https://source.48.cn/${rawPath}`;
+            return rawPath.startsWith('/')
+                ? `https://source.48.cn${rawPath}`
+                : `https://source.48.cn/${rawPath}`;
         }
 
         function getFollowedMediaThumbUrl(url, width = 360) {
@@ -1380,7 +1225,14 @@
 
         function getFollowedUserAvatarUrl(userInfo) {
             const base = getFollowedBaseUserInfo(userInfo);
-            return normalizeFollowedSourceUrl(base.avatar || base.avatarUrl || base.faceImage || userInfo?.avatar || userInfo?.avatarUrl || '');
+            return normalizeFollowedSourceUrl(
+                base.avatar
+                || base.avatarUrl
+                || base.faceImage
+                || userInfo?.avatar
+                || userInfo?.avatarUrl
+                || ''
+            );
         }
 
         function toFollowedInlineArg(value) {
@@ -1389,7 +1241,13 @@
 
         function getFollowedProfileDisplayName(userInfo, fallback = '口袋用户') {
             const base = getFollowedBaseUserInfo(userInfo);
-            return base.nickname || base.nickName || base.userName || userInfo?.nickname || userInfo?.nickName || userInfo?.userName || fallback;
+            return base.nickname
+                || base.nickName
+                || base.userName
+                || userInfo?.nickname
+                || userInfo?.nickName
+                || userInfo?.userName
+                || fallback;
         }
 
         function getFollowedProfileUserId(userInfo, fallback = '') {
@@ -1408,12 +1266,10 @@
         }
 
         function getFollowedNestedValue(source, path) {
-            return String(path || '')
-                .split('.')
-                .reduce((current, key) => {
-                    if (!current || typeof current !== 'object') return undefined;
-                    return current[key];
-                }, source);
+            return String(path || '').split('.').reduce((current, key) => {
+                if (!current || typeof current !== 'object') return undefined;
+                return current[key];
+            }, source);
         }
 
         function getFirstFollowedProfileValue(sources, paths) {
@@ -1431,7 +1287,7 @@
             if (value === false) return '否';
             if (Array.isArray(value)) {
                 return value
-                    .map((item) => {
+                    .map(item => {
                         if (item == null) return '';
                         if (typeof item === 'object') {
                             return item.name || item.title || item.label || item.badgeName || item.medalName || '';
@@ -1450,7 +1306,7 @@
         function renderFollowedProfileMetaGroup(sources, definitions) {
             const rendered = [];
             const seenLabels = new Set();
-            definitions.forEach((def) => {
+            definitions.forEach(def => {
                 const value = formatFollowedProfileValue(getFirstFollowedProfileValue(sources, def.paths));
                 const html = renderFollowedProfileMeta(def.label, value);
                 if (html && !seenLabels.has(def.label)) {
@@ -1462,17 +1318,11 @@
         }
 
         function normalizeFollowedRelationText(sources) {
-            const explicitText = String(
-                getFirstFollowedProfileValue(sources, ['relationText', 'followStatusText', 'friendStatusText', 'followText']) || ''
-            ).trim();
+            const explicitText = String(getFirstFollowedProfileValue(sources, ['relationText', 'followStatusText', 'friendStatusText', 'followText']) || '').trim();
             if (/互相关注|互关/.test(explicitText)) return '互相关注';
             if (/已关注|关注/.test(explicitText)) return '已关注';
 
-            const relationValue = String(
-                getFirstFollowedProfileValue(sources, ['relation', 'relationType', 'followStatus', 'friendStatus', 'isFollow', 'followed', 'isFriend']) || ''
-            )
-                .trim()
-                .toLowerCase();
+            const relationValue = String(getFirstFollowedProfileValue(sources, ['relation', 'relationType', 'followStatus', 'friendStatus', 'isFollow', 'followed', 'isFriend']) || '').trim().toLowerCase();
             if (['mutual', 'both', 'friend', 'friends', '2', '3'].includes(relationValue)) return '互相关注';
             if (['true', 'followed', 'following', '1'].includes(relationValue)) return '已关注';
             return '关注';
@@ -1485,7 +1335,7 @@
                 return;
             }
 
-            const token = getAppToken ? getAppToken() : typeof window.getAppToken === 'function' ? window.getAppToken() : '';
+            const token = getAppToken ? getAppToken() : (typeof window.getAppToken === 'function' ? window.getAppToken() : '');
             if (!token) {
                 if (typeof showToast === 'function') showToast('请先登录账号');
                 return;
@@ -1571,39 +1421,37 @@
             const normalizedUserId = String(userId || '').trim();
             const targetNames = [
                 displayName,
-                String(displayName || '')
-                    .split('-')
-                    .pop()
+                String(displayName || '').split('-').pop()
             ]
                 .map(normalizeFollowedProfileMemberName)
                 .filter(Boolean);
             const memberList = typeof getMemberData === 'function' ? getMemberData() : [];
             if (!Array.isArray(memberList)) return null;
 
-            return (
-                memberList.find((member) => {
-                    if (!member || !member.channelId) return false;
-                    const ids = [member.id, member.userId, member.memberId, member.ownerId, member.starId]
-                        .map((value) => String(value || '').trim())
-                        .filter(Boolean);
-                    if (normalizedUserId && ids.includes(normalizedUserId)) return true;
+            return memberList.find(member => {
+                if (!member || !member.channelId) return false;
+                const ids = [
+                    member.id,
+                    member.userId,
+                    member.memberId,
+                    member.ownerId,
+                    member.starId
+                ].map(value => String(value || '').trim()).filter(Boolean);
+                if (normalizedUserId && ids.includes(normalizedUserId)) return true;
 
-                    const memberNames = [
-                        member.ownerName,
-                        member.nickname,
-                        member.nickName,
-                        member.name,
-                        member.realNickName,
-                        member.starName,
-                        member.bigDisplayName,
-                        member.pinkStarName
-                    ]
-                        .map(normalizeFollowedProfileMemberName)
-                        .filter(Boolean);
+                const memberNames = [
+                    member.ownerName,
+                    member.nickname,
+                    member.nickName,
+                    member.name,
+                    member.realNickName,
+                    member.starName,
+                    member.bigDisplayName,
+                    member.pinkStarName
+                ].map(normalizeFollowedProfileMemberName).filter(Boolean);
 
-                    return targetNames.some((name) => memberNames.includes(name));
-                }) || null
-            );
+                return targetNames.some(name => memberNames.includes(name));
+            }) || null;
         }
 
         async function openFollowedProfileRoom(userId, displayName = '') {
@@ -1630,7 +1478,11 @@
             }
 
             window.setTimeout(() => {
-                openFollowedChat(member.ownerName || member.nickname || member.name || displayName || '成员', member.channelId, member.serverId || '');
+                openFollowedChat(
+                    member.ownerName || member.nickname || member.name || displayName || '成员',
+                    member.channelId,
+                    member.serverId || ''
+                );
             }, 0);
         }
 
@@ -1671,27 +1523,24 @@
 
         function getFollowedProfileVideoCoverObserver() {
             if (followedProfileVideoCoverObserver) return followedProfileVideoCoverObserver;
-            followedProfileVideoCoverObserver = new IntersectionObserver(
-                (entries) => {
-                    entries.forEach((entry) => {
-                        if (!entry.isIntersecting) return;
-                        const video = entry.target;
-                        if (!video.src && video.dataset.src) {
-                            video.src = video.dataset.src;
-                            video.preload = 'metadata';
-                        }
-                        followedProfileVideoCoverObserver.unobserve(video);
-                    });
-                },
-                { rootMargin: '180px' }
-            );
+            followedProfileVideoCoverObserver = new IntersectionObserver(entries => {
+                entries.forEach(entry => {
+                    if (!entry.isIntersecting) return;
+                    const video = entry.target;
+                    if (!video.src && video.dataset.src) {
+                        video.src = video.dataset.src;
+                        video.preload = 'metadata';
+                    }
+                    followedProfileVideoCoverObserver.unobserve(video);
+                });
+            }, { rootMargin: '180px' });
             return followedProfileVideoCoverObserver;
         }
 
         function hydrateFollowedProfileVideoCovers(container) {
             if (!container) return;
             const observer = getFollowedProfileVideoCoverObserver();
-            container.querySelectorAll('.followed-pocket-video-cover[data-src]').forEach((video) => {
+            container.querySelectorAll('.followed-pocket-video-cover[data-src]').forEach(video => {
                 if (!video.dataset.coverObserved) {
                     video.dataset.coverObserved = '1';
                     observer.observe(video);
@@ -1739,15 +1588,11 @@
                 </div>
                 ${signature ? `<div class="followed-user-profile-sign">${escapeFollowedHtml(signature)}</div>` : ''}
                 ${primaryMetaHtml ? `<div class="followed-user-profile-meta">${primaryMetaHtml}</div>` : ''}
-                ${
-                    extraMetaHtml
-                        ? `
+                ${extraMetaHtml ? `
                     <div class="followed-user-profile-section">
                         <div class="followed-user-profile-section-title">更多资料</div>
                         <div class="followed-user-profile-meta">${extraMetaHtml}</div>
-                    </div>`
-                        : ''
-                }`;
+                    </div>` : ''}`;
         }
 
         function renderFollowedStarProfileSection(starContent) {
@@ -1755,7 +1600,9 @@
             const name = info.starName || info.nickname || info.ownerName || '';
             if (!name) return '';
 
-            const photos = [info.fullPhoto1, info.fullPhoto2, info.fullPhoto3, info.fullPhoto4].filter(Boolean).map((url) => normalizeFollowedSourceUrl(url));
+            const photos = [info.fullPhoto1, info.fullPhoto2, info.fullPhoto3, info.fullPhoto4]
+                .filter(Boolean)
+                .map(url => normalizeFollowedSourceUrl(url));
 
             const metaHtml = [
                 renderFollowedProfileMeta('所属队伍', info.starTeamName || info.teamName || info.team),
@@ -1770,7 +1617,7 @@
 
             const photosHtml = photos.length
                 ? `<div class="followed-user-profile-photos">
-                    ${photos.map((url) => `<img src="${escapeFollowedHtml(url)}" alt="" onclick="openImageModal(${toFollowedInlineArg(url)})" onerror="this.style.display='none'">`).join('')}
+                    ${photos.map(url => `<img src="${escapeFollowedHtml(url)}" alt="" onclick="openImageModal(${toFollowedInlineArg(url)})" onerror="this.style.display='none'">`).join('')}
                 </div>`
                 : '';
 
@@ -1792,10 +1639,14 @@
 
         function collectFollowedStarPhotos(starContent) {
             const info = getFollowedStarInfo(starContent);
-            return [info.fullPhoto1, info.fullPhoto2, info.fullPhoto3, info.fullPhoto4, info.avatar, info.userAvatar]
-                .filter(Boolean)
-                .map((url) => normalizeFollowedSourceUrl(url))
-                .filter(Boolean);
+            return [
+                info.fullPhoto1,
+                info.fullPhoto2,
+                info.fullPhoto3,
+                info.fullPhoto4,
+                info.avatar,
+                info.userAvatar
+            ].filter(Boolean).map(url => normalizeFollowedSourceUrl(url)).filter(Boolean);
         }
 
         function renderFollowedPocketProfileTab(name, label, active = false) {
@@ -1858,7 +1709,7 @@
                 'imageList',
                 'commentNum',
                 'likeNum'
-            ].some((key) => Object.prototype.hasOwnProperty.call(value, key));
+            ].some(key => Object.prototype.hasOwnProperty.call(value, key));
         }
 
         function extractFollowedDynamicTextCandidate(value, visited = new WeakSet(), depth = 0) {
@@ -1879,7 +1730,7 @@
             if (Array.isArray(value)) {
                 if (value.some(isFollowedDynamicPostLikeObject)) return '';
                 return value
-                    .map((item) => extractFollowedDynamicTextCandidate(item, visited, depth + 1))
+                    .map(item => extractFollowedDynamicTextCandidate(item, visited, depth + 1))
                     .filter(Boolean)
                     .join('');
             }
@@ -1894,7 +1745,16 @@
         }
 
         function getFollowedDynamicText(value) {
-            const candidates = [value?.postContent, value?.text, value?.msg, value?.message, value?.desc, value?.subject, value?.title, value?.content];
+            const candidates = [
+                value?.postContent,
+                value?.text,
+                value?.msg,
+                value?.message,
+                value?.desc,
+                value?.subject,
+                value?.title,
+                value?.content
+            ];
             for (const candidate of candidates) {
                 const text = extractFollowedDynamicTextCandidate(candidate);
                 if (text) return text;
@@ -1911,7 +1771,7 @@
             wrapper.innerHTML = raw.replace(/<br\s*\/?>/gi, '\n');
             const parts = [];
 
-            const walk = (node) => {
+            const walk = node => {
                 if (node.nodeType === Node.TEXT_NODE) {
                     const text = node.nodeValue || '';
                     if (!text.trim() && !text.includes('\n')) return;
@@ -1925,19 +1785,16 @@
                 const label = (element.textContent || '').trim();
                 if (element.tagName === 'A' && href.startsWith('snh48://') && label) {
                     const mentionUserId = getFollowedDynamicMentionUserId(href);
-                    parts.push(
-                        mentionUserId
-                            ? `<button type="button" class="followed-pocket-dynamic-mention followed-pocket-dynamic-mention-btn" onclick="openFollowedUserProfile(${toFollowedInlineArg(mentionUserId)}, ${toFollowedInlineArg(label)}, '', false)">${escapeFollowedHtml(label)}</button>`
-                            : `<span class="followed-pocket-dynamic-mention">${escapeFollowedHtml(label)}</span>`
-                    );
+                    parts.push(mentionUserId
+                        ? `<button type="button" class="followed-pocket-dynamic-mention followed-pocket-dynamic-mention-btn" onclick="openFollowedUserProfile(${toFollowedInlineArg(mentionUserId)}, ${toFollowedInlineArg(label)}, '', false)">${escapeFollowedHtml(label)}</button>`
+                        : `<span class="followed-pocket-dynamic-mention">${escapeFollowedHtml(label)}</span>`);
                     return;
                 }
                 element.childNodes.forEach(walk);
             };
 
             wrapper.childNodes.forEach(walk);
-            return parts
-                .join('')
+            return parts.join('')
                 .replace(/(<\/(?:button|span)>)\s*\n+/g, '$1')
                 .replace(/\n{3,}/g, '\n\n')
                 .trim();
@@ -1946,11 +1803,9 @@
         function isFollowedImageLikeValue(value) {
             const raw = String(value || '').trim();
             if (!raw || raw.length > 600) return false;
-            return (
-                /\.(?:png|jpe?g|webp|gif)(?:[?#].*)?$/i.test(raw) ||
-                /(?:^|\/)(?:avatar|backstage|card|cards|honor|image|images|img|media|pageantry|pic|picture|poster|resource)\//i.test(raw) ||
-                /(?:source\d*\.48\.cn|source\.48\.cn)/i.test(raw)
-            );
+            return /\.(?:png|jpe?g|webp|gif)(?:[?#].*)?$/i.test(raw)
+                || /(?:^|\/)(?:avatar|backstage|card|cards|honor|image|images|img|media|pageantry|pic|picture|poster|resource)\//i.test(raw)
+                || /(?:source\d*\.48\.cn|source\.48\.cn)/i.test(raw);
         }
 
         function getFollowedImageCandidateScore(key, value) {
@@ -2005,14 +1860,15 @@
                 }
             }
 
-            const candidates = collectFollowedImageCandidates(value).sort((a, b) => b.score - a.score);
+            const candidates = collectFollowedImageCandidates(value)
+                .sort((a, b) => b.score - a.score);
             return normalizeFollowedPocketMediaUrl(candidates[0]?.value || '');
         }
 
         function flattenFollowedHonorItems(value, items = [], seen = new Set(), visited = new WeakSet(), depth = 0) {
             if (!value || items.length >= 24 || depth > 8) return items;
             if (Array.isArray(value)) {
-                value.forEach((item) => flattenFollowedHonorItems(item, items, seen, visited, depth + 1));
+                value.forEach(item => flattenFollowedHonorItems(item, items, seen, visited, depth + 1));
                 return items;
             }
             if (typeof value !== 'object') return items;
@@ -2094,17 +1950,24 @@
             ];
             const imageUrl = getBestFollowedHonorImage(value, imageKeys);
             const cardId = value.cardId || value.honorCardId || value.propId || value.id || value.resourceId || '';
-            const title = value.cardName || value.honorCardName || value.propName || value.name || value.title || value.starName || value.memberName || '';
+            const title = value.cardName
+                || value.honorCardName
+                || value.propName
+                || value.name
+                || value.title
+                || value.starName
+                || value.memberName
+                || '';
             const level = value.level || value.lv || value.rare || value.rarity || value.cardLevel || value.cardLevelName || '';
             const looksLikeHonorCard = !!(
-                value.cardId ||
-                value.honorCardId ||
-                value.propId ||
-                value.cardImgUrl ||
-                value.cardLevelName ||
-                value.starName ||
-                value.cardName ||
-                value.honorCardName
+                value.cardId
+                || value.honorCardId
+                || value.propId
+                || value.cardImgUrl
+                || value.cardLevelName
+                || value.starName
+                || value.cardName
+                || value.honorCardName
             );
             const identity = cardId || `${title}|${level}` || imageUrl;
             if (looksLikeHonorCard && identity && !seen.has(identity) && (imageUrl || title || cardId)) {
@@ -2117,7 +1980,7 @@
                 });
             }
 
-            Object.values(value).forEach((child) => {
+            Object.values(value).forEach(child => {
                 if (child && typeof child === 'object') flattenFollowedHonorItems(child, items, seen, visited, depth + 1);
             });
             return items;
@@ -2130,20 +1993,19 @@
         function flattenFollowedPostItems(value, type = 'image', items = [], seen = new Set(), visited = new WeakSet(), depth = 0) {
             if (!value || items.length >= 240 || depth > 8) return items;
             if (Array.isArray(value)) {
-                value.forEach((item) => flattenFollowedPostItems(item, type, items, seen, visited, depth + 1));
+                value.forEach(item => flattenFollowedPostItems(item, type, items, seen, visited, depth + 1));
                 return items;
             }
             if (typeof value !== 'object') return items;
             if (visited.has(value)) return items;
             visited.add(value);
 
-            const imageKeys =
-                type === 'video'
-                    ? ['coverPath', 'coverUrl', 'cover', 'firstFrame', 'videoCover', 'picPath', 'picUrl', 'imgUrl', 'imageUrl', 'image', 'poster']
-                    : ['imagePath', 'imageUrl', 'imgPath', 'imgUrl', 'picPath', 'picUrl', 'url', 'image', 'pic'];
+            const imageKeys = type === 'video'
+                ? ['coverPath', 'coverUrl', 'cover', 'firstFrame', 'videoCover', 'picPath', 'picUrl', 'imgUrl', 'imageUrl', 'image', 'poster']
+                : ['imagePath', 'imageUrl', 'imgPath', 'imgUrl', 'picPath', 'picUrl', 'url', 'image', 'pic'];
             const videoKeys = ['videoPath', 'videoUrl', 'playUrl', 'mediaUrl', 'url', 'fileUrl', 'video'];
-            const rawImage = imageKeys.map((key) => value[key]).find(Boolean);
-            const rawVideo = type === 'video' ? videoKeys.map((key) => value[key]).find(Boolean) : '';
+            const rawImage = imageKeys.map(key => value[key]).find(Boolean);
+            const rawVideo = type === 'video' ? videoKeys.map(key => value[key]).find(Boolean) : '';
             const imageUrl = normalizeFollowedPocketMediaUrl(rawImage);
             const videoUrl = type === 'video' ? normalizeFollowedPocketMediaUrl(rawVideo) : '';
             const identity = videoUrl || imageUrl;
@@ -2158,7 +2020,7 @@
                 });
             }
 
-            Object.values(value).forEach((child) => {
+            Object.values(value).forEach(child => {
                 if (child && typeof child === 'object') flattenFollowedPostItems(child, type, items, seen, visited, depth + 1);
             });
             return items;
@@ -2182,9 +2044,9 @@
             const thumbUrl = getFollowedMediaThumbUrl(item.imageUrl);
             const coverHtml = item.imageUrl
                 ? `<img src="${escapeFollowedHtml(thumbUrl || item.imageUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low" onerror="this.style.display='none'">`
-                : item.videoUrl
-                  ? `<video class="followed-pocket-video-cover" data-src="${escapeFollowedHtml(item.videoUrl)}#t=0.1" muted playsinline preload="none"></video>`
-                  : '<div class="followed-pocket-video-cover-empty">视频</div>';
+                : (item.videoUrl
+                    ? `<video class="followed-pocket-video-cover" data-src="${escapeFollowedHtml(item.videoUrl)}#t=0.1" muted playsinline preload="none"></video>`
+                    : '<div class="followed-pocket-video-cover-empty">视频</div>');
             if (item.videoUrl) {
                 return `<button type="button" class="followed-pocket-media-card followed-pocket-video-card" data-media-key="${escapeFollowedHtml(key)}" onclick="openFollowedProfileVideo(${toFollowedInlineArg(item.videoUrl)})">
                     ${coverHtml}
@@ -2204,9 +2066,9 @@
             if (!grid) return false;
 
             const renderItem = type === 'video' ? renderFollowedVideoItem : renderFollowedAlbumItem;
-            const existing = new Set(Array.from(grid.querySelectorAll('[data-media-key]')).map((node) => node.dataset.mediaKey || ''));
+            const existing = new Set(Array.from(grid.querySelectorAll('[data-media-key]')).map(node => node.dataset.mediaKey || ''));
             const html = flattenFollowedPostItems(content, type)
-                .filter((item) => {
+                .filter(item => {
                     const key = getFollowedPostItemKey(item);
                     if (!key || existing.has(key)) return false;
                     existing.add(key);
@@ -2291,7 +2153,7 @@
                 return items;
             }
             if (Array.isArray(value)) {
-                value.forEach((item) => flattenFollowedDynamicItems(item, items, seen, visited, depth + 1));
+                value.forEach(item => flattenFollowedDynamicItems(item, items, seen, visited, depth + 1));
                 return items;
             }
             if (typeof value !== 'object') return items;
@@ -2313,12 +2175,12 @@
 
             const text = getFollowedDynamicText(value);
             const postId = value.postId || value.id || value.resourceId || '';
-            const directImages = Array.isArray(value.images) ? value.images.map((url) => normalizeFollowedPocketMediaUrl(url)).filter(Boolean) : [];
+            const directImages = Array.isArray(value.images)
+                ? value.images.map(url => normalizeFollowedPocketMediaUrl(url)).filter(Boolean)
+                : [];
             const isPostObject = !!(postId || text || isFollowedDynamicPostLikeObject(value));
             const nestedImages = isPostObject
-                ? flattenFollowedPostItems(value, 'image')
-                      .map((item) => item.imageUrl)
-                      .filter(Boolean)
+                ? flattenFollowedPostItems(value, 'image').map(item => item.imageUrl).filter(Boolean)
                 : [];
             const images = [...new Set([...directImages, ...nestedImages])];
             const key = String(postId || text || images[0] || '');
@@ -2348,7 +2210,7 @@
                 });
             }
 
-            Object.values(value).forEach((child) => {
+            Object.values(value).forEach(child => {
                 if (child && typeof child === 'object') flattenFollowedDynamicItems(child, items, seen, visited, depth + 1);
             });
             return items;
@@ -2366,21 +2228,25 @@
                     + Math.min(2, Array.isArray(item?.images) ? item.images.length : 0)
                 );
 
-            items.forEach((item) => {
+            items.forEach(item => {
                 if (!item || typeof item !== 'object') return;
                 const images = [...new Set((Array.isArray(item.images) ? item.images : []).filter(Boolean))];
                 const normalized = { ...item, images };
                 const imageSet = new Set(images);
-                const matchedIndex = deduped.findIndex((existing) => {
-                    const samePost = normalized.postId && existing.postId && String(normalized.postId) === String(existing.postId);
+                const matchedIndex = deduped.findIndex(existing => {
+                    const samePost = normalized.postId
+                        && existing.postId
+                        && String(normalized.postId) === String(existing.postId);
                     if (samePost) return true;
 
-                    const sharesImage = imageSet.size > 0 && existing.images.some((url) => imageSet.has(url));
+                    const sharesImage = imageSet.size > 0
+                        && existing.images.some(url => imageSet.has(url));
                     if (!sharesImage) return false;
 
-                    // 接口会把同一条动态的媒体子对象和完整动态对象同时嵌套返回。
-                    // 仅在其中一项缺少正文或动态 ID 时合并，避免误合并正常的转发/重复用图。
-                    return !normalized.text || !existing.text || !normalized.postId || !existing.postId;
+                    return !normalized.text
+                        || !existing.text
+                        || !normalized.postId
+                        || !existing.postId;
                 });
 
                 if (matchedIndex < 0) {
@@ -2786,13 +2652,8 @@
                     <div class="followed-pocket-dynamic-card" ${item.postId ? `id="followed-profile-dynamic-card-${escapeFollowedHtml(item.postId)}" data-followed-dynamic-post-id="${escapeFollowedHtml(item.postId)}" ${needsStats ? 'data-needs-stats="1"' : ''}` : ''}>
                         ${(item.postId || ctime) ? `<div class="followed-pocket-dynamic-time">${ctime ? escapeFollowedHtml(formatFollowedProfileDateTime(ctime)) : '--'}</div>` : ''}
                         ${item.text ? `<div class="followed-pocket-dynamic-text">${renderFollowedDynamicContent(item.text)}</div>` : ''}
-                        ${
-                            item.images.length
-                                ? `<div class="followed-pocket-dynamic-images">
-                            ${item.images
-                                .slice(0, 6)
-                                .map(
-                                    (url) => `
+                        ${item.images.length ? `<div class="followed-pocket-dynamic-images">
+                            ${item.images.slice(0, 6).map(url => `
                                 <button type="button" class="followed-pocket-dynamic-image" onclick="openImageModal(${toFollowedInlineArg(url)})">
                                     <img src="${escapeFollowedHtml(url)}" alt="" loading="lazy" onerror="this.style.display='none'">
                                 </button>`).join('')}
@@ -2809,8 +2670,15 @@
         }
 
         function getFollowedProfileNextCursor(content = {}) {
-            const candidates = [content.next, content.nextId, content.nextTime, content.lastTime, content.cursor, content.pageCursor];
-            const value = candidates.find((item) => item !== undefined && item !== null && String(item).trim() !== '');
+            const candidates = [
+                content.next,
+                content.nextId,
+                content.nextTime,
+                content.lastTime,
+                content.cursor,
+                content.pageCursor
+            ];
+            const value = candidates.find(item => item !== undefined && item !== null && String(item).trim() !== '');
             return String(value || '0');
         }
 
@@ -2818,7 +2686,10 @@
             const previousSource = previousContent?.[sourceKey] || previousContent || {};
             const mergedItems = [];
             const seen = new Set();
-            dedupeFollowedDynamicItems([...flattenFollowedDynamicItems(previousSource), ...flattenFollowedDynamicItems(nextContent)]).forEach((item) => {
+            dedupeFollowedDynamicItems([
+                ...flattenFollowedDynamicItems(previousSource),
+                ...flattenFollowedDynamicItems(nextContent)
+            ]).forEach(item => {
                 const key = String(item.postId || item.text || item.images?.[0] || item.ctime || '');
                 if (!key || seen.has(key)) return;
                 seen.add(key);
@@ -2837,7 +2708,7 @@
         function mergeFollowedPostContent(previousContent = {}, nextContent = {}, type = 'image') {
             const mergedItems = [];
             const seen = new Set();
-            [...flattenFollowedPostItems(previousContent, type), ...flattenFollowedPostItems(nextContent, type)].forEach((item) => {
+            [...flattenFollowedPostItems(previousContent, type), ...flattenFollowedPostItems(nextContent, type)].forEach(item => {
                 const key = String(item.postId || item.videoUrl || item.imageUrl || item.title || item.ctime || '');
                 if (!key || seen.has(key)) return;
                 seen.add(key);
@@ -2857,7 +2728,7 @@
                 const timestamp = raw.length === 10 ? Number(raw) * 1000 : Number(raw);
                 const date = new Date(timestamp);
                 if (!Number.isNaN(date.getTime())) {
-                    const pad = (number) => String(number).padStart(2, '0');
+                    const pad = number => String(number).padStart(2, '0');
                     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
                 }
             }
@@ -2867,7 +2738,7 @@
         function flattenFollowedLiveItems(value, items = [], seen = new Set(), visited = new WeakSet(), depth = 0) {
             if (!value || items.length >= 160 || depth > 8) return items;
             if (Array.isArray(value)) {
-                value.forEach((item) => flattenFollowedLiveItems(item, items, seen, visited, depth + 1));
+                value.forEach(item => flattenFollowedLiveItems(item, items, seen, visited, depth + 1));
                 return items;
             }
             if (typeof value !== 'object') return items;
@@ -2883,14 +2754,14 @@
                 seen.add(key);
                 items.push({
                     liveId,
-                    title: /^\d{10,}$/.test(String(title || '').trim()) ? '直播' : title || '直播',
+                    title: /^\d{10,}$/.test(String(title || '').trim()) ? '直播' : (title || '直播'),
                     coverUrl,
                     ctime: liveTime,
                     onlineNum: value.onlineNum || value.hot || value.viewer || ''
                 });
             }
 
-            Object.values(value).forEach((child) => {
+            Object.values(value).forEach(child => {
                 if (child && typeof child === 'object') flattenFollowedLiveItems(child, items, seen, visited, depth + 1);
             });
             return items;
@@ -2903,7 +2774,7 @@
         function mergeFollowedLiveContent(previousContent = {}, nextContent = {}) {
             const mergedItems = [];
             const seen = new Set();
-            [...flattenFollowedLiveItems(previousContent), ...flattenFollowedLiveItems(nextContent)].forEach((item) => {
+            [...flattenFollowedLiveItems(previousContent), ...flattenFollowedLiveItems(nextContent)].forEach(item => {
                 const key = String(item.liveId || item.title || item.coverUrl || item.ctime || '');
                 if (!key || seen.has(key)) return;
                 seen.add(key);
@@ -2921,10 +2792,7 @@
             if (!lives.length) return renderFollowedPocketProfileEmpty('暂无直播数据');
 
             return `<div class="followed-member-live-list">
-                ${lives
-                    .slice(0, 120)
-                    .map(
-                        (item) => `
+                ${lives.slice(0, 120).map(item => `
                     <button type="button" class="followed-member-live-card" ${item.liveId ? `onclick="playSharedLiveFromMessage(${toFollowedInlineArg(item.liveId)}, ${toFollowedInlineArg(item.title)}, ${toFollowedInlineArg(item.ctime)}, ${toFollowedInlineArg(item.title)})"` : ''}>
                         <div class="followed-member-live-cover">
                             ${item.coverUrl ? `<img src="${escapeFollowedHtml(item.coverUrl)}" alt="" loading="lazy" onerror="this.style.display='none'">` : ''}
@@ -2934,28 +2802,31 @@
                             <strong>${escapeFollowedHtml(item.title)}</strong>
                             ${item.ctime ? `<span>${escapeFollowedHtml(item.ctime)}</span>` : ''}
                         </div>
-                    </button>`
-                    )
-                    .join('')}
+                    </button>`).join('')}
             </div>`;
         }
 
         function getFollowedStarInfo(starContent) {
-            return starContent?.content?.starInfo || starContent?.starInfo || starContent?.content?.memberInfo || starContent?.memberInfo || starContent || {};
+            return starContent?.content?.starInfo
+                || starContent?.starInfo
+                || starContent?.content?.memberInfo
+                || starContent?.memberInfo
+                || starContent
+                || {};
         }
 
         function isFollowedMemberProfile(starContent, fallback = {}) {
             const info = getFollowedStarInfo(starContent);
             return !!(
-                fallback.isMember ||
-                info.isStar ||
-                info.star ||
-                info.starName ||
-                info.realNickName ||
-                info.ownerName ||
-                info.starTeamName ||
-                info.teamName ||
-                info.periodName
+                fallback.isMember
+                || info.isStar
+                || info.star
+                || info.starName
+                || info.realNickName
+                || info.ownerName
+                || info.starTeamName
+                || info.teamName
+                || info.periodName
             );
         }
 
@@ -2963,30 +2834,25 @@
             const info = getFollowedStarInfo(starContent);
             const history = Array.isArray(starContent?.content?.history)
                 ? starContent.content.history
-                : Array.isArray(starContent?.history)
-                  ? starContent.history
-                  : [];
-            const metaHtml = renderFollowedProfileMetaGroup(
-                [info],
-                [
-                    { label: '昵称', paths: ['nickname'] },
-                    { label: '所属分团', paths: ['starGroupName', 'groupName'] },
-                    { label: '所属队伍', paths: ['starTeamName', 'teamName', 'team'] },
-                    { label: '加入期数', paths: ['periodName'] },
-                    { label: '入团时间', paths: ['joinTime'] },
-                    { label: '生日', paths: ['birthday'] },
-                    { label: '出生地', paths: ['birthplace'] },
-                    { label: '身高', paths: ['height'] },
-                    { label: '血型', paths: ['bloodType'] },
-                    { label: '星座', paths: ['constellation'] },
-                    { label: '星区', paths: ['starRegion'] },
-                    { label: '微博', paths: ['wbName'] }
-                ]
-            );
+                : (Array.isArray(starContent?.history) ? starContent.history : []);
+            const metaHtml = renderFollowedProfileMetaGroup([info], [
+                { label: '昵称', paths: ['nickname'] },
+                { label: '所属分团', paths: ['starGroupName', 'groupName'] },
+                { label: '所属队伍', paths: ['starTeamName', 'teamName', 'team'] },
+                { label: '加入期数', paths: ['periodName'] },
+                { label: '入团时间', paths: ['joinTime'] },
+                { label: '生日', paths: ['birthday'] },
+                { label: '出生地', paths: ['birthplace'] },
+                { label: '身高', paths: ['height'] },
+                { label: '血型', paths: ['bloodType'] },
+                { label: '星座', paths: ['constellation'] },
+                { label: '星区', paths: ['starRegion'] },
+                { label: '微博', paths: ['wbName'] }
+            ]);
             const hobbies = String(info.hobbies || '').trim();
             const specialty = String(info.specialty || '').trim();
             const historyHtml = history
-                .map((item) => {
+                .map(item => {
                     const time = String(item?.ctime || '').trim();
                     const text = String(item?.content || '').trim();
                     if (!time && !text) return '';
@@ -3010,53 +2876,40 @@
             </div>`;
         }
 
-        function renderFollowedMemberProfile(
-            content,
-            starContent = {},
-            dynamicContent = {},
-            albumContent = {},
-            videoContent = {},
-            liveContent = {},
-            fallback = {}
-        ) {
+        function renderFollowedMemberProfile(content, starContent = {}, dynamicContent = {}, albumContent = {}, videoContent = {}, liveContent = {}, fallback = {}) {
             const userInfo = getFollowedUserInfo(content);
             const base = getFollowedBaseUserInfo(userInfo);
             const info = getFollowedStarInfo(starContent);
             const sources = [base, userInfo, content, info].filter(Boolean);
-            const displayName =
-                getFollowedProfileDisplayName(userInfo, '') ||
-                base.realNickName ||
-                base.nickname ||
-                info.realNickName ||
-                info.nickname ||
-                info.starName ||
-                info.ownerName ||
-                fallback.name ||
-                '成员';
+            const displayName = getFollowedProfileDisplayName(userInfo, '')
+                || base.realNickName
+                || base.nickname
+                || info.realNickName
+                || info.nickname
+                || info.starName
+                || info.ownerName
+                || fallback.name
+                || '成员';
             const teamName = info.starTeamName || info.teamName || info.team || getFirstFollowedProfileValue(sources, ['teamName', 'starTeamName', 'team']);
             const fansNum = getFirstFollowedProfileValue(sources, ['followers', 'fansNum', 'fansCount', 'fanNum']);
-            const avatarUrl =
-                getFollowedUserAvatarUrl(userInfo) ||
-                normalizeFollowedSourceUrl(info.starAvatar || info.avatar || info.userAvatar || info.fullPhoto1 || '') ||
-                fallback.avatar ||
-                './icon.png';
-            const teamLogoUrl = normalizeFollowedSourceUrl(
-                info.starTeamLogo || info.seineTeamLogo || base.teamLogo || base.seineTeamLogo || info.teamLogo || ''
-            );
-            const coverUrl =
-                normalizeFollowedSourceUrl(base.bgImg || base.bgImgUrl || '') ||
-                getFollowedProfileImageUrl([userInfo, content, info].filter(Boolean), [
-                    'bgImg',
-                    'bgImgUrl',
-                    'backgroundImg',
-                    'backgroundImgUrl',
-                    'backImg',
-                    'backImgUrl',
-                    'homeBgImg',
-                    'homeBgImgUrl',
-                    'bannerUrl'
-                ]) ||
-                './icon.png';
+            const avatarUrl = getFollowedUserAvatarUrl(userInfo)
+                || normalizeFollowedSourceUrl(info.starAvatar || info.avatar || info.userAvatar || info.fullPhoto1 || '')
+                || fallback.avatar
+                || './icon.png';
+            const teamLogoUrl = normalizeFollowedSourceUrl(info.starTeamLogo || info.seineTeamLogo || base.teamLogo || base.seineTeamLogo || info.teamLogo || '');
+            const coverUrl = normalizeFollowedSourceUrl(base.bgImg || base.bgImgUrl || '')
+                || getFollowedProfileImageUrl([userInfo, content, info].filter(Boolean), [
+                'bgImg',
+                'bgImgUrl',
+                'backgroundImg',
+                'backgroundImgUrl',
+                'backImg',
+                'backImgUrl',
+                'homeBgImg',
+                'homeBgImgUrl',
+                'bannerUrl'
+            ])
+                || './icon.png';
             const dynamicHtml = renderFollowedDynamicList(dynamicContent);
             const albumHtml = renderFollowedAlbumGrid(albumContent);
             const videoHtml = renderFollowedVideoGrid(videoContent);
@@ -3075,13 +2928,9 @@
                                 <div class="followed-member-title">
                                     <div class="followed-member-name-row">
                                         <span class="followed-member-name">${escapeFollowedHtml(displayName)}</span>
-                                        ${
-                                            teamLogoUrl
-                                                ? `<img class="followed-member-team-logo" src="${escapeFollowedHtml(teamLogoUrl)}" alt="${escapeFollowedHtml(teamName || '')}" onerror="this.style.display='none'">`
-                                                : teamName
-                                                  ? `<span class="followed-member-team">${escapeFollowedHtml(teamName)}</span>`
-                                                  : ''
-                                        }
+                                        ${teamLogoUrl
+                                            ? `<img class="followed-member-team-logo" src="${escapeFollowedHtml(teamLogoUrl)}" alt="${escapeFollowedHtml(teamName || '')}" onerror="this.style.display='none'">`
+                                            : (teamName ? `<span class="followed-member-team">${escapeFollowedHtml(teamName)}</span>` : '')}
                                     </div>
                                     <div class="followed-member-fans">粉丝 ${escapeFollowedHtml(fansNum || '-')}</div>
                                 </div>
@@ -3114,30 +2963,19 @@
             if (honorCards.length) {
                 return `<div class="followed-pocket-honor-stage">
                     <div class="followed-pocket-honor-grid">
-                        ${honorCards
-                            .slice(0, 12)
-                            .map(
-                                (card) => `
+                        ${honorCards.slice(0, 12).map(card => `
                             <button type="button" class="followed-pocket-honor-card" ${card.imageUrl ? `onclick="openImageModal(${toFollowedInlineArg(card.imageUrl)})"` : ''}>
-                                ${
-                                    card.imageUrl
-                                        ? `<img src="${escapeFollowedHtml(card.imageUrl)}" alt="" onerror="this.style.display='none'">`
-                                        : `<span class="followed-pocket-honor-card-placeholder">${escapeFollowedHtml(card.title || '荣耀卡')}</span>`
-                                }
-                                ${
-                                    card.title || card.score || card.level
-                                        ? `
+                                ${card.imageUrl
+                                    ? `<img src="${escapeFollowedHtml(card.imageUrl)}" alt="" onerror="this.style.display='none'">`
+                                    : `<span class="followed-pocket-honor-card-placeholder">${escapeFollowedHtml(card.title || '荣耀卡')}</span>`}
+                                ${(card.title || card.score || card.level) ? `
                                     <span class="followed-pocket-honor-card-meta">
                                         ${card.title ? `<b>${escapeFollowedHtml(card.title)}</b>` : ''}
-                                        ${card.title && (card.level || card.score) ? '<span>·</span>' : ''}
+                                        ${(card.title && (card.level || card.score)) ? '<span>·</span>' : ''}
                                         ${card.level ? `<i>${escapeFollowedHtml(card.level)}</i>` : ''}
                                         ${card.score ? `<em>${escapeFollowedHtml(card.score)}</em>` : ''}
-                                    </span>`
-                                        : ''
-                                }
-                            </button>`
-                            )
-                            .join('')}
+                                    </span>` : ''}
+                            </button>`).join('')}
                     </div>
                 </div>`;
             }
@@ -3145,15 +2983,10 @@
             if (fallbackPhotos.length) {
                 return `<div class="followed-pocket-honor-stage">
                     <div class="followed-pocket-honor-grid">
-                        ${fallbackPhotos
-                            .slice(0, 4)
-                            .map(
-                                (url) => `
+                        ${fallbackPhotos.slice(0, 4).map(url => `
                             <button type="button" class="followed-pocket-honor-card" onclick="openImageModal(${toFollowedInlineArg(url)})">
                                 <img src="${escapeFollowedHtml(url)}" alt="" onerror="this.style.display='none'">
-                            </button>`
-                            )
-                            .join('')}
+                            </button>`).join('')}
                     </div>
                 </div>`;
             }
@@ -3165,16 +2998,7 @@
             return '<button type="button" class="followed-profile-back-btn" onclick="backFollowedUserProfile()" aria-label="返回">‹</button>';
         }
 
-        function renderFollowedPocketProfile(
-            content,
-            starContent = {},
-            honorContent = {},
-            dynamicContent = {},
-            albumContent = {},
-            videoContent = {},
-            liveContent = {},
-            fallback = {}
-        ) {
+        function renderFollowedPocketProfile(content, starContent = {}, honorContent = {}, dynamicContent = {}, albumContent = {}, videoContent = {}, liveContent = {}, fallback = {}) {
             if (isFollowedMemberProfile(starContent, fallback)) {
                 return renderFollowedMemberProfile(content, starContent, dynamicContent, albumContent, videoContent, liveContent, fallback);
             }
@@ -3183,46 +3007,49 @@
             const base = getFollowedBaseUserInfo(userInfo);
             const starInfo = starContent?.starInfo || starContent?.memberInfo || starContent || {};
             const sources = [base, userInfo, content, starInfo].filter(Boolean);
-            const displayName = starInfo.starName || getFollowedProfileDisplayName(userInfo, fallback.name || '口袋用户');
+            const displayName = starInfo.starName
+                || getFollowedProfileDisplayName(userInfo, fallback.name || '口袋用户');
             const userId = getFollowedProfileUserId(userInfo, fallback.userId || starInfo.memberId || starInfo.userId || '');
-            const avatarUrl =
-                normalizeFollowedSourceUrl(starInfo.avatar || starInfo.userAvatar || '') ||
-                getFollowedUserAvatarUrl(userInfo) ||
-                fallback.avatar ||
-                './icon.png';
-            const coverUrl =
-                normalizeFollowedSourceUrl(base.bgImg || base.bgImgUrl || '') ||
-                getFollowedProfileImageUrl([userInfo, content, starInfo].filter(Boolean), [
-                    'bgImg',
-                    'bgImgUrl',
-                    'backgroundImg',
-                    'backgroundImgUrl',
-                    'backImg',
-                    'backImgUrl',
-                    'coverImg',
-                    'coverImgUrl',
-                    'homeBgImg',
-                    'homeBgImgUrl',
-                    'banner',
-                    'bannerUrl',
-                    'serverBgWallImg',
-                    'chatServerInfo.serverBgWallImg'
-                ]) ||
-                './icon.png';
+            const avatarUrl = normalizeFollowedSourceUrl(starInfo.avatar || starInfo.userAvatar || '')
+                || getFollowedUserAvatarUrl(userInfo)
+                || fallback.avatar
+                || './icon.png';
+            const coverUrl = normalizeFollowedSourceUrl(base.bgImg || base.bgImgUrl || '')
+                || getFollowedProfileImageUrl([userInfo, content, starInfo].filter(Boolean), [
+                'bgImg',
+                'bgImgUrl',
+                'backgroundImg',
+                'backgroundImgUrl',
+                'backImg',
+                'backImgUrl',
+                'coverImg',
+                'coverImgUrl',
+                'homeBgImg',
+                'homeBgImgUrl',
+                'banner',
+                'bannerUrl',
+                'serverBgWallImg',
+                'chatServerInfo.serverBgWallImg'
+            ])
+                || './icon.png';
             const signature = getFirstFollowedProfileValue(sources, ['signature', 'sign', 'description', 'desc', 'intro']);
             const level = getFirstFollowedProfileValue(sources, ['level', 'lv', 'userLevel']);
             const roleName = getFirstFollowedProfileValue(sources, ['roleName', 'role', 'userRoleName']);
-            const medalName = formatFollowedProfileValue(
-                getFirstFollowedProfileValue(sources, ['badgeName', 'medalName', 'badgeList', 'medals', 'specialBadge'])
-            );
+            const medalName = formatFollowedProfileValue(getFirstFollowedProfileValue(sources, ['badgeName', 'medalName', 'badgeList', 'medals', 'specialBadge']));
             const rankText = getFirstFollowedProfileValue(sources, ['rankName', 'rank', 'topName']);
             const followText = normalizeFollowedRelationText(sources);
 
-            const badges = [roleName, level ? `lv${level}` : '', medalName, rankText].filter(Boolean).slice(0, 4);
+            const badges = [
+                roleName,
+                level ? `lv${level}` : '',
+                medalName,
+                rankText
+            ].filter(Boolean).slice(0, 4);
 
             const starPhotos = collectFollowedStarPhotos(starContent);
             const honorCards = collectFollowedHonorCards(honorContent);
-            const honorCardHtml = renderFollowedHonorCards(honorCards, starPhotos) || renderFollowedPocketProfileEmpty('暂无荣耀卡');
+            const honorCardHtml = renderFollowedHonorCards(honorCards, starPhotos)
+                || renderFollowedPocketProfileEmpty('暂无荣耀卡');
 
             const dynamicCount = getFirstFollowedProfileValue(sources, ['postNum', 'postsNum', 'dynamicNum']);
             const dynamicHtml = renderFollowedDynamicList(dynamicContent);
@@ -3288,17 +3115,23 @@
                 return;
             }
 
-            openFollowedUserProfile(previousEntry.userId, previousEntry.fallbackName, previousEntry.avatarUrl, previousEntry.isMember, { pushHistory: false });
+            openFollowedUserProfile(
+                previousEntry.userId,
+                previousEntry.fallbackName,
+                previousEntry.avatarUrl,
+                previousEntry.isMember,
+                { pushHistory: false }
+            );
         }
 
         function switchFollowedUserProfileTab(tabName) {
             const modal = document.getElementById('followedUserProfileModal');
             if (!modal) return;
             const normalized = String(tabName || 'honor');
-            modal.querySelectorAll('.followed-pocket-profile-tab').forEach((btn) => {
+            modal.querySelectorAll('.followed-pocket-profile-tab').forEach(btn => {
                 btn.classList.toggle('is-active', btn.dataset.tab === normalized);
             });
-            modal.querySelectorAll('.followed-pocket-tab-panel').forEach((panel) => {
+            modal.querySelectorAll('.followed-pocket-tab-panel').forEach(panel => {
                 panel.classList.toggle('is-active', panel.dataset.panel === normalized);
             });
             const scrollEl = modal.querySelector('.followed-member-scroll, .followed-pocket-scroll');
@@ -3326,11 +3159,10 @@
             const modal = document.getElementById('followedUserProfileModal');
             if (!modal) return;
 
-            const shouldPushHistory =
-                options.pushHistory !== false &&
-                modal.style.display !== 'none' &&
-                followedUserProfileCurrentEntry &&
-                String(followedUserProfileCurrentEntry.userId || '') !== normalizedUserId;
+            const shouldPushHistory = options.pushHistory !== false
+                && modal.style.display !== 'none'
+                && followedUserProfileCurrentEntry
+                && String(followedUserProfileCurrentEntry.userId || '') !== normalizedUserId;
             if (shouldPushHistory) {
                 followedUserProfileHistory.push(followedUserProfileCurrentEntry);
             }
@@ -3365,10 +3197,9 @@
                 }
 
                 const homeContent = getFollowedProfileContent(homeRes);
-                let starContent =
-                    homeContent?.starInfo ||
-                    homeContent?.memberInfo ||
-                    (homeContent?.baseUserInfo?.isStar || homeContent?.baseUserInfo?.star || homeContent?.baseUserInfo?.starName
+                let starContent = homeContent?.starInfo
+                    || homeContent?.memberInfo
+                    || ((homeContent?.baseUserInfo?.isStar || homeContent?.baseUserInfo?.star || homeContent?.baseUserInfo?.starName)
                         ? homeContent.baseUserInfo
                         : {});
                 let honorContent = {};
@@ -3390,7 +3221,7 @@
                 let liveLoadingMore = false;
 
                 let resolvedMemberProfile = isFollowedMemberProfile(starContent, { isMember });
-                const updateHasMore = (cursor) => !!cursor && cursor !== '0';
+                const updateHasMore = cursor => !!cursor && cursor !== '0';
                 const applyDynamicContent = (content, append = false, sourceKey = 'timeline') => {
                     dynamicContent = append ? mergeFollowedDynamicContent(dynamicContent, content, sourceKey) : content;
                     const items = flattenFollowedDynamicItems(content);
@@ -3420,8 +3251,7 @@
                     liveNextCursor = getFollowedLiveNextCursor(liveContent);
                     liveHasMore = updateHasMore(liveNextCursor);
                 };
-                const getActiveFollowedProfileTab = () =>
-                    document.querySelector('#followed-user-profile-body .followed-pocket-profile-tab.is-active')?.dataset.tab || '';
+                const getActiveFollowedProfileTab = () => document.querySelector('#followed-user-profile-body .followed-pocket-profile-tab.is-active')?.dataset.tab || '';
                 const loadMoreFollowedProfileDynamic = async () => {
                     if (dynamicLoadingMore || !dynamicHasMore) return;
                     if (getActiveFollowedProfileTab() !== 'dynamic') return;
@@ -3430,18 +3260,18 @@
                     try {
                         const nextDynamicRes = resolvedMemberProfile
                             ? await ipcRenderer.invoke('fetch-post-timeline-home-new', {
-                                  token,
-                                  pa: window.getPA ? window.getPA() : pa,
-                                  nextId: dynamicNextCursor,
-                                  userId: normalizedUserId
-                              })
+                                token,
+                                pa: window.getPA ? window.getPA() : pa,
+                                nextId: dynamicNextCursor,
+                                userId: normalizedUserId
+                            })
                             : await ipcRenderer.invoke('fetch-post-timeline-home', {
-                                  token,
-                                  pa: window.getPA ? window.getPA() : pa,
-                                  nextId: dynamicNextCursor,
-                                  limit: 20,
-                                  userId: normalizedUserId
-                              });
+                                token,
+                                pa: window.getPA ? window.getPA() : pa,
+                                nextId: dynamicNextCursor,
+                                limit: 20,
+                                userId: normalizedUserId
+                            });
                         if (profileRequestToken !== followedUserProfileRequestToken) return;
                         if (nextDynamicRes && nextDynamicRes.success && nextDynamicRes.content) {
                             const beforeCount = flattenFollowedDynamicItems(dynamicContent).length;
@@ -3572,9 +3402,7 @@
                     if (activeTab === 'live') void loadMoreFollowedMemberLive();
                 };
                 const attachFollowedProfileAutoLoad = () => {
-                    const scrollEl = document.querySelector(
-                        '#followed-user-profile-body .followed-member-scroll, #followed-user-profile-body .followed-pocket-scroll'
-                    );
+                    const scrollEl = document.querySelector('#followed-user-profile-body .followed-member-scroll, #followed-user-profile-body .followed-pocket-scroll');
                     if (!scrollEl) return;
                     scrollEl.onscroll = () => {
                         const remaining = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
@@ -3590,18 +3418,14 @@
                 const renderCurrentProfile = () => {
                     if (profileRequestToken !== followedUserProfileRequestToken) return false;
                     const activeTab = getActiveFollowedProfileTab();
-                    const scrollEl = document.querySelector(
-                        '#followed-user-profile-body .followed-member-scroll, #followed-user-profile-body .followed-pocket-scroll'
-                    );
+                    const scrollEl = document.querySelector('#followed-user-profile-body .followed-member-scroll, #followed-user-profile-body .followed-pocket-scroll');
                     const scrollTop = scrollEl ? scrollEl.scrollTop : 0;
-                    setFollowedUserProfileModalHtml(
-                        renderFollowedPocketProfile(homeContent, starContent, honorContent, dynamicContent, albumContent, videoContent, liveContent, {
-                            name: fallbackName,
-                            userId: normalizedUserId,
-                            avatar: avatarUrl,
-                            isMember: resolvedMemberProfile
-                        })
-                    );
+                    setFollowedUserProfileModalHtml(renderFollowedPocketProfile(homeContent, starContent, honorContent, dynamicContent, albumContent, videoContent, liveContent, {
+                        name: fallbackName,
+                        userId: normalizedUserId,
+                        avatar: avatarUrl,
+                        isMember: resolvedMemberProfile
+                    }));
                     if (activeTab) switchFollowedUserProfileTab(activeTab);
                     hydrateFollowedPreviewMedia(document.getElementById('followed-user-profile-body'));
                     hydrateFollowedProfileVideoCovers(document.getElementById('followed-user-profile-body'));
@@ -3766,48 +3590,30 @@
             }, 500);
         }
 
-        function upsertFollowedPocketGiftData(giftInfo = {}, unitCost = 0) {
+        function upsertFollowedPocketGiftData(giftInfo = {}) {
             if (typeof POCKET_GIFT_DATA === 'undefined') return false;
-
-            const id = String(giftInfo.giftId || giftInfo.id || '').trim();
-            const name = String(giftInfo.giftName || giftInfo.name || '').trim();
-            const cost = Number(unitCost || giftInfo.money || giftInfo.cost || 0);
-            if ((!id && !name) || !cost) return false;
-
-            const existing = POCKET_GIFT_DATA.find((item) => (id && String(item.id) === id) || (name && item.name === name));
-            if (existing) {
-                const changed = Number(existing.cost || 0) !== cost || (id && String(existing.id || '') !== id) || (name && existing.name !== name);
-                if (!changed) return false;
-
-                existing.id = id || existing.id;
-                existing.name = name || existing.name;
-                existing.cost = cost;
-            } else {
-                POCKET_GIFT_DATA.push({ id, name: name || id, cost });
-            }
-
+            if (!window.YayaGiftPricing.upsertObservedPrice(POCKET_GIFT_DATA, giftInfo)) return false;
             scheduleFollowedGiftCacheSave();
             return true;
         }
 
         function renderFollowedPocketGiftCard(giftInfo = {}) {
+            giftInfo = window.YayaGiftPricing.normalizeGiftInfo(giftInfo, { rules: window.YayaGiftPriceSnapshot.rules });
             const giftName = escapeFollowedHtml(giftInfo.giftName || giftInfo.name || '未知礼物');
             const giftNum = Number(giftInfo.giftNum || giftInfo.num || giftInfo.count || 1) || 1;
-            const giftImg = normalizeFollowedPocketMediaUrl(giftInfo.picPath || giftInfo.giftPic || giftInfo.image || '');
-            let unitCost = Number(giftInfo.money || giftInfo.cost || 0);
-
-            if (!unitCost && typeof POCKET_GIFT_DATA !== 'undefined') {
-                const gift = POCKET_GIFT_DATA.find((item) => item.id == (giftInfo.giftId || giftInfo.id) || item.name === (giftInfo.giftName || giftInfo.name));
-                if (gift) unitCost = Number(gift.cost || 0);
-            }
+            const giftImg = window.YayaRendererUtils.resolvePocketImageUrl(normalizeFollowedPocketMediaUrl(giftInfo.picPath || giftInfo.giftPic || giftInfo.image || ''));
+            const unitCost = window.resolvePocketGiftPrice(giftInfo, { historical: true }).unitCost;
 
             upsertFollowedPocketGiftData(giftInfo, unitCost);
 
-            const costDisplay = unitCost ? `<span style="margin-left:5px; color:#fa8c16; font-weight:bold;">(${unitCost * giftNum}🍗)</span>` : '';
+            const costDisplay = window.YayaGiftPricing.isScoringGift(giftInfo)
+                ? `<span style="margin-left:5px; color:#fa8c16; font-weight:bold;">${window.YayaGiftPricing.giftScoreText(giftInfo, { rules: window.YayaGiftPriceSnapshot.rules })}</span>` : unitCost !== null
+                ? `<span style="margin-left:5px; color:#fa8c16; font-weight:bold;">${unitCost * giftNum} 🍗</span>`
+                : '<span style="margin-left:5px; color:var(--text-sub);">价格待核</span>';
 
             return `
                 <div class="mb-2" style="display:flex; align-items:center; background:#fff0f6; padding:6px 8px; border-radius:6px; border:1px solid #ffadd2; max-width: 300px;">
-                    ${giftImg ? `<img src="${escapeFollowedHtml(giftImg)}" style="width: 25px !important; height: 25px !important; max-width: 32px !important; max-height: 32px !important; object-fit: contain !important; margin: 0 8px 0 0 !important; border-radius: 4px; box-shadow: none !important;">` : '<span style="font-size:24px; margin-right:8px;">🎁</span>'}
+                    ${giftImg ? `<img class="pocket-gift-image" src="${escapeFollowedHtml(giftImg)}" style="width: 25px !important; height: 25px !important; max-width: 32px !important; max-height: 32px !important; object-fit: contain !important; margin: 0 8px 0 0 !important; border-radius: 4px; box-shadow: none !important;">` : '<span style="font-size:24px; margin-right:8px;">🎁</span>'}
                     <div style="flex: 1; overflow: hidden;">
                         <div style="color:#eb2f96; font-weight:bold; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">送出礼物：${giftName}</div>
                         <div style="font-size:11px; color:#888;">数量: x${giftNum} ${costDisplay}</div>
@@ -3825,6 +3631,8 @@
         function invalidateFollowedAutoScrollJobs() {
             followedAutoScrollToken += 1;
             resetFollowedPendingBottomTimer();
+            followedBottomFollowCleanup?.();
+            followedBottomFollowCleanup = null;
         }
 
         function getFollowedNewMessageNotice() {
@@ -3859,9 +3667,9 @@
             const ids = new Set();
 
             if (container) {
-                container.querySelectorAll('.msg-item').forEach((el) => {
+                container.querySelectorAll('.msg-item').forEach(el => {
                     if (el.dataset.msgid) ids.add(String(el.dataset.msgid));
-                    if (isDesktopRoom && el.dataset.messageAliases) {
+                    if (supportsMemberRoomRealtime && el.dataset.messageAliases) {
                         try { JSON.parse(el.dataset.messageAliases).forEach(id => ids.add(String(id))); } catch (_) {}
                     }
                 });
@@ -3877,7 +3685,7 @@
 
         function removeFollowedEmptyState(container) {
             if (!container) return;
-            container.querySelectorAll('.empty-state').forEach((el) => el.remove());
+            container.querySelectorAll('.empty-state').forEach(el => el.remove());
         }
 
         function queueFollowedPendingBatch(batchHtml, messageIds, aliases = []) {
@@ -3893,39 +3701,37 @@
         }
 
         function hydrateFollowedPreviewMedia(container) {
+            roomFlipUsers?.observe(container);
             if (!container) return;
 
-            container.querySelectorAll('.preview-media-placeholder').forEach((el) => {
+            const hydrate = el => {
                 const type = el.getAttribute('data-type');
                 const src = el.getAttribute('data-src');
-                const filename = el.getAttribute('data-filename') || Date.now() + (type === 'audio' ? '.mp3' : '.mp4');
-
                 if (src) {
-                    let player = null;
                     if (type === 'audio' && typeof createCustomAudioPlayer === 'function') {
-                        player = createCustomAudioPlayer(src);
-                        el.appendChild(player);
+                        el.appendChild(createCustomAudioPlayer(src));
                     } else if (type === 'video' && typeof createCustomVideoPlayer === 'function') {
-                        player = createCustomVideoPlayer(src);
-                        el.appendChild(player);
-                    }
-
-                    if (player) {
-                        const dlBtn = document.createElement('div');
-                        dlBtn.className = 'media-dl-btn-overlay';
-                        dlBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
-                        dlBtn.title = '下载媒体文件';
-                        dlBtn.onclick = (e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            downloadMediaFileIconMode(src, filename, dlBtn, dlBtn.innerHTML, 'media', `【口袋房间】${activeFollowedName || '媒体'}`);
-                        };
-                        player.style.position = 'relative';
-                        player.appendChild(dlBtn);
+                        el.appendChild(createCustomVideoPlayer(src));
                     }
                 }
                 el.classList.remove('preview-media-placeholder');
-            });
+            };
+            const placeholders = container.querySelectorAll('.preview-media-placeholder');
+            if (isDesktopRoom && typeof IntersectionObserver === 'function') {
+                followedPreviewMediaObserver?.disconnect();
+                if (!placeholders.length) {
+                    followedPreviewMediaObserver = null;
+                    return;
+                }
+                followedPreviewMediaObserver = new IntersectionObserver(entries => {
+                    for (const entry of entries) {
+                        if (!entry.isIntersecting) continue;
+                        followedPreviewMediaObserver.unobserve(entry.target);
+                        if (container.contains(entry.target)) hydrate(entry.target);
+                    }
+                }, { root: container, rootMargin: '240px' });
+                placeholders.forEach(el => followedPreviewMediaObserver.observe(el));
+            } else placeholders.forEach(hydrate);
         }
 
         function captureFollowedPrependAnchor(container) {
@@ -3963,6 +3769,11 @@
             if (!msgBox) return;
             if (respectAutoScrollLock && !canFollowedAutoScroll(msgBox)) return;
 
+            if (isDesktopRoom) {
+                followDesktopRoomBottom(msgBox);
+                return;
+            }
+
             const autoScrollTokenAtAppend = followedAutoScrollToken;
 
             resetFollowedPendingBottomTimer();
@@ -3979,7 +3790,7 @@
                 }
             };
 
-            msgBox.querySelectorAll('img').forEach((img) => {
+            msgBox.querySelectorAll('img').forEach(img => {
                 if (!img.complete) {
                     img.addEventListener('load', goBottomSmart, { once: true });
                     img.addEventListener('error', goBottomSmart, { once: true });
@@ -3990,6 +3801,42 @@
                 followedPendingBottomTimer = null;
                 goBottomSmart();
             }, 300);
+        }
+
+        function followDesktopRoomBottom(msgBox) {
+            followedBottomFollowCleanup?.();
+            resetFollowedPendingBottomTimer();
+            const token = followedAutoScrollToken;
+            let active = true;
+            let lastTop = msgBox.scrollTop;
+            const snapToBottom = () => {
+                if (!active || token !== followedAutoScrollToken) return;
+                msgBox.scrollTop = msgBox.scrollHeight;
+                lastTop = followedLastScrollTop = msgBox.scrollTop;
+            };
+            const onScroll = () => {
+                const distance = msgBox.scrollHeight - msgBox.clientHeight - msgBox.scrollTop;
+                if (msgBox.scrollTop < lastTop - 2 && distance >= 60) lockFollowedAutoScroll();
+                lastTop = msgBox.scrollTop;
+            };
+            const onWheel = event => { if (event.deltaY < 0) lockFollowedAutoScroll(); };
+            const onKey = event => { if (['ArrowUp', 'PageUp', 'Home'].includes(event.key)) lockFollowedAutoScroll(); };
+            const onTouchMove = () => lockFollowedAutoScroll();
+            const listeners = [
+                ['scroll', onScroll, { passive: true }], ['wheel', onWheel, { passive: true }],
+                ['keydown', onKey, false], ['touchmove', onTouchMove, { passive: true }],
+                ['load', snapToBottom, true], ['error', snapToBottom, true], ['loadedmetadata', snapToBottom, true]
+            ];
+            listeners.forEach(args => msgBox.addEventListener(...args));
+            const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(snapToBottom) : null;
+            observer?.observe(msgBox);
+            Array.from(msgBox.children).forEach(child => observer?.observe(child));
+            followedBottomFollowCleanup = () => {
+                active = false;
+                observer?.disconnect();
+                listeners.forEach(args => msgBox.removeEventListener(...args));
+            };
+            snapToBottom();
         }
 
         function flushFollowedPendingMessages() {
@@ -4010,7 +3857,7 @@
             hydrateFollowedPreviewMedia(msgBox);
             resetFollowedPendingMessages();
             scrollFollowedToBottom(msgBox, false);
-        }
+        };
 
         function updateFollowedScrollStickState(container) {
             if (!container) return;
@@ -4066,7 +3913,7 @@
         function getFollowedChannelTitle(detail, channelId) {
             const content = detail?.content || detail || {};
             const channels = Array.isArray(content.channelInfoList) ? content.channelInfoList : [];
-            const matchedChannel = channels.find((channel) => String(channel.channelId) === String(channelId));
+            const matchedChannel = channels.find(channel => String(channel.channelId) === String(channelId));
             return matchedChannel?.channelName || '';
         }
 
@@ -4087,11 +3934,6 @@
             if (!titleEl) return;
             titleEl.innerText = title;
             titleEl.style.visibility = 'visible';
-
-            const popupTitleEl = document.querySelector('.popup-title-name');
-            if (popupTitleEl && title) {
-                popupTitleEl.innerText = title;
-            }
         }
 
         function updateFollowedChatSubtitle(channelId) {
@@ -4146,9 +3988,10 @@
         }
 
         function getFollowedMemberAvatarUrl(channelId) {
-            const memberInfo = getMemberData().find((m) => String(m.channelId) === String(channelId));
+            const memberInfo = getMemberData().find(m => String(m.channelId) === String(channelId));
             if (!memberInfo || !memberInfo.id) return '';
-            return window.globalAvatarCache[memberInfo.id] || (memberInfo.avatar ? normalizeFollowedSourceUrl(memberInfo.avatar) : '');
+            return window.globalAvatarCache[memberInfo.id] ||
+                (memberInfo.avatar ? normalizeFollowedSourceUrl(memberInfo.avatar) : '');
         }
 
         async function refreshFollowedChatTitle() {
@@ -4165,8 +4008,12 @@
             }
 
             const requestServerId = serverId;
+            const requestChannelId = String(activeFollowedChannel || '');
+            const token = getAppToken();
+            const isCurrentRoom = () => token === getAppToken()
+                && String(activeFollowedServer || '') === requestServerId
+                && String(activeFollowedChannel || '') === requestChannelId;
             try {
-                const token = getAppToken();
                 const pa = window.getPA ? window.getPA() : null;
                 const res = await ipcRenderer.invoke('fetch-seine-server-detail', {
                     token,
@@ -4174,6 +4021,7 @@
                     serverId: requestServerId
                 });
 
+                if (!isCurrentRoom()) return;
                 if (!res?.success || !res.content) {
                     if (activeFollowedFallbackAvatarUrl) setFollowedChatAvatarUrl(activeFollowedFallbackAvatarUrl);
                     return;
@@ -4183,6 +4031,7 @@
                     updateFollowedChatMetaFromDetail(res.content);
                 }
             } catch (error) {
+                if (!isCurrentRoom()) return;
                 console.warn('获取频道名失败:', error);
                 if (activeFollowedFallbackAvatarUrl) setFollowedChatAvatarUrl(activeFollowedFallbackAvatarUrl);
             }
@@ -4192,18 +4041,15 @@
             if (!liveId) return;
 
             try {
-                const res = await fetchPocketAPI(
-                    '/live/api/v1/live/getLiveList',
-                    JSON.stringify({
-                        debug: true,
-                        next: 0,
-                        groupId: 0,
-                        record: false
-                    })
-                );
+                const res = await fetchPocketAPI('/live/api/v1/live/getLiveList', JSON.stringify({
+                    debug: true,
+                    next: 0,
+                    groupId: 0,
+                    record: false
+                }));
 
                 const liveList = Array.isArray(res?.content?.liveList) ? res.content.liveList : [];
-                const matchedLive = liveList.find((item) => String(item.liveId) === String(liveId));
+                const matchedLive = liveList.find(item => String(item.liveId) === String(liveId));
 
                 if (matchedLive && typeof playLiveStream === 'function') {
                     if (typeof setMediaReturnView === 'function') setMediaReturnView('followed-rooms');
@@ -4224,6 +4070,14 @@
         }
 
         function openFollowedChat(ownerName, channelId, serverId, options = {}) {
+            const composer = document.getElementById('followed-room-composer');
+            if (isDesktopRoom && followedRoomSnapshotAccount === String(getAppToken() || '')
+                && String(activeFollowedChannel) === String(channelId)
+                && String(activeFollowedServer) === String(serverId)
+                && composer && composer.style.display !== 'none'
+                && document.getElementById('view-followed-rooms')?.classList.contains('is-chat-open')
+                && (isFollowedChatLoading || renderedFollowedRoom)) return;
+            saveFollowedRoomSnapshot();
             resetMemberRoomRealtime();
             scheduleFollowedRoomPoll = null;
             const requestRevision = ++followedChatRequestRevision;
@@ -4233,16 +4087,17 @@
             const mainChannelId = String(options?.mainChannelId || channelId || '');
             activeFollowedChannel = channelId;
             activeFollowedMainChannel = mainChannelId;
+            activeFollowedSmallChannel = String(options?.smallChannelId || (initialRoomType === 'small' ? channelId : '') || '');
             activeFollowedServer = serverId;
             activeFollowedName = ownerName;
             activeFollowedMemberId = String(options?.memberId || '').trim();
-            if (!activeFollowedMemberId) {
-                const member = getMemberData().find(item => String(item.channelId || '') === String(mainChannelId)
-                    || item.ownerName === ownerName);
-                if (member) activeFollowedMemberId = String(member.id || member.userId || '').trim();
-            }
             activeFollowedNextTime = 0;
             isFollowedSmallRoomMode = initialRoomType === 'small';
+            if (typeof options?.allMessages === 'boolean') {
+                isFollowedChatAllMode = options.allMessages;
+                const modeButton = document.getElementById('btn-toggle-followed-mode');
+                if (modeButton) modeButton.innerText = window.YayaRendererUtils.t(isFollowedChatAllMode ? '全部消息' : '成员消息');
+            }
             activateMemberRoomComposer();
             if (typeof window.syncWebRoomRoute === 'function') {
                 window.syncWebRoomRoute(channelId);
@@ -4252,20 +4107,6 @@
             followedLastScrollTop = 0;
             invalidateFollowedAutoScrollJobs();
             resetFollowedPendingMessages();
-            if (typeof window.autoConnectFollowedRoomRadio === 'function') {
-                window.autoConnectFollowedRoomRadio(
-                    channelId,
-                    serverId,
-                    activeFollowedMemberId,
-                    ownerName
-                );
-            }
-            if (typeof window.ensureRoomRadioScanFresh === 'function') {
-                window.ensureRoomRadioScanFresh({
-                    preferredChannelId: channelId,
-                    prioritizeCurrent: true
-                });
-            }
             const followedView = document.getElementById('view-followed-rooms');
             if (followedView) followedView.classList.add('is-chat-open');
 
@@ -4283,19 +4124,7 @@
                 roomBtn.classList.add('btn-secondary');
             }
 
-            const modeBtn = document.getElementById('btn-toggle-followed-mode');
-            if (modeBtn) {
-                modeBtn.innerText = window.YayaRendererUtils.t(isFollowedChatAllMode ? "全部消息" : "成员消息");
-                if (isFollowedChatAllMode) {
-                    modeBtn.classList.remove('btn-secondary');
-                    modeBtn.classList.add('btn-primary');
-                } else {
-                    modeBtn.classList.remove('btn-primary');
-                    modeBtn.classList.add('btn-secondary');
-                }
-            }
-
-            document.querySelectorAll('.session-card').forEach((card) => card.classList.remove('active'));
+            document.querySelectorAll('.session-card.active').forEach(card => card.classList.remove('active'));
             const selectedCard = document.getElementById(`session-card-${mainChannelId}`);
             if (selectedCard) selectedCard.classList.add('active');
 
@@ -4306,20 +4135,18 @@
             }
             showFollowedChatTitle(getFollowedFallbackTitle(ownerName));
             updateFollowedChatSubtitle(channelId);
-            activeFollowedFallbackAvatarUrl = getFollowedMemberAvatarUrl(mainChannelId);
+            activeFollowedFallbackAvatarUrl = normalizeFollowedSourceUrl(options?.avatarUrl || '') || getFollowedMemberAvatarUrl(mainChannelId);
 
-            if (activeFollowedServer) {
-                setFollowedChatAvatarUrl('');
-                refreshFollowedChatTitle();
-            } else {
+            if (isDesktopRoom) {
                 setFollowedChatAvatarUrl(activeFollowedFallbackAvatarUrl);
+                resetFollowedRoomEssence();
+                if (followedServerDetailCache.has(String(activeFollowedServer || '').trim())) refreshFollowedChatTitle();
+            } else {
+                setFollowedChatAvatarUrl(activeFollowedServer ? '' : activeFollowedFallbackAvatarUrl);
             }
-            void loadFollowedRoomEssence(requestRevision);
+            refreshFollowedRoomExtras(requestRevision);
 
-            const msgBox = document.getElementById('followed-chat-messages');
-            msgBox.style.transition = 'opacity 0.2s';
-            msgBox.style.opacity = '0.4';
-            msgBox.style.pointerEvents = 'none';
+            prepareFollowedRoomMessages();
 
             loadFollowedChatPage(false, false, requestRevision).finally(() => {
                 if (refreshCycle !== followedAutoRefreshCycle) return;
@@ -4329,14 +4156,16 @@
                     if (!followedAutoRefreshEnabled || refreshCycle !== followedAutoRefreshCycle) return;
                     clearTimeout(followedAutoRefreshTimer);
                     followedAutoRefreshTimer = null;
-                    if (isDesktopRoom && memberRoomConnected) return;
-                    followedAutoRefreshTimer = setTimeout(runPoll, getAdaptivePollDelay());
+                    if (supportsMemberRoomRealtime && memberRoomConnected) return;
+                    followedAutoRefreshTimer = setTimeout(runPoll, window.desktop?.platform === 'web'
+                        ? Math.max(document.hidden ? 60000 : 15000, getAdaptivePollDelay()) : getAdaptivePollDelay());
                 };
 
                 const runPoll = async () => {
                     if (!followedAutoRefreshEnabled || refreshCycle !== followedAutoRefreshCycle) return;
                     const view = document.getElementById('view-followed-rooms');
-                    if ((view && view.style.display === 'none') || followedAutoRefreshRunning) {
+                    if ((view && view.style.display === 'none') || followedAutoRefreshRunning
+                        || (window.desktop?.platform === 'web' && navigator.onLine === false)) {
                         scheduleNext();
                         return;
                     }
@@ -4353,7 +4182,7 @@
                 scheduleFollowedRoomPoll = scheduleNext;
                 scheduleNext();
             });
-        }
+        };
 
         function backToFollowedRoomList(event) {
             if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
@@ -4432,6 +4261,7 @@
 
         function toggleFollowedRoomType() {
             if (isFollowedChatLoading || !activeFollowedName) return;
+            saveFollowedRoomSnapshot();
             resetMemberRoomRealtime();
 
             followedChatRequestRevision += 1;
@@ -4440,8 +4270,7 @@
             const memberInfo = getMemberData().find(m => m.ownerName === activeFollowedName);
 
             if (!isFollowedSmallRoomMode) {
-                const smallRoomId = memberInfo ? memberInfo.yklzId : null;
-                console.log(`[关注房间] 切换小房间 name=${activeFollowedName} yklzId=${smallRoomId} memberId=${memberInfo?.id}`);
+                const smallRoomId = activeFollowedSmallChannel || memberInfo?.smallChannelId || memberInfo?.yklzId;
                 if (!smallRoomId) {
                     showToast(`未在数据中找到 ${activeFollowedName} 的小房间 ID`);
                     return;
@@ -4449,7 +4278,6 @@
                 isFollowedSmallRoomMode = true;
                 activeFollowedChannel = smallRoomId;
             } else {
-                console.log(`[关注房间] 切换回大房间 name=${activeFollowedName} channel=${activeFollowedMainChannel}`);
                 isFollowedSmallRoomMode = false;
                 activeFollowedChannel = activeFollowedMainChannel;
             }
@@ -4466,7 +4294,7 @@
 
             updateFollowedChatSubtitle(activeFollowedChannel);
             activateMemberRoomComposer();
-            if (typeof window.autoConnectFollowedRoomRadio === 'function') {
+            if (!window.desktop?.isRoomWindow && typeof window.autoConnectFollowedRoomRadio === 'function') {
                 window.autoConnectFollowedRoomRadio(
                     activeFollowedChannel,
                     activeFollowedServer,
@@ -4474,9 +4302,11 @@
                     activeFollowedName
                 );
             }
-            if (typeof window.ensureRoomRadioScanFresh === 'function') {
+            if (!window.desktop?.isRoomWindow && typeof window.ensureRoomRadioScanFresh === 'function') {
                 window.ensureRoomRadioScanFresh({
                     preferredChannelId: activeFollowedChannel,
+                    preferredServerId: activeFollowedServer,
+                    preferredMemberName: activeFollowedName,
                     prioritizeCurrent: true
                 });
             }
@@ -4490,11 +4320,8 @@
             followedLastScrollTop = 0;
             invalidateFollowedAutoScrollJobs();
             resetFollowedPendingMessages();
-            const msgBox = document.getElementById('followed-chat-messages');
-            msgBox.style.transition = 'opacity 0.2s';
-            msgBox.style.opacity = '0.4';
-            msgBox.style.pointerEvents = 'none';
-            msgBox.replaceChildren();
+            prepareFollowedRoomMessages();
+            if (!isDesktopRoom) document.getElementById('followed-chat-messages').replaceChildren();
 
             loadFollowedChatPage(false);
         }
@@ -4512,22 +4339,15 @@
 
         function toggleFollowedChatMode() {
             if (isFollowedChatLoading) return;
+            saveFollowedRoomSnapshot();
             memberRoomRealtimeQueue.length = 0;
 
             isFollowedChatAllMode = !isFollowedChatAllMode;
             followedChatRequestRevision += 1;
             const btn = document.getElementById('btn-toggle-followed-mode');
-            const msgBox = document.getElementById('followed-chat-messages');
 
             btn.innerText = window.YayaRendererUtils.t("切换中...");
             btn.disabled = true;
-
-            msgBox.style.transition = 'opacity 0.2s';
-            msgBox.style.opacity = '0.4';
-
-            if (isFollowedChatAllMode) {
-            } else {
-            }
 
             activeFollowedNextTime = 0;
             followedStickToBottom = true;
@@ -4535,23 +4355,19 @@
             followedLastScrollTop = 0;
             invalidateFollowedAutoScrollJobs();
             resetFollowedPendingMessages();
+            prepareFollowedRoomMessages();
 
             loadFollowedChatPage(false).finally(() => {
                 btn.innerText = window.YayaRendererUtils.t(isFollowedChatAllMode ? "全部消息" : "成员消息");
-                if (isFollowedChatAllMode) {
-                    btn.classList.remove('btn-secondary');
-                    btn.classList.add('btn-primary');
-                } else {
-                    btn.classList.remove('btn-primary');
-                    btn.classList.add('btn-secondary');
-                }
                 btn.disabled = false;
             });
         };
 
         function sortFollowedRoomMessages(container) {
-            if (!isDesktopRoom) return;
+            if (!supportsMemberRoomRealtime) return;
             const items = [...container.children].filter(node => node.classList.contains('msg-item'));
+            if (items.every((node, index) => index === 0
+                || Number(items[index - 1].dataset.msgtime || 0) <= Number(node.dataset.msgtime || 0))) return;
             const sorted = [...items].sort((a, b) => Number(a.dataset.msgtime || 0) - Number(b.dataset.msgtime || 0));
             if (items.every((node, index) => node === sorted[index])) return;
             sorted.forEach(node => {
@@ -4563,7 +4379,7 @@
         function renderFollowedChatMessages(list, { isLoadMore = false, isAutoRefresh = true, requestRevision = followedChatRequestRevision } = {}) {
             const msgBox = document.getElementById('followed-chat-messages');
             if (!msgBox || requestRevision !== followedChatRequestRevision) return;
-            const oldScrollHeight = msgBox.scrollHeight;
+            const oldScrollHeight = isLoadMore ? msgBox.scrollHeight : 0;
             const prependAnchor = isLoadMore ? captureFollowedPrependAnchor(msgBox) : null;
             if (!isLoadMore && !isAutoRefresh) {
                 msgBox.replaceChildren();
@@ -4582,30 +4398,37 @@
             const existingIds = isAutoRefresh || isLoadMore
                 ? collectFollowedRenderedMessageIds(msgBox, true)
                 : new Set();
+            const renderedByAlias = new Map();
+            if (supportsMemberRoomRealtime && (isAutoRefresh || isLoadMore)) {
+                msgBox.querySelectorAll('.msg-item').forEach(node => {
+                    let aliases = [node.dataset.msgid];
+                    try { aliases.push(...JSON.parse(node.dataset.messageAliases || '[]')); } catch (_) {}
+                    aliases.forEach(id => { if (id) renderedByAlias.set(String(id), node); });
+                });
+            }
             const batchMessageIds = [];
             const batchAliases = [];
-            const currentIdentityIds = getCurrentMemberRoomIdentityIds();
-            const myUserId = (typeof currentPocketUserId !== 'undefined' && currentPocketUserId)
-                ? String(currentPocketUserId).trim()
-                : String(typeof getCurrentUserId === 'function' ? getCurrentUserId() || '' : '').trim();
-            let hasOwnMessage = false;
 
             const batchHtml = reversedList.map(m => {
                 if (window.desktop?.platform && window.desktop.platform !== 'web'
                     && window.YayaRendererFeatures.isMemberRoomGiftAnimation?.(m)) return '';
                 const msgId = m.msgIdClient || m.msgidClient || m.msgIdServer || m.msgId || m.msgTime;
-                const aliases = isDesktopRoom && roomRealtime ? roomRealtime.aliases(m) : [String(msgId)];
-                if (isDesktopRoom && aliases.some(id => memberRoomDeletedIds.has(id))) return '';
+                const aliases = supportsMemberRoomRealtime && roomRealtime ? roomRealtime.aliases(m) : [String(msgId)];
+                if (supportsMemberRoomRealtime && aliases.some(id => memberRoomDeletedIds.has(id))) return '';
                 const messageKey = `${String(msgId || 'message')}:${String(m.msgTime || '')}`;
 
                 if ((isAutoRefresh || isLoadMore) && (existingIds.has(String(msgId))
-                    || (isDesktopRoom && aliases.some(id => existingIds.has(id))))) {
-                    if (isDesktopRoom) {
-                        msgBox.querySelectorAll('.msg-item').forEach(node => {
+                    || (supportsMemberRoomRealtime && aliases.some(id => existingIds.has(id))))) {
+                    if (supportsMemberRoomRealtime) {
+                        const matches = new Set(aliases.map(id => renderedByAlias.get(String(id))).filter(Boolean));
+                        matches.forEach(node => {
                             let previous = [node.dataset.msgid];
                             try { previous = JSON.parse(node.dataset.messageAliases || '[]').concat(previous); } catch (_) {}
                             if (aliases.some(id => previous.includes(id))) {
-                                node.dataset.messageAliases = JSON.stringify([...new Set([...previous, ...aliases])]);
+                                if (aliases.some(id => !previous.includes(id))) {
+                                    node.dataset.messageAliases = JSON.stringify([...new Set([...previous, ...aliases])]);
+                                }
+                                aliases.forEach(id => renderedByAlias.set(String(id), node));
                             }
                         });
                         aliases.forEach(id => { existingIds.add(id); followedPendingAliasIds.add(id); });
@@ -4615,7 +4438,7 @@
 
                 batchMessageIds.push(String(msgId));
                 batchAliases.push(...aliases);
-                if (isDesktopRoom) aliases.forEach(id => existingIds.add(id));
+                if (supportsMemberRoomRealtime) aliases.forEach(id => existingIds.add(id));
 
                 let txt = '[不支持的消息格式]';
                 let isMember = false;
@@ -4659,8 +4482,8 @@
                     let json = null;
                     if (typeof body === 'string' && (body.startsWith('{') || body.startsWith('['))) {
                         try {
-                            json = JSON.parse(body);
-                            if (typeof json === 'string') json = JSON.parse(json);
+                            json = JSON.parse(body.replace(/:\s*([0-9]{16,})/g, ':"$1"'));
+                            if (typeof json === 'string') json = JSON.parse(json.replace(/:\s*([0-9]{16,})/g, ':"$1"'));
                         } catch (parseErr) { window.YayaRendererUtils.reportIgnoredError(parseErr, 'src/renderer/followed-chat-feature.js'); }
                     } else if (typeof body === 'object' && body !== null) {
                         json = body;
@@ -4676,14 +4499,7 @@
                             txt = `<p class="mb-2 template-pre">${safeStr(json.text || json.bodys || body)}</p>`;
                         } else if (msgType === 'IMAGE') {
                             const url = json.url.startsWith('http') ? json.url : `https://source3.48.cn${json.url}`;
-                            const dlFilename = `IMAGE_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.jpg`;
-                            const dlSource = `【口袋房间】${activeFollowedName || '媒体'}`;
-                            txt = `<div class="mb-2" style="position:relative; display:inline-block;">
-                                    <img class="template-media" src="${escapeFollowedHtml(url)}" loading="lazy" style="max-height: 250px; border-radius: 8px; cursor: zoom-in;" onclick="openImageModal(${toFollowedInlineArg(url)})">
-                                    <div class="media-dl-btn-overlay image-dl" title="下载图片" onclick="event.stopPropagation(); downloadMediaFileIconMode(${toFollowedInlineArg(url)}, ${toFollowedInlineArg(dlFilename)}, this, this.innerHTML, 'media', ${toFollowedInlineArg(dlSource)})">
-                                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                                    </div>
-                                   </div>`;
+                        txt = `<div class="mb-2"><img class="template-media" src="${escapeFollowedHtml(url)}" loading="lazy" style="max-height: 250px; border-radius: 8px; cursor: zoom-in;" onclick="openImageModal(${toFollowedInlineArg(url)})"></div>`;
                         } else if (msgType === 'EXPRESSIMAGE') {
                             const url = json.expressImgInfo ? json.expressImgInfo.emotionRemote : json.url;
                         txt = `<div class="mb-2"><img class="template-image-express-image" src="${escapeFollowedHtml(url.startsWith('http') ? url : 'https://source3.48.cn' + url)}"></div>`;
@@ -4699,12 +4515,10 @@
                                    </blockquote>`;
                         } else if (msgType === 'AUDIO') {
                             let mediaUrl = json.url.startsWith('http') ? json.url : `https://mp4.48.cn${json.url.startsWith('/') ? '' : '/'}${json.url}`;
-                            const dlFilename = `AUDIO_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.mp3`;
-                            txt = `<div class="mb-2 preview-media-placeholder" data-type="audio" data-src="${escapeFollowedHtml(mediaUrl)}" data-filename="${escapeFollowedHtml(dlFilename)}"></div>`;
+                        txt = `<div class="mb-2 preview-media-placeholder" data-type="audio" data-src="${escapeFollowedHtml(mediaUrl)}"></div>`;
                         } else if (msgType === 'VIDEO') {
                             let mediaUrl = json.url.startsWith('http') ? json.url : `https://mp4.48.cn${json.url.startsWith('/') ? '' : '/'}${json.url}`;
-                            const dlFilename = `VIDEO_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.mp4`;
-                            txt = `<div class="mb-2 preview-media-placeholder" data-type="video" data-src="${escapeFollowedHtml(mediaUrl)}" data-filename="${escapeFollowedHtml(dlFilename)}"></div>`;
+                        txt = `<div class="mb-2 preview-media-placeholder" data-type="video" data-src="${escapeFollowedHtml(mediaUrl)}"></div>`;
                         } else if (['GIFT_TEXT', 'CHANNEL_PRESENT_TEXT', 'PRESENT_TEXT'].includes(jsonType)
                             || ['GIFT_TEXT', 'CHANNEL_PRESENT_TEXT', 'PRESENT_TEXT'].includes(msgType)) {
                             const info = json.giftInfo || json;
@@ -4719,28 +4533,44 @@
                                 if (json.bodys && json.bodys[key]) { flipInfo = json.bodys[key]; break; }
                             }
                             const qText = flipInfo?.question || json.question || '（无法解析的问题内容）';
+                            const questionUser = flipInfo?.questionId && flipInfo?.answerId
+                                ? `<span class="room-flip-question-user-slot" data-question-id="${escapeFollowedHtml(flipInfo.questionId)}" data-answer-id="${escapeFollowedHtml(flipInfo.answerId)}">用户</span>` : '<span>用户</span>';
+                            const flipMemberName = escapeFollowedHtml(displayName || activeFollowedName || '成员');
                             let aContent = flipInfo?.answer || json.answer || '';
                             let ansHtml = '';
                             if (msgType === 'FLIPCARD' || (jsonType === 'FLIPCARD' && typeof aContent === 'string' && !aContent.includes('url'))) {
-                                ansHtml = `<div style="font-size:14px; color:var(--text); line-height:1.6; padding:0 4px;">${safeStr(aContent)}</div>`;
+                                ansHtml = safeStr(aContent);
                             } else {
                                 try {
                                     const ansObj = typeof aContent === 'string' ? JSON.parse(aContent) : aContent;
                                     if (ansObj && ansObj.url) {
                                         let mediaUrl = ansObj.url.startsWith('http') ? ansObj.url : `https://mp4.48.cn${ansObj.url.startsWith('/') ? '' : '/'}${ansObj.url}`;
                                         const mType = (msgType.includes('AUDIO') || jsonType.includes('AUDIO')) ? 'audio' : 'video';
-                                        const dlFilename = `FLIP_${mType.toUpperCase()}_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.${mType === 'audio' ? 'mp3' : 'mp4'}`;
-                                        ansHtml = `<div class="preview-media-placeholder" data-type="${mType}" data-src="${mediaUrl}" data-filename="${escapeFollowedHtml(dlFilename)}" style="margin-top:8px;"></div>`;
+                                        ansHtml = `<div class="preview-media-placeholder" data-type="${mType}" data-src="${mediaUrl}"></div>`;
                                     }
                                 } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/followed-chat-feature.js'); }
                             }
-                            txt = `<div style="margin-bottom: 8px;">
-                                        <span class="flip-label question-tag" style="margin-right:8px; transform:none; display:inline-flex;">翻牌提问</span>
-                                        <span style="font-size:14px; color:var(--text); line-height: 1.5;">${safeStr(qText)}</span>
-                                   </div>
-                                   <div style="margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 8px;">
-                                        <span class="flip-label answer-tag" style="margin-right:8px; transform:none; display:inline-flex;">成员回答</span>
-                                        ${ansHtml}
+                            txt = `<div class="room-flip-message">
+                                       <div class="room-flip-section">
+                                           <div class="room-flip-section-header">
+                                               <span class="flip-label question-tag">翻牌提问</span>
+                                               <div class="room-flip-section-title">${questionUser}<span>向</span><strong>${flipMemberName}</strong><span>提问</span></div>
+                                           </div>
+                                           <div class="room-flip-section-body">${safeStr(qText)}</div>
+                                       </div>
+                                       <div class="room-flip-section room-flip-answer-section">
+                                           <div class="room-flip-section-header">
+                                               <span class="flip-label answer-tag">成员回答</span>
+                                               <div class="room-flip-section-title">
+                                                   <button type="button" class="room-flip-question-user room-flip-answer-user"
+                                                       ${senderId ? `onclick="openFollowedUserProfile(${toFollowedInlineArg(senderId)}, ${toFollowedInlineArg(displayName)}, ${toFollowedInlineArg(avatarUrl)}, ${isMember})"` : 'disabled'}>
+                                                       <img class="avatar room-flip-question-user-avatar" src="${escapeFollowedHtml(avatarUrl)}" alt="" onerror="this.style.visibility='hidden'">
+                                                       <span>${flipMemberName}</span>
+                                                   </button><span>的回复</span>
+                                               </div>
+                                           </div>
+                                           <div class="room-flip-section-body">${ansHtml}</div>
+                                       </div>
                                    </div>`;
                         } else if (msgType === 'LIVEPUSH' || msgType === 'LIVE_PUSH' || jsonType === 'LIVEPUSH') {
                             const info = json.livePushInfo || json;
@@ -4752,16 +4582,16 @@
                             const tStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
                             const escapedTitle = liveTitle.replace(/'/g, "\\'");
                             const escapedName = safeStr(displayName).replace(/'/g, "\\'");
-                            txt = `<div class="vod-card-row followed-chat-live-card" style="margin-top: 8px; width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--border); box-shadow: none; ${liveId ? 'cursor: pointer;' : 'cursor: default;'}"
+                            txt = `<div class="vod-card-row" style="margin-top: 8px; width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--border); box-shadow: none; ${liveId ? 'cursor: pointer;' : 'cursor: default;'}"
                                  ${liveId ? `onclick="event.stopPropagation(); playSharedLiveFromMessage('${liveId}', '${escapedName}', '${tStr}', '${escapedTitle}')"` : ''}>
-                                <div class="vod-row-cover-container" style="width: 84px; height: 48px; flex: 0 0 84px; margin-right: 10px; border-radius: 6px;">
+                                <div class="vod-row-cover-container" style="width: 100px; height: 56px; border-radius: 6px;">
                                     <img src="${cover}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 6px;">
                                     <div class="vod-badge" style="bottom: 4px; right: 4px; background-color: #722ed1;">通知</div>
                                 </div>
-                                <div class="vod-row-info" style="height: auto; min-height: 48px; padding: 0 !important; display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; flex: 1;">
-                                    <div class="vod-row-name" style="font-size: 13px; font-weight: bold; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 16px;">${safeStr(displayName)}</div>
-                                    <div class="vod-row-title" style="font-size: 11px; color: var(--text-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 15px; margin: 0;">${liveTitle}</div>
-                                    <div class="vod-row-time" style="font-size: 10px; color: var(--text-sub); opacity: 0.65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 13px; margin: 0;">${tStr}</div>
+                                <div class="vod-row-info" style="height: 56px; justify-content: space-between;">
+                                    <div class="vod-row-name" style="font-size: 14px; color: var(--text);">${safeStr(displayName)}</div>
+                                    <div class="vod-row-title" style="font-size: 12px; color: var(--text-sub);">${liveTitle}</div>
+                                    <div class="vod-row-time" style="font-size: 11px; color: var(--text-sub); opacity: 0.6;">${tStr}</div>
                                 </div>
                             </div>`;
                         } else if (msgType === 'SHARE_LIVE' || jsonType === 'SHARE_LIVE') {
@@ -4783,16 +4613,16 @@
                             const escapedName = liveUserName.replace(/'/g, "\\'");
                             const shareTime = shareDesc || fallbackTimeStr;
 
-                            txt = `<div class="vod-card-row followed-chat-live-card" style="margin-top: 8px; width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--border); box-shadow: none; ${sharedLiveId ? 'cursor: pointer;' : 'cursor: default;'}"
+                            txt = `<div class="vod-card-row" style="margin-top: 8px; width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--border); box-shadow: none; ${sharedLiveId ? 'cursor: pointer;' : 'cursor: default;'}"
                                  ${sharedLiveId ? `onclick="event.stopPropagation(); playSharedLiveFromMessage('${sharedLiveId}', '${escapedName}', '${shareTime}', '${escapedTitle}')"` : ''}>
-                                <div class="vod-row-cover-container" style="width: 84px; height: 48px; flex: 0 0 84px; margin-right: 10px; border-radius: 6px;">
+                                <div class="vod-row-cover-container" style="width: 100px; height: 56px; border-radius: 6px;">
                                     <img src="${sharePic}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 6px;" onerror="this.src='./icon.png'">
                                     <div class="vod-badge" style="bottom: 4px; right: 4px; background-color: #722ed1;">分享</div>
                                 </div>
-                                <div class="vod-row-info" style="height: auto; min-height: 48px; padding: 0 !important; display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; flex: 1;">
-                                    <div class="vod-row-name" style="font-size: 13px; font-weight: bold; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 16px;">${liveUserName || safeStr(displayName)}</div>
-                                    <div class="vod-row-title" style="font-size: 11px; color: var(--text-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 15px; margin: 0;">${shareTitle}</div>
-                                    <div class="vod-row-time" style="font-size: 10px; color: var(--text-sub); opacity: 0.65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 13px; margin: 0;">${shareTime}</div>
+                                <div class="vod-row-info" style="height: 56px; justify-content: space-between;">
+                                    <div class="vod-row-name" style="font-size: 14px; color: var(--text);">${liveUserName || safeStr(displayName)}</div>
+                                    <div class="vod-row-title" style="font-size: 12px; color: var(--text-sub);">${shareTitle}</div>
+                                    <div class="vod-row-time" style="font-size: 11px; color: var(--text-sub); opacity: 0.6;">${shareTime}</div>
                                 </div>
                             </div>`;
                         } else if (jsonType.startsWith('RED_PACKET')) {
@@ -4828,8 +4658,7 @@
                             const rName = safeStr(info.replyName || '未知用户');
                             const rText = safeStr(info.replyText || '');
                             txt = '';
-                            const dlFilename = `AUDIO_REPLY_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.mp3`;
-                            extraHtml = `<div class="preview-media-placeholder" data-type="audio" data-src="${voiceUrl}" data-filename="${escapeFollowedHtml(dlFilename)}" style="margin: 0 0 12px 0;"></div>
+                            extraHtml = `<div class="preview-media-placeholder" data-type="audio" data-src="${voiceUrl}" style="margin: 0 0 12px 0;"></div>
                                     <div style="background: var(--blockquote-bg); padding: 8px 12px; border-radius: 6px; border-left: 3px solid var(--border); margin: 0 0 8px 0; color: var(--text-sub); font-size: 13px; line-height: 1.5;">
                                         ${rName}：${rText}
                                     </div>`;
@@ -4846,19 +4675,16 @@
 
                 const timeStr = fallbackTimeStr;
 
-                const isOwnMessage = Boolean(
-                    (myUserId && String(senderId) === myUserId)
-                    || [...senderIdentityIds].some(identityId => currentIdentityIds.has(identityId))
-                    || isSentOwnMemberRoomMessage(m)
-                );
-                if (isOwnMessage) hasOwnMessage = true;
-                const matchedOwnIdentity = isOwnMessage
-                    ? ([...senderIdentityIds].find(identityId => currentIdentityIds.has(identityId)) || myUserId)
-                    : '';
-
-                const nameColorVar = isOwnMessage
+                const nameColorVar = String(senderId) === '121569667'
                     ? '#056de8'
                     : (isMember ? 'var(--msg-name-member)' : 'var(--msg-name-fan)');
+
+                const currentIdentityIds = getCurrentMemberRoomIdentityIds();
+                const isOwnMessage = [...senderIdentityIds]
+                    .some(identityId => currentIdentityIds.has(identityId));
+                const matchedOwnIdentity = isOwnMessage
+                    ? [...senderIdentityIds].find(identityId => currentIdentityIds.has(identityId))
+                    : '';
                 const canReplyEligible = Boolean(String(m.msgIdClient || '').trim())
                     && ['TEXT', 'REPLY', 'GIFTREPLY', 'GIFT_TEXT'].includes(actionType)
                     && Boolean(String(replyText || '').trim());
@@ -4885,7 +4711,7 @@
                 });
 
                 return `
-    <div class="msg-item" data-msgid="${escapeFollowedHtml(msgId)}" data-msgtime="${Number(m.msgTime) || 0}" ${isDesktopRoom ? `data-message-aliases="${escapeFollowedHtml(JSON.stringify(aliases))}"` : ''} data-message-key="${escapeFollowedHtml(messageKey)}" style="display: flex; padding: 8px 0; border-bottom: 1px solid var(--border);">
+    <div class="msg-item" data-msgid="${escapeFollowedHtml(msgId)}" data-msgtime="${Number(m.msgTime) || 0}" ${supportsMemberRoomRealtime ? `data-message-aliases="${escapeFollowedHtml(JSON.stringify(aliases))}"` : ''} data-message-key="${escapeFollowedHtml(messageKey)}" style="display: flex; padding: 8px 0; border-bottom: 1px solid var(--border);">
 <button type="button" class="followed-message-avatar-btn" title="查看用户主页"
         onclick="openFollowedUserProfile(${toFollowedInlineArg(senderId)}, ${toFollowedInlineArg(displayName)}, ${toFollowedInlineArg(avatarUrl)}, ${isMember ? 'true' : 'false'})">
     <img src="${escapeFollowedHtml(avatarUrl)}" class="avatar" alt="" onerror="this.src='./icon.png'">
@@ -4917,11 +4743,7 @@
                 return;
             }
 
-            if (hasOwnMessage) {
-                followedStickToBottom = true;
-                followedUserScrollLockUntil = 0;
-            }
-            const shouldAutoScrollNow = !isAutoRefresh || hasOwnMessage || canFollowedAutoScroll(msgBox);
+            const shouldAutoScrollNow = !isAutoRefresh || canFollowedAutoScroll(msgBox);
             if (isAutoRefresh && !shouldAutoScrollNow) {
                 queueFollowedPendingBatch(batchHtml, batchMessageIds, batchAliases);
                 return;
@@ -4931,8 +4753,10 @@
             const fragment = document.createRange().createContextualFragment(batchHtml);
 
             if (isLoadMore) {
+                if (isDesktopRoom) invalidateFollowedAutoScrollJobs();
                 msgBox.prepend(fragment);
                 sortFollowedRoomMessages(msgBox);
+                if (isDesktopRoom) hydrateFollowedPreviewMedia(msgBox);
                 if (!restoreFollowedPrependAnchor(msgBox, prependAnchor)) {
                     const newScrollTop = msgBox.scrollHeight - oldScrollHeight;
                     msgBox.scrollTop = newScrollTop <= 0 ? 1 : newScrollTop;
@@ -4941,6 +4765,7 @@
             } else {
                 msgBox.appendChild(fragment);
                 sortFollowedRoomMessages(msgBox);
+                if (isDesktopRoom) hydrateFollowedPreviewMedia(msgBox);
                 if (shouldAutoScrollNow) {
                     scrollFollowedToBottom(msgBox, isAutoRefresh);
                 }
@@ -4950,8 +4775,7 @@
                 const oldTip = document.getElementById('btn-load-more-followed');
                 if (oldTip) oldTip.remove();
             }
-
-            hydrateFollowedPreviewMedia(msgBox);
+            if (!isDesktopRoom) hydrateFollowedPreviewMedia(msgBox);
         }
 
         async function loadFollowedChatPage(isLoadMore, isAutoRefresh = false, requestRevision = followedChatRequestRevision) {
@@ -4964,10 +4788,12 @@
             const requestServerId = activeFollowedServer;
             const requestChannelId = activeFollowedChannel;
             const requestFetchAll = isFollowedChatAllMode;
+            const isCurrentRequest = () => requestRevision === followedChatRequestRevision && token === getAppToken();
+            const cachedRoom = isDesktopRoom && !isLoadMore && !isAutoRefresh ? renderedFollowedRoom : null;
             let requestSucceeded = false;
 
             try {
-                const fetchNextTime = isAutoRefresh ? 0 : activeFollowedNextTime;
+                const fetchNextTime = isDesktopRoom && !isLoadMore ? 0 : (isAutoRefresh ? 0 : activeFollowedNextTime);
 
                 const res = await fetchFollowedRoomMessagesWithTimeout({
                     token: token,
@@ -4978,7 +4804,7 @@
                     fetchAll: requestFetchAll
                 });
 
-                if (requestRevision !== followedChatRequestRevision) return;
+                if (!isCurrentRequest()) return;
 
                 if (res.success && res.data.content) {
                     if (res.usedServerId) {
@@ -4987,8 +4813,11 @@
                     }
                     const content = res.data.content;
                     let list = content.messageList || content.message || [];
+                    const signature = isDesktopRoom && !isAutoRefresh && !isLoadMore ? JSON.stringify(list) : '';
+                    const reuseRenderedRoom = cachedRoom && cachedRoom.key === followedRoomSnapshotKey()
+                        && cachedRoom.signature === signature;
 
-                    if (!isAutoRefresh && !isLoadMore) {
+                    if (!isAutoRefresh && !isLoadMore && !reuseRenderedRoom) {
                         activeFollowedNextTime = normalizeFollowedNextTime(content.nextTime);
                         if (list.length === 0) activeFollowedNextTime = 0;
                     } else if (isLoadMore) {
@@ -4997,21 +4826,24 @@
                             : 0;
                     }
 
-                    renderFollowedChatMessages(list, { isLoadMore, isAutoRefresh, requestRevision });
+                    if (!reuseRenderedRoom) renderFollowedChatMessages(list, { isLoadMore, isAutoRefresh, requestRevision });
+                    if (isDesktopRoom && !isAutoRefresh && !isLoadMore) {
+                        renderedFollowedRoom = { key: followedRoomSnapshotKey(), signature, updatedAt: Date.now() };
+                    }
                     requestSucceeded = true;
                 }
             } catch (e) {
-                if (requestRevision === followedChatRequestRevision) {
+                if (isCurrentRequest()) {
                     console.error(e);
-                    if (!isAutoRefresh && !isLoadMore) {
+                    if (!isAutoRefresh && !isLoadMore && !cachedRoom) {
                         msgBox.innerHTML = '<div class="empty-state" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--text-sub); font-size: 14px;">消息加载失败，请重新选择房间重试</div>';
                     }
                 }
             } finally {
-                if (requestRevision === followedChatRequestRevision) {
+                if (isCurrentRequest()) {
                     isFollowedChatLoading = false;
-                    if (isDesktopRoom && !isLoadMore && !requestSucceeded) scheduleMemberRoomFallback(2000);
-                    if (isDesktopRoom && !isAutoRefresh && !isLoadMore) {
+                    if (supportsMemberRoomRealtime && !isLoadMore && !requestSucceeded) scheduleMemberRoomFallback(2000);
+                    if (supportsMemberRoomRealtime && !isAutoRefresh && !isLoadMore) {
                         memberRoomRecentMessages.forEach(record => memberRoomRealtimeQueue.push(record));
                     }
                     flushMemberRoomRealtime();
@@ -5039,7 +4871,7 @@
 
         document.addEventListener('DOMContentLoaded', () => {
             const roomView = document.getElementById('view-followed-rooms');
-            if (isDesktopRoom && roomView) new MutationObserver(() => {
+            if (supportsMemberRoomRealtime && roomView) new MutationObserver(() => {
                 if (roomView.style.display !== 'none') flushMemberRoomRealtime();
             }).observe(roomView, { attributes: true, attributeFilter: ['style', 'hidden'] });
             const essencePanel = document.getElementById('followed-room-essence');
@@ -5094,24 +4926,16 @@
                 }, { passive: true });
 
                 let followedTouchStartY = 0;
-                followedMsgBox.addEventListener(
-                    'touchstart',
-                    function (event) {
-                        followedTouchStartY = event.touches && event.touches[0] ? event.touches[0].clientY : 0;
-                    },
-                    { passive: true }
-                );
+                followedMsgBox.addEventListener('touchstart', function (event) {
+                    followedTouchStartY = event.touches && event.touches[0] ? event.touches[0].clientY : 0;
+                }, { passive: true });
 
-                followedMsgBox.addEventListener(
-                    'touchmove',
-                    function (event) {
-                        const currentY = event.touches && event.touches[0] ? event.touches[0].clientY : 0;
-                        if (currentY > followedTouchStartY + 4) {
-                            lockFollowedAutoScroll();
-                        }
-                    },
-                    { passive: true }
-                );
+                followedMsgBox.addEventListener('touchmove', function (event) {
+                    const currentY = event.touches && event.touches[0] ? event.touches[0].clientY : 0;
+                    if (currentY > followedTouchStartY + 4) {
+                        lockFollowedAutoScroll();
+                    }
+                }, { passive: true });
 
                 followedMsgBox.addEventListener('scroll', function () {
                     closeMemberRoomContextMenu();
@@ -5128,16 +4952,6 @@
                         loadFollowedChatPage(true);
                     }
                 });
-
-                followedMsgBox.addEventListener('click', function (event) {
-                    const target = event.target.closest('.chat-member-name-clickable, .chat-member-avatar-clickable');
-                    if (target) {
-                        const senderId = target.getAttribute('data-sender-id');
-                        const displayName = target.getAttribute('data-display-name');
-                        const memberInfo = findMemberInfo(senderId, displayName);
-                        showMemberProfile(memberInfo, senderId);
-                    }
-                });
             }
 
             document.addEventListener('keydown', function (event) {
@@ -5146,7 +4960,7 @@
                 const view = document.getElementById('view-followed-rooms');
                 if (!followedMsgBox || !view || view.style.display === 'none') return;
 
-                if (event.key === 'PageUp' || event.key === 'ArrowUp') {
+                if (event.key === 'PageUp' || event.key === 'ArrowUp' || event.key === 'Home') {
                     lockFollowedAutoScroll();
                 }
             });
@@ -5157,8 +4971,25 @@
             });
         });
 
+
         function getActiveFollowedChannel() {
             return activeFollowedChannel;
+        }
+
+        function getActiveFollowedRoomWindowContext() {
+            if (!activeFollowedChannel) return null;
+            const member = getMemberData().find(item => String(item.channelId || '') === String(activeFollowedMainChannel));
+            return {
+                ownerName: activeFollowedName,
+                channelId: String(activeFollowedChannel),
+                serverId: String(activeFollowedServer),
+                mainChannelId: String(activeFollowedMainChannel),
+                smallChannelId: activeFollowedSmallChannel || String(member?.smallChannelId || member?.yklzId || ''),
+                roomType: isFollowedSmallRoomMode ? 'small' : 'big',
+                memberId: activeFollowedMemberId,
+                avatarUrl: activeFollowedFallbackAvatarUrl,
+                allMessages: isFollowedChatAllMode
+            };
         }
 
         return {
@@ -5168,6 +4999,7 @@
             deleteFollowedProfileDynamicComment,
             flushFollowedPendingMessages,
             getActiveFollowedChannel,
+            getActiveFollowedRoomWindowContext,
             jumpToFullRoom,
             loadFollowedChatPage,
             openFollowedChat,

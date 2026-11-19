@@ -86,10 +86,11 @@ if (!ffmpegConfig.isAvailable) {
 
 ffmpeg.setFfmpegPath(ffmpegConfig.path);
 
-let currentProxyCommand = null;
+const proxySessions = new Map();
 let mediaServer = null;
 let mediaServerPorts = null;
 let mediaServerStartPromise = null;
+let mediaServerStopPromise = null;
 
 const MEDIA_SERVER_HOST = '127.0.0.1';
 const DEFAULT_RTMP_PORT = 1935;
@@ -156,17 +157,23 @@ function closeServerObject(server) {
     } catch (error) { reportIgnoredError(error, 'src/main/services/media-service.js'); }
 }
 
-function stopMediaServer() {
-    if (!mediaServer) {
-        mediaServerPorts = null;
-        mediaServerStartPromise = null;
-        return;
+async function closeMediaServer(server) {
+    const closeListeners = () => getServerObjects(server).forEach(closeServerObject);
+    if (typeof server?.stop !== 'function') return closeListeners();
+    try {
+        await server.stop();
+    } catch (error) {
+        closeListeners();
+        reportIgnoredError(error, 'media-service:stop-media-server');
     }
+}
 
-    getServerObjects(mediaServer).forEach(closeServerObject);
+function stopMediaServer() {
+    if (!mediaServer) return;
+
+    mediaServerStopPromise = closeMediaServer(mediaServer);
     mediaServer = null;
     mediaServerPorts = null;
-    mediaServerStartPromise = null;
 }
 
 async function startMediaServer() {
@@ -179,10 +186,14 @@ async function startMediaServer() {
     }
 
     mediaServerStartPromise = (async () => {
+        await mediaServerStopPromise;
+        mediaServerStopPromise = null;
         const rtmpPort = await findAvailablePort(DEFAULT_RTMP_PORT);
         const httpPort = await findAvailablePort(DEFAULT_HTTP_PORT);
         const nextServer = new NodeMediaServer({
             bind: MEDIA_SERVER_HOST,
+            webadmin: { enable: false },
+            store: { path: path.join(app.getPath('userData'), 'media-proxy') },
             rtmp: { port: rtmpPort, chunk_size: 60000, gop_cache: true, ping: 30, ping_timeout: 60 },
             http: { port: httpPort, allow_origin: '*', mediaroot: './media' }
         });
@@ -190,7 +201,8 @@ async function startMediaServer() {
 
         return await new Promise((resolve, reject) => {
             let settled = false;
-            let pending = serverObjects.length;
+            let pending = serverObjects.length + 1;
+            let runPromise;
             const cleanupListeners = [];
 
             const finish = () => {
@@ -205,11 +217,12 @@ async function startMediaServer() {
                 resolve(mediaServerPorts);
             };
 
-            const fail = (error) => {
+            const fail = async (error) => {
                 if (settled) return;
                 settled = true;
+                await runPromise?.catch(() => {});
                 cleanupListeners.forEach((cleanup) => cleanup());
-                getServerObjects(nextServer).forEach(closeServerObject);
+                await closeMediaServer(nextServer);
                 reject(new Error(`媒体代理启动失败: ${error.message}`));
             };
 
@@ -225,10 +238,8 @@ async function startMediaServer() {
             });
 
             try {
-                nextServer.run();
-                if (pending === 0) {
-                    finish();
-                }
+                runPromise = Promise.resolve(nextServer.run());
+                runPromise.then(finish, fail);
             } catch (error) {
                 fail(error);
             }
@@ -237,9 +248,6 @@ async function startMediaServer() {
 
     try {
         return await mediaServerStartPromise;
-    } catch (error) {
-        stopMediaServer();
-        throw error;
     } finally {
         mediaServerStartPromise = null;
     }
@@ -1604,21 +1612,32 @@ async function startProxy(remotePayload, {
     errorPrefix,
     waitForInputReady = false,
     readinessFallbackMs = 1200,
-    startTimeoutMs = PROXY_START_TIMEOUT_MS
+    startTimeoutMs = PROXY_START_TIMEOUT_MS,
+    ownerId = 'legacy'
 }) {
     if (!ffmpegConfig.isAvailable) {
         throw new Error('FFmpeg 不可用，请检查系统环境或打包资源');
     }
 
-    stopCommand(currentProxyCommand);
-    currentProxyCommand = null;
     const { url: remoteUrl, headers } = normalizeProxyPayload(remotePayload);
     if (!remoteUrl) {
         return Promise.reject(new Error('缺少直播流地址'));
     }
-
-    const { rtmpPort, httpPort } = await startMediaServer();
-    const streamId = `${streamPrefix}_${Date.now()}`;
+    stopLiveProxy(ownerId, true);
+    const session = { command: null, cancel: null };
+    proxySessions.set(ownerId, session);
+    let ports;
+    try { ports = await startMediaServer(); }
+    catch (error) {
+        if (proxySessions.get(ownerId) === session) proxySessions.delete(ownerId);
+        throw error;
+    }
+    const { rtmpPort, httpPort } = ports;
+    if (proxySessions.get(ownerId) !== session) {
+        if (!proxySessions.size) stopMediaServer();
+        throw new Error('媒体代理已取消');
+    }
+    const streamId = `${streamPrefix}_${crypto.randomBytes(12).toString('hex')}`;
     const localRtmp = `rtmp://${MEDIA_SERVER_HOST}:${rtmpPort}/live/${streamId}`;
     const localHttpFlv = `http://${MEDIA_SERVER_HOST}:${httpPort}/live/${streamId}.flv`;
 
@@ -1630,9 +1649,7 @@ async function startProxy(remotePayload, {
             if (settled) return;
             settled = true;
             stopCommand(command);
-            if (currentProxyCommand === command) {
-                currentProxyCommand = null;
-            }
+            if (proxySessions.get(ownerId) === session) proxySessions.delete(ownerId);
             reject(new Error('媒体代理启动超时'));
         }, Math.max(1000, Number(startTimeoutMs) || PROXY_START_TIMEOUT_MS));
 
@@ -1646,22 +1663,18 @@ async function startProxy(remotePayload, {
 
         const settleFailure = (error) => {
             const errorMessage = String(error?.message || error || '');
-            const wasStoppedIntentionally = /(?:SIGKILL|SIGTERM|was killed)/i.test(errorMessage);
+            const wasStoppedIntentionally = error?.code === 'PROXY_CANCELLED' || /(?:SIGKILL|SIGTERM|was killed)/i.test(errorMessage);
             if (!wasStoppedIntentionally) {
                 console.error(`${errorPrefix}:`, errorMessage);
             }
             if (settled) {
-                if (currentProxyCommand === command) {
-                    currentProxyCommand = null;
-                }
+                if (proxySessions.get(ownerId) === session) proxySessions.delete(ownerId);
                 return;
             }
             settled = true;
             clearTimeout(timer);
             clearTimeout(readinessFallbackTimer);
-            if (currentProxyCommand === command) {
-                currentProxyCommand = null;
-            }
+            if (proxySessions.get(ownerId) === session) proxySessions.delete(ownerId);
             reject(new Error(`媒体代理启动失败: ${error.message}`));
         };
 
@@ -1673,7 +1686,7 @@ async function startProxy(remotePayload, {
             .outputOptions(outputOptions)
             .output(localRtmp);
 
-        currentProxyCommand = command
+        session.command = command
             .on('start', () => {
                 if (!waitForInputReady) {
                     settleSuccess();
@@ -1689,13 +1702,15 @@ async function startProxy(remotePayload, {
             })
             .on('error', settleFailure);
 
-        currentProxyCommand.run();
+        session.cancel = () => settleFailure(Object.assign(new Error('媒体代理已停止'), { code: 'PROXY_CANCELLED' }));
+        command.run();
     });
 }
 
-function startLiveProxy(remoteUrl) {
+function startLiveProxy(remoteUrl, ownerId = 'legacy') {
     return startProxy(remoteUrl, {
         streamPrefix: 'live',
+        ownerId,
         inputOptions: ['-re', '-rw_timeout 5000000'],
         outputOptions: ['-c copy', '-f flv'],
         errorPrefix: '直播代理中断',
@@ -1705,9 +1720,10 @@ function startLiveProxy(remoteUrl) {
     });
 }
 
-function startRadioProxy(remoteUrl) {
+function startRadioProxy(remoteUrl, ownerId = 'legacy') {
     return startProxy(remoteUrl, {
         streamPrefix: 'radio',
+        ownerId,
         inputOptions: ['-rw_timeout 5000000', '-fflags nobuffer', '-analyzeduration 500000', '-probesize 500000'],
         outputOptions: ['-vn', '-c:a copy', '-f flv'],
         errorPrefix: '电台代理中断',
@@ -1715,10 +1731,12 @@ function startRadioProxy(remoteUrl) {
     });
 }
 
-function stopLiveProxy() {
-    stopCommand(currentProxyCommand);
-    currentProxyCommand = null;
-    stopMediaServer();
+function stopLiveProxy(ownerId = 'legacy', keepServer = false) {
+    const session = proxySessions.get(ownerId);
+    proxySessions.delete(ownerId);
+    session?.cancel?.();
+    stopCommand(session?.command);
+    if (!keepServer && !proxySessions.size && !mediaServerStartPromise) stopMediaServer();
 }
 
 function remuxRecoveredLiveRecording(inputPath, outputPath) {
@@ -1862,8 +1880,7 @@ async function finalizeLiveRecordingsBeforeQuit(timeoutMs = LIVE_RECORD_SHUTDOWN
 }
 
 function cleanupMediaTasks() {
-    stopCommand(currentProxyCommand);
-    currentProxyCommand = null;
+    for (const ownerId of proxySessions.keys()) stopLiveProxy(ownerId, true);
 
     activeCommands.forEach((task) => stopCommand(task.command));
     recordCommands.forEach((task) => {

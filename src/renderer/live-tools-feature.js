@@ -9,9 +9,9 @@
             getCurrentMode,
             getCurrentViewName,
             getCurrentPlayingItem,
+            getPlaybackViewToken,
             getLiveAnnouncementDismissed,
             setLiveAnnouncementDismissed,
-            getDp,
             getMemberData,
             loadMemberData,
             getPinyinInitials,
@@ -26,11 +26,44 @@
         let currentRecordStartedAt = null;
         let currentRecordFileName = '';
         let clipTaskPreparing = false;
+        let liveUiRevision = 0;
+        const liveRankRequests = new Map();
+        const liveAnnouncementRequests = new Map();
+
+        function resetAnnouncementButton(button, request) {
+            if (liveAnnouncementRequests.get(button) !== request) return;
+            clearTimeout(request.timer);
+            button.innerText = request.originalText || '↻';
+            button.disabled = false;
+            liveAnnouncementRequests.delete(button);
+        }
+
+        function invalidateLiveUiRequests() {
+            liveUiRevision += 1;
+            liveRankRequests.clear();
+            for (const [button, request] of liveAnnouncementRequests) resetAnnouncementButton(button, request);
+        }
+
+        function captureLiveUiContext() {
+            const revision = liveUiRevision;
+            const token = getSafeToken();
+            const accountGeneration = window.getPocketAccountSessionGeneration?.();
+            const playbackToken = getPlaybackViewToken?.();
+            const liveId = String(getCurrentPlayingItem?.()?.liveId || '');
+            return () => revision === liveUiRevision && token === getSafeToken()
+                && accountGeneration === window.getPocketAccountSessionGeneration?.()
+                && playbackToken === getPlaybackViewToken?.()
+                && liveId === String(getCurrentPlayingItem?.()?.liveId || '');
+        }
+
+        window.addEventListener('yaya:view-changed', invalidateLiveUiRequests);
         const AUTO_LIVE_RECORD_ENABLED_KEY = 'yaya_auto_live_record_enabled';
         const AUTO_LIVE_RECORD_MEMBERS_KEY = 'yaya_auto_live_record_members';
         const AUTO_LIVE_RECORD_POLL_INTERVAL_MS = 3000;
+        const LIVE_START_HINT_TTL_MS = 15000;
         const IS_WEB_PLATFORM = window.desktop?.platform === 'web'
             || document.documentElement?.dataset?.platform === 'web';
+        const CAN_AUTO_RECORD_LIVE = !IS_WEB_PLATFORM && !window.desktop?.isRoomWindow && !window.desktop?.isLiveWindow;
         let autoLiveRecordEnabled = false;
         let autoLiveRecordMembers = [];
         let autoLiveRecordPollTimer = null;
@@ -40,6 +73,16 @@
         const autoLiveRecordHandledLiveIds = new Set();
         const autoLiveRecordRetryState = new Map();
         const autoLiveRecordMissingPolls = new Map();
+        const liveStartHints = new Map();
+        let liveStartSubscription = null;
+        let liveRecordAccount = null;
+        let liveRecordGeneration = 0;
+        let livePollRequested = false;
+        let liveRecordCheckFailures = 0;
+
+        function liveRecordRetryDelay() {
+            return [3000, 10000, 30000, 60000][Math.min(Math.max(0, liveRecordCheckFailures - 1), 3)];
+        }
 
         function readStringSetting(key, fallbackValue = '') {
             if (typeof window.readStoredStringSetting === 'function') {
@@ -88,10 +131,6 @@
 
         function getCurrentArt() {
             return typeof getArt === 'function' ? getArt() : null;
-        }
-
-        function getCurrentDp() {
-            return typeof getDp === 'function' ? getDp() : null;
         }
 
         function getSafeCurrentViewName() {
@@ -156,7 +195,13 @@
             const currentPlayingItem = typeof getCurrentPlayingItem === 'function' ? getCurrentPlayingItem() : null;
             if (!currentPlayingItem || !currentPlayingItem.liveId || !btnElement) return;
 
-            const originalText = btnElement.innerText;
+            const previous = liveAnnouncementRequests.get(btnElement);
+            if (previous) resetAnnouncementButton(btnElement, previous);
+            const request = { originalText: btnElement.innerText, timer: null };
+            const contextIsCurrent = captureLiveUiContext();
+            const isCurrent = () => liveAnnouncementRequests.get(btnElement) === request && contextIsCurrent();
+            liveAnnouncementRequests.set(btnElement, request);
+
             btnElement.innerText = '...';
             btnElement.disabled = true;
 
@@ -164,6 +209,7 @@
                 const res = await fetchPocketAPI('/live/api/v1/live/getLiveOne', JSON.stringify({
                     liveId: currentPlayingItem.liveId
                 }));
+                if (!isCurrent()) return;
 
                 if (res && res.status === 200 && res.content) {
                     const textEl = document.getElementById('live-announcement-text');
@@ -190,14 +236,13 @@
                     btnElement.innerText = window.YayaRendererUtils.t('失败');
                 }
             } catch (e) {
+                if (!isCurrent()) return;
                 console.error('刷新公告失败:', e);
                 btnElement.innerText = window.YayaRendererUtils.t('失败');
+            } finally {
+                if (isCurrent()) request.timer = setTimeout(() => resetAnnouncementButton(btnElement, request), 2000);
+                else resetAnnouncementButton(btnElement, request);
             }
-
-            setTimeout(() => {
-                btnElement.innerText = originalText || '↻';
-                btnElement.disabled = false;
-            }, 2000);
         }
 
         function closeLiveAnnouncement() {
@@ -240,6 +285,7 @@
         }
 
         function closeLiveRankModal() {
+            liveRankRequests.delete('live-rank-modal-list');
             const modal = document.getElementById('liveRankModal');
             if (modal) modal.style.display = 'none';
         }
@@ -275,8 +321,8 @@
                     const userId = String(row.dataset.liveRankUserId || '').trim();
                     if (!userId) return;
                     if (typeof window.openFollowedUserProfile !== 'function') {
-                        const dp = getCurrentDp();
-                        if (dp) dp.notice('用户主页模块还没有准备好');
+                        const art = getCurrentArt();
+                        if (art?.notice) art.notice.show = '用户主页模块还没有准备好';
                         return;
                     }
                     closeLiveRankModal();
@@ -340,6 +386,10 @@
 
             const listContainer = document.getElementById(targetContainerId);
             if (!listContainer) return;
+            const request = {};
+            const contextIsCurrent = captureLiveUiContext();
+            const isCurrent = () => liveRankRequests.get(targetContainerId) === request && contextIsCurrent();
+            liveRankRequests.set(targetContainerId, request);
 
             listContainer.innerHTML = '<div style="text-align: center; color: var(--text-sub); font-size: 12px; padding: 20px;"><div class="spinner" style="width:20px;height:20px;margin:0 auto 10px;"></div>正在加载数据...</div>';
 
@@ -347,8 +397,13 @@
                 const res = await ipcRenderer.invoke('fetch-live-rank', {
                     token: getSafeToken(),
                     pa: getSafePa(),
-                    liveId
+                    liveId,
+                    ...(currentPlayingItem?.rankSource === 'performance'
+                        && String(currentPlayingItem.liveId) === String(liveId)
+                        ? { rankSource: 'performance', type: currentPlayingItem.rankType } : {})
                 });
+
+                if (!isCurrent()) return;
 
                 if (res.success && res.content && res.content.data) {
                     const rankData = res.content.data;
@@ -406,7 +461,10 @@
                     listContainer.innerHTML = '<div style="text-align: center; color: var(--text-sub); font-size: 12px; padding: 15px;">获取榜单失败</div>';
                 }
             } catch (e) {
+                if (!isCurrent()) return;
                 listContainer.innerHTML = `<div style="text-align: center; color: #ff4d4f; font-size: 12px; padding: 15px;">出错了: ${e.message}</div>`;
+            } finally {
+                if (liveRankRequests.get(targetContainerId) === request) liveRankRequests.delete(targetContainerId);
             }
         }
 
@@ -577,13 +635,14 @@
             const status = document.getElementById('auto-live-record-status');
             const count = document.getElementById('auto-live-record-member-count');
             const activeCount = autoLiveRecordTasks.size;
+            const monitorStatus = getLiveRecordMonitorStatus();
 
             if (button) {
                 button.classList.toggle('is-enabled', autoLiveRecordEnabled);
                 button.classList.toggle('is-recording', activeCount > 0);
                 button.textContent = window.YayaRendererUtils.t(activeCount > 0 ? `自动录制 ${activeCount}` : '自动录制');
                 button.title = autoLiveRecordEnabled
-                    ? `已启用，监控 ${autoLiveRecordMembers.length} 位成员${activeCount ? `，正在录制 ${activeCount} 场` : ''}`
+                    ? `${monitorStatus}${activeCount ? `，正在录制 ${activeCount} 场` : ''}`
                     : '设置直播自动录制成员';
             }
             if (checkbox) checkbox.checked = autoLiveRecordEnabled;
@@ -594,9 +653,26 @@
                 } else if (autoLiveRecordMembers.length === 0) {
                     status.textContent = window.YayaRendererUtils.t('请先添加需要自动录制的成员');
                 } else {
-                    status.textContent = window.YayaRendererUtils.t(`正在监控 ${autoLiveRecordMembers.length} 位成员`);
+                    status.textContent = window.YayaRendererUtils.t(monitorStatus);
                 }
             }
+        }
+
+        function getLiveRecordMonitorStatus() {
+            if (!autoLiveRecordEnabled) return '尚未启用';
+            if (!autoLiveRecordMembers.length) return '请先添加需要自动录制的成员';
+            if (!getSafeToken()) return '请先登录口袋48账号';
+            if (liveRecordCheckFailures) return `直播检查失败，${liveRecordRetryDelay() / 1000} 秒后重试`;
+            const state = liveStartSubscription;
+            const covered = autoLiveRecordMembers.filter(member => {
+                const keys = state?.roomKeysByMember.get(member.id);
+                return keys?.size && [...keys].every(key => state.accepted.has(key));
+            }).length;
+            if (covered === autoLiveRecordMembers.length) return `订阅正常：${covered} 位成员`;
+            const missing = autoLiveRecordMembers.length - covered;
+            if (state?.status === 'connecting') return `正在订阅 ${autoLiveRecordMembers.length} 位成员，轮询兜底中`;
+            return covered ? `${covered} 位订阅正常，${missing} 位轮询兜底`
+                : `${state?.status === 'connected' ? '订阅未完整' : '正在重连'}，${missing} 位成员轮询兜底`;
         }
 
         function renderAutoLiveRecordMembers() {
@@ -662,7 +738,7 @@
             if (results) results.style.display = 'none';
             renderAutoLiveRecordMembers();
             updateAutoLiveRecordUi();
-            if (autoLiveRecordEnabled) scheduleAutoLiveRecordPoll(0);
+            if (autoLiveRecordEnabled) refreshLiveRecordMonitoring();
         }
 
         function removeAutoLiveRecordMember(memberId) {
@@ -689,6 +765,7 @@
             persistAutoLiveRecordSettings();
             renderAutoLiveRecordMembers();
             updateAutoLiveRecordUi();
+            if (autoLiveRecordEnabled) refreshLiveRecordMonitoring();
         }
 
         function searchAutoLiveRecordMembers(keyword = '') {
@@ -800,6 +877,10 @@
             autoLiveRecordRetryState.clear();
             autoLiveRecordHandledLiveIds.clear();
             autoLiveRecordMissingPolls.clear();
+            autoLiveRecordTasks.clear();
+            autoLiveRecordTaskOwners.clear();
+            updateAutoLiveRecordUi();
+            renderAutoLiveRecordMembers();
         }
 
         function toggleAutoLiveRecording(enabled) {
@@ -809,6 +890,7 @@
                 showAutoLiveRecordToast('网页端已禁用直播自动录制');
                 return;
             }
+            if (!CAN_AUTO_RECORD_LIVE) return;
             autoLiveRecordEnabled = !!enabled;
             persistAutoLiveRecordSettings();
             updateAutoLiveRecordUi();
@@ -816,22 +898,181 @@
                 if (autoLiveRecordMembers.length === 0) {
                     showAutoLiveRecordToast('请先添加需要自动录制的成员');
                 }
-                scheduleAutoLiveRecordPoll(0);
+                refreshLiveRecordMonitoring();
             } else {
                 if (autoLiveRecordPollTimer) clearTimeout(autoLiveRecordPollTimer);
                 autoLiveRecordPollTimer = null;
+                liveRecordGeneration += 1;
+                liveRecordAccount = null;
+                liveStartHints.clear();
+                livePollRequested = false;
+                liveRecordCheckFailures = 0;
+                stopLiveStartSubscription();
                 stopAllAutoLiveRecordTasks();
             }
         }
 
-        function scheduleAutoLiveRecordPoll(delay = AUTO_LIVE_RECORD_POLL_INTERVAL_MS) {
+        function stopLiveStartSubscription() {
+            const previous = liveStartSubscription;
+            liveStartSubscription = null;
+            updateAutoLiveRecordUi();
+            if (previous) void ipcRenderer.invoke('disconnect-live-start', { requestId: previous.id }).catch(() => {});
+        }
+
+        function syncLiveRecordAccount() {
+            const token = CAN_AUTO_RECORD_LIVE && autoLiveRecordEnabled ? getSafeToken() : '';
+            if (liveRecordAccount?.token === token) return liveRecordAccount;
+            if (liveRecordAccount) {
+                liveRecordGeneration += 1;
+                stopLiveStartSubscription();
+                stopAllAutoLiveRecordTasks();
+                liveStartHints.clear();
+                livePollRequested = false;
+                liveRecordCheckFailures = 0;
+            }
+            liveRecordAccount = token ? { token, nextMemberLoadAt: 0 } : null;
+            return liveRecordAccount;
+        }
+
+        function syncLiveStartSubscription(account) {
+            if (!account || liveRecordAccount !== account || getSafeToken() !== account.token) return;
+            const watchedIds = new Set(autoLiveRecordMembers.map(member => member.id));
+            const members = new Map((getMemberData?.() || []).map(member => [String(member.id || member.userId || ''), member]));
+            const rooms = new Map();
+            const roomKeysByMember = new Map();
+            for (const memberId of watchedIds) {
+                const member = members.get(memberId);
+                const serverId = String(member?.serverId || '');
+                if (!/^\d{1,32}$/.test(serverId)) continue;
+                const keys = roomKeysByMember.get(memberId) || new Set();
+                for (const value of [member.channelId, member.smallChannelId || member.yklzId]) {
+                    const channelId = String(value || '');
+                    if (!/^\d{1,32}$/.test(channelId)) continue;
+                    const key = `${serverId}:${channelId}`;
+                    rooms.set(key, { serverId, channelId });
+                    keys.add(key);
+                }
+                if (keys.size) roomKeysByMember.set(memberId, keys);
+            }
+            const signature = [...rooms.keys()].sort().join(',');
+            if (liveStartSubscription?.signature === signature) {
+                liveStartSubscription.rooms = rooms;
+                liveStartSubscription.roomKeysByMember = roomKeysByMember;
+                return;
+            }
+            if (!rooms.size) { stopLiveStartSubscription(); return; }
+            const previous = liveStartSubscription;
+            const state = { id: `live_start_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+                account, signature, rooms, roomKeysByMember, accepted: new Set(), status: 'connecting' };
+            liveStartSubscription = state;
+            updateAutoLiveRecordUi();
+            void ipcRenderer.invoke('configure-live-start', {
+                requestId: state.id, rooms: [...rooms.values()]
+            }).then(result => {
+                if (result?.success !== true) throw new Error('订阅直播通知失败');
+            }).catch(() => {
+                if (liveStartSubscription !== state) return;
+                stopLiveStartSubscription();
+                if (previous) void ipcRenderer.invoke('disconnect-live-start', { requestId: previous.id }).catch(() => {});
+            });
+        }
+
+        function refreshLiveStartScope(account) {
+            const now = Date.now();
+            if (!getMemberData?.()?.length && now >= account.nextMemberLoadAt && typeof loadMemberData === 'function') {
+                account.nextMemberLoadAt = now + 60000;
+                void Promise.resolve().then(() => loadMemberData()).then(() => syncLiveStartSubscription(account)).catch(() => {});
+            }
+            syncLiveStartSubscription(account);
+        }
+
+        function refreshLiveRecordMonitoring() {
+            const account = syncLiveRecordAccount();
+            if (account) refreshLiveStartScope(account);
+            updateAutoLiveRecordUi();
+            requestLiveRecordPoll();
+        }
+
+        function requestLiveRecordPoll() {
+            if (autoLiveRecordPollRunning) livePollRequested = true;
+            else scheduleAutoLiveRecordPoll(0);
+        }
+
+        window.addEventListener('yaya:account-state-changed', () => {
+            invalidateLiveUiRequests();
+            refreshLiveRecordMonitoring();
+        });
+        window.addEventListener('member-data-loaded', () => syncLiveStartSubscription(liveRecordAccount));
+        ipcRenderer.on('account-im-status', (_event, payload = {}) => {
+            if (!CAN_AUTO_RECORD_LIVE || !autoLiveRecordEnabled) return;
+            const account = syncLiveRecordAccount();
+            if (!account) return;
+            if (payload.status === 'reset') {
+                liveRecordGeneration += 1;
+                stopLiveStartSubscription();
+                liveRecordCheckFailures = 0;
+                refreshLiveStartScope(account);
+                requestLiveRecordPoll();
+            } else if (payload.status === 'connected') {
+                if (liveStartSubscription?.status !== 'connected') {
+                    stopLiveStartSubscription();
+                    refreshLiveStartScope(account);
+                    requestLiveRecordPoll();
+                }
+            } else if (liveStartSubscription) {
+                liveStartSubscription.accepted.clear();
+                liveStartSubscription.status = 'disconnected';
+                requestLiveRecordPoll();
+            }
+            updateAutoLiveRecordUi();
+        });
+
+        ipcRenderer.on('live-start-status', (_event, payload = {}) => {
+            const state = liveStartSubscription;
+            if (!state || payload.requestId !== state.id || getSafeToken() !== state.account.token) return;
+            state.status = payload.status;
+            state.accepted = new Set(payload.status === 'connected'
+                ? (payload.accepted || []).map(room => `${room.serverId}:${room.channelId}`) : []);
+            if (payload.status === 'connected' || payload.status === 'disconnected') requestLiveRecordPoll();
+            updateAutoLiveRecordUi();
+        });
+
+        ipcRenderer.on('live-start-message', (_event, payload = {}) => {
+            const state = liveStartSubscription;
+            const message = payload.message;
+            if (!state || !message || payload.requestId !== state.id || getSafeToken() !== state.account.token
+                || !state.rooms.has(`${message.serverId}:${message.channelId}`) || !/^\d{1,32}$/.test(message.liveId)) return;
+            const now = Date.now();
+            const timestamp = Number(message.time);
+            if (timestamp > 0 && now - (timestamp < 1e12 ? timestamp * 1000 : timestamp) > 120000) return;
+            if (liveStartHints.has(message.liveId) || autoLiveRecordHandledLiveIds.has(message.liveId)) return;
+            liveStartHints.set(message.liveId, now + LIVE_START_HINT_TTL_MS);
+            requestLiveRecordPoll();
+        });
+
+        function scheduleAutoLiveRecordPoll(delay = getLiveRecordPollInterval()) {
             if (autoLiveRecordPollTimer) clearTimeout(autoLiveRecordPollTimer);
             autoLiveRecordPollTimer = null;
-            if (IS_WEB_PLATFORM || !autoLiveRecordEnabled) return;
+            if (!CAN_AUTO_RECORD_LIVE || !autoLiveRecordEnabled || delay === null) return;
             autoLiveRecordPollTimer = setTimeout(() => {
                 autoLiveRecordPollTimer = null;
                 pollAutoLiveRecordMembers();
             }, Math.max(0, Number(delay) || 0));
+        }
+
+        function getLiveRecordPollInterval() {
+            if (!autoLiveRecordMembers.length || !liveRecordAccount) return null;
+            if (liveRecordCheckFailures) return liveRecordRetryDelay();
+            const interrupted = [...autoLiveRecordRetryState.keys()].some(liveId =>
+                ![...autoLiveRecordTasks.values()].some(task => task.liveId === liveId));
+            const missing = [...autoLiveRecordTasks.values()].some(task => autoLiveRecordMissingPolls.get(task.liveId) > 0);
+            if (interrupted || missing || liveStartHints.size) return AUTO_LIVE_RECORD_POLL_INTERVAL_MS;
+            const state = liveStartSubscription;
+            const covered = state && autoLiveRecordMembers.every(member => {
+                const keys = state.roomKeysByMember.get(member.id);
+                return keys?.size && [...keys].every(key => state.accepted.has(key));
+            });
+            return covered ? null : AUTO_LIVE_RECORD_POLL_INTERVAL_MS;
         }
 
         function scheduleAutoLiveRecordRetry(task, { resume = false } = {}) {
@@ -858,8 +1099,8 @@
             }
         }
 
-        async function startAutoLiveRecordTask(member, liveItem) {
-            if (IS_WEB_PLATFORM) return;
+        async function startAutoLiveRecordTask(member, liveItem, isCurrent) {
+            if (!isCurrent()) return;
             const liveId = String(liveItem?.liveId || '').trim();
             if (!liveId || autoLiveRecordHandledLiveIds.has(liveId) || autoLiveRecordTasks.has(member.id)) return;
             const retryState = autoLiveRecordRetryState.get(liveId);
@@ -871,7 +1112,8 @@
                 const detail = result?.status === 200 && result?.content ? result.content : null;
                 const streamUrl = detail?.playStreamPath || detail?.streamPath || detail?.playUrl || '';
                 if (!streamUrl) throw new Error('没有可用的直播流');
-                if (!autoLiveRecordEnabled || !autoLiveRecordMembers.some(item => item.id === member.id)) {
+                if (!isCurrent()) return;
+                if (!autoLiveRecordMembers.some(item => item.id === member.id)) {
                     autoLiveRecordHandledLiveIds.delete(liveId);
                     return;
                 }
@@ -903,20 +1145,34 @@
                     recordingSessionId: sessionId
                 });
                 showAutoLiveRecordToast(`已开始自动录制：${member.name}`);
+                return true;
             } catch (error) {
+                if (!isCurrent()) return;
                 autoLiveRecordHandledLiveIds.delete(liveId);
                 console.error(`自动录制 ${member.name} 启动失败:`, error);
+                return false;
             }
         }
 
         async function pollAutoLiveRecordMembers() {
-            if (IS_WEB_PLATFORM || !autoLiveRecordEnabled || autoLiveRecordPollRunning) return;
-            if (autoLiveRecordMembers.length === 0 || !getSafeToken()) {
-                scheduleAutoLiveRecordPoll();
+            if (!CAN_AUTO_RECORD_LIVE || !autoLiveRecordEnabled || autoLiveRecordPollRunning) return;
+            const account = syncLiveRecordAccount();
+            if (account) refreshLiveStartScope(account);
+            if (autoLiveRecordMembers.length === 0 || !account) {
+                liveStartHints.clear();
+                scheduleAutoLiveRecordPoll(null);
                 return;
             }
 
+            const generation = liveRecordGeneration;
+            const isCurrent = () => autoLiveRecordEnabled && liveRecordAccount === account
+                && liveRecordGeneration === generation && getSafeToken() === account.token;
+            for (const [liveId, expires] of liveStartHints) {
+                if (expires <= Date.now()) liveStartHints.delete(liveId);
+            }
             autoLiveRecordPollRunning = true;
+            let needsStreamRetry = false;
+            let checkFailed = false;
             try {
                 const result = await fetchPocketAPI('/live/api/v1/live/getLiveList', JSON.stringify({
                     debug: true,
@@ -924,6 +1180,7 @@
                     groupId: 0,
                     record: false
                 }));
+                if (!isCurrent()) return;
                 if (!result || result.status !== 200 || !result.content || !Array.isArray(result.content.liveList)) {
                     throw new Error(result?.message || '直播列表获取失败');
                 }
@@ -947,6 +1204,7 @@
                 const selectedLiveItems = new Map();
                 liveList.forEach(item => {
                     const memberId = getAutoLiveRecordItemMemberId(item);
+                    if (!selectedMembers.has(memberId)) liveStartHints.delete(String(item?.liveId || '').trim());
                     if (memberId && selectedMembers.has(memberId) && !selectedLiveItems.has(memberId)) {
                         selectedLiveItems.set(memberId, item);
                     }
@@ -976,13 +1234,27 @@
 
                 for (const [memberId, liveItem] of selectedLiveItems) {
                     const member = selectedMembers.get(memberId);
-                    await startAutoLiveRecordTask(member, liveItem);
+                    const started = await startAutoLiveRecordTask(member, liveItem, isCurrent);
+                    if (!isCurrent()) return;
+                    if (started === false) checkFailed = true;
+                    const liveId = String(liveItem.liveId || '').trim();
+                    if (autoLiveRecordHandledLiveIds.has(liveId)) liveStartHints.delete(liveId);
+                    else needsStreamRetry = true;
                 }
             } catch (error) {
+                if (!isCurrent()) return;
+                checkFailed = true;
+                needsStreamRetry = true;
                 console.warn('自动录制直播状态检测失败:', error);
             } finally {
                 autoLiveRecordPollRunning = false;
-                scheduleAutoLiveRecordPoll();
+                if (isCurrent()) liveRecordCheckFailures = checkFailed ? liveRecordCheckFailures + 1 : 0;
+                updateAutoLiveRecordUi();
+                const immediate = livePollRequested;
+                livePollRequested = false;
+                if (immediate) scheduleAutoLiveRecordPoll(0);
+                else scheduleAutoLiveRecordPoll(liveRecordCheckFailures ? liveRecordRetryDelay()
+                    : needsStreamRetry ? AUTO_LIVE_RECORD_POLL_INTERVAL_MS : getLiveRecordPollInterval());
             }
         }
 
@@ -1042,8 +1314,8 @@
             clipStartTime = null;
             clipEndTime = null;
             updateClipUI();
-            const dp = getCurrentDp();
-            if (dp && data.msg) dp.notice(data.msg);
+            const art = getCurrentArt();
+            if (art?.notice && data.msg) art.notice.show = data.msg;
         });
 
         function setClipStartFromTimeline(time) {
@@ -1073,15 +1345,14 @@
 
         function setClipStart() {
             const art = getCurrentArt();
-            const dp = getCurrentDp();
             const currentMode = getClipMode();
             const currentPlayingItem = typeof getCurrentPlayingItem === 'function' ? getCurrentPlayingItem() : null;
 
-            if (!art && !dp) return;
+            if (!art) return;
 
             if (currentMode === 'live') {
                 if (currentRecordTaskId) {
-                    if (dp) dp.notice('录制正在进行中，请先结束当前片段');
+                    if (art.notice) art.notice.show = '录制正在进行中，请先结束当前片段';
                     return;
                 }
 
@@ -1104,7 +1375,7 @@
 
                 const startDisplay = getClipElement('start-display', 'clip-start-display');
                 if (startDisplay) startDisplay.textContent = window.YayaRendererUtils.t('状态: 正在录制...');
-                if (dp) dp.notice('后台录制已开启');
+                if (art.notice) art.notice.show = '后台录制已开启';
                 return;
             }
 
@@ -1116,15 +1387,14 @@
 
         function setClipEnd() {
             const art = getCurrentArt();
-            const dp = getCurrentDp();
             const currentMode = getClipMode();
             const currentPlayingItem = typeof getCurrentPlayingItem === 'function' ? getCurrentPlayingItem() : null;
 
-            if (!art && !dp) return;
+            if (!art) return;
 
             if (currentMode === 'live') {
                 if (!currentRecordTaskId) {
-                    if (dp) dp.notice('请先点击开始录制');
+                    if (art.notice) art.notice.show = '请先点击开始录制';
                     return;
                 }
 
@@ -1271,7 +1541,7 @@
             });
         }
 
-        autoLiveRecordEnabled = !IS_WEB_PLATFORM
+        autoLiveRecordEnabled = CAN_AUTO_RECORD_LIVE
             && readJsonSetting(AUTO_LIVE_RECORD_ENABLED_KEY, false) === true;
         autoLiveRecordMembers = normalizeStoredAutoLiveRecordMembers(
             readJsonSetting(AUTO_LIVE_RECORD_MEMBERS_KEY, [])
@@ -1285,7 +1555,7 @@
         }, true);
         setTimeout(() => {
             updateAutoLiveRecordUi();
-            if (autoLiveRecordEnabled) scheduleAutoLiveRecordPoll(0);
+            if (autoLiveRecordEnabled) refreshLiveRecordMonitoring();
         }, 1200);
 
         return {

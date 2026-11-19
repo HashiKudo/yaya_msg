@@ -3,7 +3,7 @@
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const settingsService = require('./settings-service');
-const { ensureWasmLoaded, generatePa } = require('./wasm-service');
+const { generatePa } = require('../../common/pocket-pa-node.mjs');
 const sending = new Set();
 let runtimePromise;
 
@@ -11,10 +11,11 @@ async function invoke(method, payload) {
     try {
         const token = settingsService.getToken();
         if (!token) return { success: false, msg: '请先登录口袋48账号' };
-        await ensureWasmLoaded();
         runtimePromise ||= import(pathToFileURL(path.join(__dirname, '../../common/pocket-runtime.mjs')).href);
         const runtime = await runtimePromise;
-        return await runtime[method]({ ...payload, token, pa: generatePa() || '' });
+        const settings = settingsService.readSettings();
+        return await runtime[method]({ ...payload, token, pa: generatePa() || '',
+            clientProfile: settings.p48ClientProfile || '', deviceId: settings.p48ClientDeviceId || '' });
     } catch (error) {
         return { success: false, msg: error.message || '房间送礼暂不可用' };
     }

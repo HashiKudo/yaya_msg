@@ -1,9 +1,11 @@
 const path = require('path');
 const { pathToFileURL } = require('url');
 const settingsService = require('./settings-service');
-const { ensureWasmLoaded, generatePa } = require('./wasm-service');
+const { generatePa } = require('../../common/pocket-pa-node.mjs');
 const { runLiveReadRequest } = require('./live-read-request');
 const { withDesktopLiveRoom } = require('./live-room-routing');
+const { writeNetfaceLog } = require('./netface-log');
+const { normalizePocketClientProfile, createPocketClientHeaders } = require('../../common/pocket-client-profile');
 
 const LIVE48_LOGIN_COOKIE_KEY = 'live48LoginCookie';
 const LIVE48_LOGIN_AT_KEY = 'live48LoginAt';
@@ -63,7 +65,8 @@ async function loadPocketRuntime() {
         pocketRuntimePromise = import(runtimeUrl).then((runtime) => {
             runtime.configurePocketRuntime({
                 saveLive48Login,
-                getLive48LoginStatus
+                getLive48LoginStatus,
+                netfaceDiagnostic: details => writeNetfaceLog({ ...details, source: 'main' })
             });
             return runtime;
         });
@@ -71,10 +74,15 @@ async function loadPocketRuntime() {
     return pocketRuntimePromise;
 }
 
-async function preparePayload(channel, payload) {
+function preparePayload(channel, payload) {
     const prepared = payload && typeof payload === 'object' && !Array.isArray(payload)
         ? { ...payload }
         : {};
+    const settings = settingsService.readSettings?.() || {};
+    if (prepared.clientProfile == null && prepared.token && prepared.token === settings.p48Token) {
+        prepared.clientProfile = settings.p48ClientProfile || '';
+        prepared.deviceId = prepared.deviceId || settings.p48ClientDeviceId || '';
+    }
 
     if (MEET48_CHANNELS.has(channel) && !prepared.meet48Auth) {
         const meet48Auth = readMeet48Auth();
@@ -83,8 +91,7 @@ async function preparePayload(channel, payload) {
         }
     }
 
-    if ((channel === 'login-send-sms' || channel === 'login-by-code' || channel === 'send-live-gift') && !prepared.pa) {
-        await ensureWasmLoaded();
+    if ((channel === 'login-send-sms' || channel === 'login-by-code' || channel === 'register-by-code' || channel === 'login-by-password' || channel === 'login-by-thirdparty' || channel === 'send-live-gift') && !prepared.pa) {
         prepared.pa = generatePa() || '';
     }
 
@@ -93,15 +100,12 @@ async function preparePayload(channel, payload) {
 
 async function invoke(channel, payload = {}) {
     try {
-        const [runtime, preparedPayload] = await Promise.all([
-            loadPocketRuntime(),
-            preparePayload(channel, payload)
-        ]);
+        const preparedPayload = preparePayload(channel, payload);
+        const runtime = await loadPocketRuntime();
         if (channel === 'fetch-live-one') {
             return withDesktopLiveRoom(await runLiveReadRequest('/live/api/v1/live/getLiveOne', preparedPayload, async attempt => {
                 const requestPayload = { ...preparedPayload };
                 if (attempt > 0) {
-                    await ensureWasmLoaded();
                     requestPayload.pa = generatePa() || requestPayload.pa;
                 }
                 return runtime.invokePocketChannel(channel, requestPayload);
@@ -148,7 +152,7 @@ function normalizePocketApiPostData(value) {
     }
 }
 
-async function fetchPocketApiPath({ path: apiPath, postData } = {}) {
+async function fetchPocketApiPath({ path: apiPath, postData, clientProfile, deviceId } = {}) {
     try {
         const normalizedPath = normalizePocketApiPath(apiPath);
         const requestPayload = normalizePocketApiPostData(postData);
@@ -168,7 +172,9 @@ async function fetchPocketApiPath({ path: apiPath, postData } = {}) {
                         osType: 'ios',
                         deviceName: 'iPhone 14 Pro',
                         os: 'ios'
-                    })
+                    }),
+                    ...(normalizePocketClientProfile(clientProfile)
+                        ? createPocketClientHeaders({ clientProfile, deviceId: deviceId || '' }) : {})
                 },
                 body: JSON.stringify(requestPayload)
             });

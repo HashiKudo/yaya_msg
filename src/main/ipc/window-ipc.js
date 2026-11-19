@@ -1,49 +1,61 @@
 const { ipcMain, BrowserWindow } = require('electron');
+const { handleDesktop, onDesktop } = require('./desktop-sender');
 const { getMainWindow, requestWindowClose } = require('../window');
-const roomWindowService = require('../services/room-window-service');
+const { openRoomWindow, openLiveWindow, openRoomWindowFromDrag, getRoomWindowContext } = require('../room-window');
+
+function getSenderWindow(event) {
+    return BrowserWindow.fromWebContents(event.sender);
+}
 
 function registerWindowIpc() {
-    ipcMain.on('window-min', (event) => {
-        const win = BrowserWindow.fromWebContents(event.sender) || getMainWindow();
-        if (win && !win.isDestroyed()) {
-            win.minimize();
+    onDesktop(ipcMain, 'window-min', event => {
+        const window = getSenderWindow(event);
+        if (window) {
+            window.minimize();
         }
     });
 
-    ipcMain.on('window-max', (event) => {
-        const win = BrowserWindow.fromWebContents(event.sender) || getMainWindow();
-        if (!win || win.isDestroyed()) {
+    onDesktop(ipcMain, 'window-max', event => {
+        const window = getSenderWindow(event);
+        if (!window) {
             return;
         }
 
-        if (win.isMaximized()) {
-            win.unmaximize();
+        if (window.isMaximized()) {
+            window.unmaximize();
             return;
         }
 
-        win.maximize();
+        window.maximize();
     });
 
-    ipcMain.on('window-close', (event) => {
-        const win = BrowserWindow.fromWebContents(event.sender);
-        if (!win || win.isDestroyed()) return;
-        if (win === getMainWindow()) {
-            requestWindowClose();
-        } else {
-            win.close();
+    onDesktop(ipcMain, 'window-close', event => {
+        const window = getSenderWindow(event);
+        if (!window) return;
+        if (window === getMainWindow()) requestWindowClose();
+        else window.close();
+    });
+
+    handleDesktop(ipcMain, 'open-room-window', async (event, payload) => {
+        try {
+            return await openRoomWindow(payload);
+        } catch (error) {
+            return { success: false, msg: error.message || '打开独立窗口失败' };
         }
     });
-
-    ipcMain.handle('open-room-window', (_event, payload) => {
-        return roomWindowService.openRoomWindow(payload);
+    handleDesktop(ipcMain, 'open-live-window', async (event, payload) => {
+        try { return await openLiveWindow(payload); }
+        catch (error) { return { success: false, msg: error.message || '直播窗口打开失败' }; }
     });
-
-    ipcMain.handle('toggle-window-always-on-top', (event) => {
-        return roomWindowService.toggleWindowAlwaysOnTop(event.sender);
+    handleDesktop(ipcMain, 'get-room-window-context', event => {
+        return getRoomWindowContext(event.sender);
     });
-
-    ipcMain.handle('is-window-always-on-top', (event) => {
-        return roomWindowService.isWindowAlwaysOnTop(event.sender);
+    handleDesktop(ipcMain, 'open-room-window-from-drag', async (event, payload) => {
+        try {
+            return await openRoomWindowFromDrag(event.sender, payload);
+        } catch (error) {
+            return { success: false, msg: error.message || '打开独立窗口失败' };
+        }
     });
 }
 

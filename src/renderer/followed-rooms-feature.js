@@ -22,12 +22,18 @@
 
         let currentFollowedData = [];
         let draggedCard = null;
+        let followedRoomPointerDrag = null;
+        let followedRoomSuppressedClick = null;
         let followedRoomsAutoRefreshTimer = null;
         let followedRoomsAutoRefreshEnabled = false;
         let followedRoomsAutoRefreshRunning = false;
         let followedRoomsPollGeneration = 0;
         let followedRoomsLoadGeneration = 0;
         let followedRoomsLastRenderHtml = '';
+        const boundRoomCards = new WeakSet();
+        const boundRadioButtons = new WeakSet();
+        const boundDragCards = new WeakSet();
+        let radioListRefreshFrame = null;
         let followedRoomContextMenu = null;
         let followedRoomContextTarget = null;
         let followedRoomNotificationTimer = null;
@@ -56,7 +62,6 @@
             FOLLOWED_NOTIFICATION_CURSORS_KEY,
             FOLLOWED_TEAM_RELATIONS_KEY
         ]);
-        const FOLLOWED_REFRESH_ICON_HTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>';
 
         function isWebRuntime() {
             return window.desktop?.platform === 'web'
@@ -272,20 +277,24 @@
             if (!Array.isArray(savedConfigs)) return [];
             const members = Array.isArray(getMemberData()) ? getMemberData() : [];
             return savedConfigs
-                .filter((config) => config && config.channelId && config.serverId)
-                .map((config) => {
+                .filter(config => config && config.channelId && config.serverId)
+                .map(config => {
                     const memberId = String(config.memberId || '');
                     const mainChannelId = String(config.channelId || '');
                     const memberName = String(config.memberName || '成员');
-                    const member = members.find(
-                        (item) =>
-                            (memberId && String(item.id || item.userId || '') === memberId) ||
-                            String(item.channelId || '') === mainChannelId ||
-                            String(item.ownerName || '') === memberName
-                    );
+                    const member = members.find(item => (
+                        (memberId && String(item.id || item.userId || '') === memberId)
+                        || String(item.channelId || '') === mainChannelId
+                        || String(item.ownerName || '') === memberName
+                    ));
                     return {
                         channelId: mainChannelId,
-                        smallChannelId: String(config.smallChannelId || member?.smallChannelId || member?.yklzId || ''),
+                        smallChannelId: String(
+                            config.smallChannelId
+                            || member?.smallChannelId
+                            || member?.yklzId
+                            || ''
+                        ),
                         serverId: String(config.serverId),
                         memberId,
                         ownerId: memberId || String(member?.id || member?.userId || ''),
@@ -296,15 +305,13 @@
         }
 
         function getFollowedNotificationRooms() {
-            return getFollowedNotificationConfigs().flatMap((config) => {
-                const rooms = [
-                    {
-                        ...config,
-                        mainChannelId: config.channelId,
-                        roomType: 'big',
-                        roomLabel: '大房间'
-                    }
-                ];
+            return getFollowedNotificationConfigs().flatMap(config => {
+                const rooms = [{
+                    ...config,
+                    mainChannelId: config.channelId,
+                    roomType: 'big',
+                    roomLabel: '大房间'
+                }];
                 if (config.smallChannelId) {
                     rooms.push({
                         ...config,
@@ -324,16 +331,16 @@
 
         function isFollowedRoomNotificationEnabled(channelId) {
             const target = String(channelId || '');
-            return getFollowedNotificationConfigs().some((config) => config.channelId === target);
+            return getFollowedNotificationConfigs().some(config => config.channelId === target);
         }
 
         function getActiveFollowedRoomCard(channelId = getActiveFollowedChannel()) {
             const target = String(channelId || '').trim();
             const cards = Array.from(document.querySelectorAll('#followed-rooms-container .session-card'));
-            return (
-                cards.find((card) => String(card.dataset.channelid || '') === target || String(card.dataset.smallChannelId || '') === target) ||
-                document.querySelector('#followed-rooms-container .session-card.active')
-            );
+            return cards.find(card => (
+                String(card.dataset.channelid || '') === target
+                || String(card.dataset.smallChannelId || '') === target
+            )) || document.querySelector('#followed-rooms-container .session-card.active');
         }
 
         function updateFollowedRoomNotificationButton(channelId = getActiveFollowedChannel()) {
@@ -459,18 +466,25 @@
 
         function getFollowedNotificationAvatar(source = {}) {
             return normalizeFollowedNotificationAvatar(
-                source.starAvatar || source.avatarUrl || source.avatar || source.userAvatar || source.headImage || source.faceImage || source.picPath || ''
+                source.starAvatar
+                || source.avatarUrl
+                || source.avatar
+                || source.userAvatar
+                || source.headImage
+                || source.faceImage
+                || source.picPath
+                || ''
             );
         }
 
         function getFollowedMessageKey(message = {}) {
             return String(
-                message.msgidClient ||
-                    message.msgIdClient ||
-                    message.msgIdServer ||
-                    message.msgId ||
-                    message.messageId ||
-                    `${message.msgTime || 0}:${message.msgContent || message.bodys || ''}`
+                message.msgidClient
+                || message.msgIdClient
+                || message.msgIdServer
+                || message.msgId
+                || message.messageId
+                || `${message.msgTime || 0}:${message.msgContent || message.bodys || ''}`
             );
         }
 
@@ -487,7 +501,9 @@
         function getFollowedMessageExtUser(message = {}) {
             if (!message.extInfo) return null;
             try {
-                const safeExtInfo = typeof message.extInfo === 'string' ? message.extInfo.replace(/:\s*([0-9]{16,})/g, ':"$1"') : message.extInfo;
+                const safeExtInfo = typeof message.extInfo === 'string'
+                    ? message.extInfo.replace(/:\s*([0-9]{16,})/g, ':"$1"')
+                    : message.extInfo;
                 const ext = typeof safeExtInfo === 'string' ? JSON.parse(safeExtInfo) : safeExtInfo;
                 return ext?.user || null;
             } catch (error) {
@@ -504,7 +520,13 @@
 
         function getFollowedMessageSenderName(message = {}, fallbackName = '成员') {
             const extUser = getFollowedMessageExtUser(message);
-            return String(extUser?.nickName || extUser?.nickname || message.senderName || message.nickName || fallbackName).trim() || fallbackName;
+            return String(
+                extUser?.nickName
+                || extUser?.nickname
+                || message.senderName
+                || message.nickName
+                || fallbackName
+            ).trim() || fallbackName;
         }
 
         function getFollowedMessagePreview(message = {}) {
@@ -579,7 +601,9 @@
             }
 
             const channels = Array.isArray(detail?.channelInfoList) ? detail.channelInfoList : [];
-            const matchedChannel = channels.find((channel) => String(channel.channelId || '') === String(room.channelId || ''));
+            const matchedChannel = channels.find(channel => (
+                String(channel.channelId || '') === String(room.channelId || '')
+            ));
             return String(matchedChannel?.channelName || room.roomLabel).trim() || room.roomLabel;
         }
 
@@ -596,12 +620,30 @@
                 && state.token === String(getAppToken() || '').trim();
         }
 
-        function syncNotificationRealtime() {
+        function syncNotificationRealtime(rooms) {
+            if (isWebRuntime()) return;
+            const signature = rooms.map(room => `${room.serverId}:${room.channelId}`).sort().join(',');
+            if (notificationRealtime?.signature === signature && isCurrentNotificationRealtime(notificationRealtime)) return;
             const previous = notificationRealtime;
             notificationRealtime = null;
-            if (previous) {
-                void ipcRenderer.invoke('disconnect-room-notifications', { requestId: previous.id }).catch(() => {});
-            }
+            if (previous) void ipcRenderer.invoke('disconnect-room-notifications', { requestId: previous.id }).catch(() => {});
+            if (!rooms.length) return;
+            const cursors = readJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, {});
+            const state = {
+                id: `notify_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+                signature, generation: followedRoomNotificationGeneration,
+                account: getFollowedNotificationAccountSuffix(), token: String(getAppToken() || '').trim(),
+                healthy: false, ownerFiltersReady: rooms.every(room => !!room.ownerId),
+                floors: new Map(rooms.map(room => [room.channelId, Number(cursors[room.channelId]?.msgTime) || Date.now()]))
+            };
+            notificationRealtime = state;
+            void ipcRenderer.invoke('configure-room-notifications', {
+                requestId: state.id, rooms: rooms.map(({ serverId, channelId }) => ({ serverId, channelId }))
+            }).then(result => {
+                if (result?.success === false && isCurrentNotificationRealtime(state)) notificationRealtime = null;
+            }).catch(() => {
+                if (isCurrentNotificationRealtime(state)) notificationRealtime = null;
+            });
         }
 
         ipcRenderer?.on?.('room-notification-status', (_event, payload = {}) => {
@@ -627,9 +669,7 @@
                 const normalized = window.YayaRendererFeatures.memberRoomRealtime?.normalize(message);
                 if (!normalized?.handled) { notificationCatchupPending = true; requestNotificationCatchup?.(); return; }
                 const record = normalized.record;
-                const currentUserId = String(typeof getCurrentUserId === 'function' ? getCurrentUserId() || '' : '').trim();
-                const recordSenderId = String(record?.senderUserId || record?.senderId || '');
-                if (!record || (currentUserId && recordSenderId === currentUserId) || recordSenderId === '121569667') return;
+                if (!record || String(record.senderUserId || record.senderId) === '121569667') return;
                 if (!record.senderUserId) { notificationCatchupPending = true; requestNotificationCatchup?.(1000); return; }
                 if (record.senderUserId !== room.ownerId) return;
                 const cursors = readJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, {});
@@ -646,16 +686,14 @@
                 };
                 writeJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, cursors);
                 if (!isCurrentNotificationRealtime(state)) return;
-                const notificationResult = await ipcRenderer.invoke('show-system-notification', {
+                await ipcRenderer.invoke('show-system-notification', {
                     title: `${room.memberName} · ${getCachedFollowedNotificationRoomName(room)}`,
                     body: `${getFollowedMessageSenderName(record, room.memberName)}：${getFollowedMessagePreview(record)}`,
                     iconUrl: getFollowedMessageSenderAvatar(record) || room.avatarUrl,
                     memberName: room.memberName, channelId: room.channelId, mainChannelId: room.mainChannelId,
-                    serverId: room.serverId, roomType: room.roomType
+                    serverId: room.serverId, roomType: room.roomType,
+                    theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'
                 });
-                if (notificationResult?.success === false) {
-                    showToast(notificationResult.msg || '系统通知发送失败');
-                }
             }).catch(() => {});
         });
 
@@ -676,7 +714,7 @@
 
         function startFollowedRoomNotificationPolling(delayMs = 1000, options = {}) {
             stopFollowedRoomNotificationPolling();
-            if (isWebRuntime() || window.__isRoomPopupWindow) return;
+            if (isWebRuntime()) return;
 
             followedRoomNotificationEnabled = true;
             const pollingGeneration = followedRoomNotificationGeneration;
@@ -731,7 +769,7 @@
                 let pollSucceeded = false;
                 try {
                     const pa = window.getPA ? window.getPA() : null;
-                    const serverIdList = [...new Set(rooms.map((room) => room.serverId).filter(Boolean))];
+                    const serverIdList = [...new Set(rooms.map(room => room.serverId).filter(Boolean))];
                     const latestResponse = await ipcRenderer.invoke('fetch-last-messages', {
                         token,
                         pa,
@@ -860,8 +898,7 @@
                             .filter(message => {
                                 const senderId = String(getFollowedMessageExtUser(message)?.userId
                                     || message.senderUserId || message.senderId || message.uid || '');
-                                const currentUserId = String(typeof getCurrentUserId === 'function' ? getCurrentUserId() || '' : '').trim();
-                                if ((currentUserId && senderId === currentUserId) || senderId === '121569667') return false;
+                                if (senderId === '121569667') return false;
                                 const messageKey = getFollowedMessageKey(message);
                                 if (getFollowedMessageKeys(message).some(key => knownMessageKeys.has(key))) return false;
                                 const messageTime = getFollowedMessageTime(message);
@@ -934,7 +971,8 @@
                                 channelId: room.channelId,
                                 mainChannelId: room.mainChannelId,
                                 serverId: room.serverId,
-                                roomType: room.roomType
+                                roomType: room.roomType,
+                                theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'
                             });
                             if (notificationResult?.success === false) {
                                 showToast(notificationResult.msg || '系统通知发送失败');
@@ -949,6 +987,8 @@
                         writeJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, cursors);
                     }
                     silentInitialSyncPending = false;
+                    syncNotificationRealtime(rooms);
+                    pollSucceeded = ![...detailFetchesByChannel.values()].some(result => result.error);
                 } catch (error) {
                     console.warn('[口袋通知] 后台检查失败:', error);
                 } finally {
@@ -956,8 +996,11 @@
                     followedRoomNotificationRunning = false;
                     const elapsed = Date.now() - pollStartedAt;
                     if (notificationCatchupPending) scheduleNext(0);
-                    else {
+                    else if (!pollSucceeded || !isCurrentNotificationRealtime(notificationRealtime) || !notificationRealtime.healthy) {
                         scheduleNext(Math.max(100, FOLLOWED_NOTIFICATION_POLL_INTERVAL - elapsed));
+                    } else {
+                        clearTimeout(followedRoomNotificationTimer);
+                        followedRoomNotificationTimer = null;
                     }
                 }
             });
@@ -971,12 +1014,14 @@
         function removeFollowedRoomNotification(channelId) {
             const targetChannelId = String(channelId || '');
             if (!targetChannelId) return;
-            const removedConfig = getFollowedNotificationConfigs().find((config) => config.channelId === targetChannelId);
-            writeFollowedNotificationConfigs(getFollowedNotificationConfigs().filter((config) => config.channelId !== targetChannelId));
+            const removedConfig = getFollowedNotificationConfigs().find(config => config.channelId === targetChannelId);
+            writeFollowedNotificationConfigs(
+                getFollowedNotificationConfigs().filter(config => config.channelId !== targetChannelId)
+            );
             const cursors = readJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, {});
             const cursorIds = [targetChannelId, removedConfig?.smallChannelId].filter(Boolean);
             let cursorsChanged = false;
-            cursorIds.forEach((cursorId) => {
+            cursorIds.forEach(cursorId => {
                 if (!Object.prototype.hasOwnProperty.call(cursors, cursorId)) return;
                 delete cursors[cursorId];
                 cursorsChanged = true;
@@ -1004,7 +1049,7 @@
             }
 
             const configs = getFollowedNotificationConfigs();
-            const existingIndex = configs.findIndex((config) => config.channelId === channelId);
+            const existingIndex = configs.findIndex(config => config.channelId === channelId);
             if (existingIndex >= 0) {
                 removeFollowedRoomNotification(channelId);
                 showToast(`已关闭 ${memberName} 的发言通知`);
@@ -1092,7 +1137,9 @@
 
             if (messageType === 'AUDIO_REPLY' || messageType === 'AUDIO_GIFT_REPLY') {
                 const info = json.replyInfo || json.giftReplyInfo || json;
-                return typeof info.text === 'string' && info.text.trim() ? info.text : '[语音回复消息]';
+                return typeof info.text === 'string' && info.text.trim()
+                    ? info.text
+                    : '[语音回复消息]';
             }
 
             if (messageType === 'IMAGE') return '[图片消息]';
@@ -1101,14 +1148,13 @@
             if (messageType === 'VIDEO') return '[视频消息]';
 
             if (messageType.includes('FLIPCARD')) {
-                const info =
-                    json.flipCardInfo ||
-                    json.filpCardInfo ||
-                    json.flipCardAudioInfo ||
-                    json.filpCardAudioInfo ||
-                    json.flipCardVideoInfo ||
-                    json.filpCardVideoInfo ||
-                    json;
+                const info = json.flipCardInfo
+                    || json.filpCardInfo
+                    || json.flipCardAudioInfo
+                    || json.filpCardAudioInfo
+                    || json.flipCardVideoInfo
+                    || json.filpCardVideoInfo
+                    || json;
                 const answer = String(info.answer || '').trim();
                 return answer && !answer.startsWith('{') ? answer : '[翻牌回复]';
             }
@@ -1127,13 +1173,13 @@
         function toggleFollowedSortDropdown() {
             const list = document.getElementById('followed-sort-dropdown');
             if (list) {
-                list.style.display = list.style.display === 'block' ? 'none' : 'block';
+                list.style.display = (list.style.display === 'block') ? 'none' : 'block';
             }
         }
 
         function selectFollowedSort(value, text) {
             document.getElementById('followed-sort-value').value = value;
-            document.getElementById('followed-sort-display').value = text;
+            document.querySelector('#followed-sort-display .followed-sort-label').textContent = text;
             document.getElementById('followed-sort-dropdown').style.display = 'none';
             sortFollowedRooms();
         }
@@ -1181,35 +1227,20 @@
 
         function getFollowedSearchPinyinParts(value) {
             const raw = String(value || '').trim();
-            if (!raw) {
-                const full = pinyinArray.join(' ').toLowerCase();
-                return {
-                    full,
-                    compact: pinyinArray.join('').toLowerCase(),
-                    initials: pinyinArray
-                        .map((part) => String(part || '').charAt(0))
-                        .join('')
-                        .toLowerCase()
-                };
-            }
+            if (!raw) return { full: '', compact: '', initials: '' };
 
             if (window.pinyinPro && typeof window.pinyinPro.pinyin === 'function') {
                 try {
-                    const pinyinArray = window.pinyinPro
-                        .pinyin(raw, {
-                            toneType: 'none',
-                            type: 'array'
-                        })
-                        .filter(Boolean);
+                    const pinyinArray = window.pinyinPro.pinyin(raw, {
+                        toneType: 'none',
+                        type: 'array'
+                    }).filter(Boolean);
 
                     const full = pinyinArray.join(' ').toLowerCase();
                     return {
                         full,
                         compact: pinyinArray.join('').toLowerCase(),
-                        initials: pinyinArray
-                            .map((part) => String(part || '').charAt(0))
-                            .join('')
-                            .toLowerCase()
+                        initials: pinyinArray.map(part => String(part || '').charAt(0)).join('').toLowerCase()
                     };
                 } catch (_) { window.YayaRendererUtils.reportIgnoredError(_, 'src/renderer/followed-rooms-feature.js'); }
             }
@@ -1221,7 +1252,7 @@
                 initials: full
                     .split(/[\s_-]+/)
                     .filter(Boolean)
-                    .map((part) => part.charAt(0))
+                    .map(part => part.charAt(0))
                     .join('')
             };
         }
@@ -1231,7 +1262,7 @@
             if (!keyword) return data;
             const compactKeyword = keyword.replace(/[\s_-]+/g, '');
 
-            return data.filter((item) => {
+            return data.filter(item => {
                 const storedPinyin = getFollowedSearchPinyinParts(item.pinyin);
                 const namePinyin = getFollowedSearchPinyinParts(item.bigDisplayName || item.ownerName || item.pinkStarName);
                 const searchableText = [
@@ -1243,19 +1274,15 @@
                     item.lastText,
                     item.channelId,
                     item.serverId
-                ]
-                    .map((value) => String(value || '').toLowerCase())
-                    .join(' ');
+                ].map(value => String(value || '').toLowerCase()).join(' ');
 
-                return (
-                    searchableText.includes(keyword) ||
-                    storedPinyin.full.includes(keyword) ||
-                    storedPinyin.compact.includes(compactKeyword) ||
-                    storedPinyin.initials.includes(compactKeyword) ||
-                    namePinyin.full.includes(keyword) ||
-                    namePinyin.compact.includes(compactKeyword) ||
-                    namePinyin.initials.includes(compactKeyword)
-                );
+                return searchableText.includes(keyword)
+                    || storedPinyin.full.includes(keyword)
+                    || storedPinyin.compact.includes(compactKeyword)
+                    || storedPinyin.initials.includes(compactKeyword)
+                    || namePinyin.full.includes(keyword)
+                    || namePinyin.compact.includes(compactKeyword)
+                    || namePinyin.initials.includes(compactKeyword);
             });
         }
 
@@ -1315,6 +1342,23 @@
             renderFollowedRoomsList(filterFollowedRoomsByKeyword(sortedData), options);
         }
 
+        window.addEventListener('member-data-loaded', () => {
+            if (!currentFollowedData.length) return;
+            const members = getMemberData();
+            let changed = false;
+            currentFollowedData = currentFollowedData.map(room => {
+                const member = members.find(item => String(item.id || item.userId || '') === String(room.id || room.userId || ''));
+                if (!member) return room;
+                const next = { ...room };
+                for (const key of ['ownerName', 'team', 'teamId', 'groupName', 'pinyin', 'avatar', 'periodName', 'jtime', 'gtime', 'qtime']) {
+                    if (member[key] !== room[key]) { next[key] = member[key]; changed = true; }
+                }
+                next.bigDisplayName = String(next.ownerName || next.bigDisplayName || '').replace(/^(SNH48|GNZ48|BEJ48|CKG48|CGT48)-/, '');
+                return next;
+            });
+            if (changed) sortFollowedRooms({ preserveScroll: true });
+        });
+
         function openFollowedRoomByChannelId(channelId) {
             const normalizedChannelId = String(channelId || '').trim();
             if (!normalizedChannelId || typeof window.openFollowedChat !== 'function') return false;
@@ -1350,31 +1394,31 @@
             const sortValue = document.getElementById('followed-sort-value');
             const sortDisplay = document.getElementById('followed-sort-display');
             if (sortValue) sortValue.value = 'default';
-            if (sortDisplay) sortDisplay.value = '自定义排序';
+            if (sortDisplay) sortDisplay.querySelector('.followed-sort-label').textContent = '自定义排序';
         }
 
         function getSavedCustomOrder() {
             const savedOrder = readJsonSetting(FOLLOWED_CUSTOM_ORDER_KEY, []);
-            return Array.isArray(savedOrder) ? savedOrder.map((id) => String(id)) : [];
+            return Array.isArray(savedOrder) ? savedOrder.map(id => String(id)) : [];
         }
 
         function writeSavedCustomOrder(order) {
-            writeJsonSetting(FOLLOWED_CUSTOM_ORDER_KEY, [...new Set(order.map((id) => String(id)).filter(Boolean))]);
+            writeJsonSetting(FOLLOWED_CUSTOM_ORDER_KEY, [...new Set(order.map(id => String(id)).filter(Boolean))]);
         }
 
         function removeChannelFromCustomOrder(channelId) {
             const targetChannelId = String(channelId || '');
-            writeSavedCustomOrder(getSavedCustomOrder().filter((id) => id !== targetChannelId));
-            writePinnedChannelIds(getPinnedChannelIds().filter((id) => id !== targetChannelId));
+            writeSavedCustomOrder(getSavedCustomOrder().filter(id => id !== targetChannelId));
+            writePinnedChannelIds(getPinnedChannelIds().filter(id => id !== targetChannelId));
         }
 
         function getPinnedChannelIds() {
             const pinnedIds = readJsonSetting(FOLLOWED_PINNED_CHANNELS_KEY, []);
-            return Array.isArray(pinnedIds) ? pinnedIds.map((id) => String(id)) : [];
+            return Array.isArray(pinnedIds) ? pinnedIds.map(id => String(id)) : [];
         }
 
         function writePinnedChannelIds(channelIds) {
-            writeJsonSetting(FOLLOWED_PINNED_CHANNELS_KEY, [...new Set(channelIds.map((id) => String(id)).filter(Boolean))]);
+            writeJsonSetting(FOLLOWED_PINNED_CHANNELS_KEY, [...new Set(channelIds.map(id => String(id)).filter(Boolean))]);
         }
 
         async function loadFollowedRooms(options = {}) {
@@ -1399,19 +1443,10 @@
                 && isCurrentAccount()
             );
 
-            const refreshBtn = document.querySelector('.btn-refresh-icon')
-                || document.querySelector('button[onclick="loadFollowedRooms()"]');
-            if (refreshBtn) {
-                if (!refreshBtn.querySelector('svg')) {
-                    refreshBtn.innerHTML = FOLLOWED_REFRESH_ICON_HTML;
-                }
-                if (!silent) {
-                    refreshBtn.classList.add('is-fetching');
-                    refreshBtn.disabled = true;
-                }
-                if (window.YayaRendererUtils?.t) {
-                    refreshBtn.title = window.YayaRendererUtils.t('刷新');
-                }
+            const refreshBtn = document.querySelector('button[onclick="loadFollowedRooms()"]');
+            if (refreshBtn && !silent) {
+                refreshBtn.innerText = window.YayaRendererUtils.t('刷新');
+                refreshBtn.disabled = true;
             }
 
             if (!silent && !container.querySelector('.session-card')) {
@@ -1432,17 +1467,23 @@
                 if (!isCurrentRequest()) return;
 
                 const memberData = getMemberData();
+                const membersById = new Map();
+                memberData.forEach(member => {
+                    const id = String(member.id || member.userId || '');
+                    if (!membersById.has(id)) membersById.set(id, member);
+                });
                 const teamRelations = getSavedTeamRelations();
                 const teamFollowedIds = teamRelations.map(item => String(item.teamId));
                 const followedIds = [...new Set([...memberFollowedIds, ...teamFollowedIds])];
                 window.followedTeamIds = new Set(teamFollowedIds);
                 window.allFollowedIds = new Set(followedIds);
+                window.dispatchEvent(new CustomEvent('yaya:followed-rooms-changed'));
 
                 const followedMembers = [];
                 const serverIds = new Set();
                 followedIds.forEach(uid => {
                     const followedId = String(uid);
-                    const member = memberData.find(m => String(m.id || m.userId || '') === followedId)
+                    const member = membersById.get(followedId)
                         || memberData.find(m => {
                             const target = getFollowedTarget(m);
                             return target.isTeam && target.id === followedId;
@@ -1454,26 +1495,25 @@
                 });
 
                 const msgRes = await ipcRenderer.invoke('fetch-last-messages', {
-                    token,
-                    pa,
-                    serverIdList: Array.from(serverIds)
+                    token, pa, serverIdList: Array.from(serverIds)
                 });
                 if (!isCurrentRequest()) return;
 
                 const lastMsgs = msgRes.content?.lastMsgList || [];
+                const messagesByChannel = new Map();
+                lastMsgs.forEach(message => {
+                    const id = String(message.channelId);
+                    if (!messagesByChannel.has(id)) messagesByChannel.set(id, message);
+                });
 
-                currentFollowedData = followedMembers.map((m) => {
-                    const msg = lastMsgs.find((msg) => String(msg.channelId) === String(m.channelId)) || {};
+                currentFollowedData = followedMembers.map(m => {
+                    const msg = messagesByChannel.get(String(m.channelId)) || {};
                     const apiStarName = msg.starName || m.ownerName || '未知';
                     let bigDisplayName = m.ownerName || '未知成员';
 
-                    if (
-                        bigDisplayName.includes('SNH48-') ||
-                        bigDisplayName.includes('GNZ48-') ||
-                        bigDisplayName.includes('BEJ48-') ||
-                        bigDisplayName.includes('CKG48-') ||
-                        bigDisplayName.includes('CGT48-')
-                    ) {
+                    if (bigDisplayName.includes('SNH48-') || bigDisplayName.includes('GNZ48-') ||
+                        bigDisplayName.includes('BEJ48-') || bigDisplayName.includes('CKG48-') ||
+                        bigDisplayName.includes('CGT48-')) {
                         bigDisplayName = bigDisplayName.split('-')[1] || bigDisplayName;
                     }
 
@@ -1525,17 +1565,18 @@
             } catch (e) {
                 if (!isCurrentRequest()) return;
                 if (silent) {
-                    console.warn('口袋房间列表刷新失败:', e);
+                    console.warn('口袋房间列表自动刷新失败:', e);
                 } else {
                     container.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`;
                 }
             } finally {
                 if (isCurrentAccount() && refreshBtn && !silent) {
-                    refreshBtn.classList.remove('is-fetching');
+                    refreshBtn.innerText = window.YayaRendererUtils.t('刷新');
                     refreshBtn.disabled = false;
                 }
             }
         }
+
         function stopFollowedRoomsPolling() {
             followedRoomsPollGeneration += 1;
             followedRoomsAutoRefreshEnabled = false;
@@ -1573,22 +1614,11 @@
                 quickButton.style.color = '';
                 quickButton.disabled = false;
             }
-            const refreshBtn = document.querySelector('.btn-refresh-icon')
-                || document.querySelector('button[onclick="loadFollowedRooms()"]');
-            if (refreshBtn) {
-                if (!refreshBtn.querySelector('svg')) {
-                    refreshBtn.innerHTML = FOLLOWED_REFRESH_ICON_HTML;
-                }
-                refreshBtn.classList.remove('is-fetching');
-                refreshBtn.disabled = false;
-                if (window.YayaRendererUtils?.t) {
-                    refreshBtn.title = window.YayaRendererUtils.t('刷新');
-                }
-            }
         }
 
         function startFollowedRoomsPolling() {
             stopFollowedRoomsPolling();
+            if (isWebRuntime()) return;
             followedRoomsAutoRefreshEnabled = true;
             const pollingGeneration = followedRoomsPollGeneration;
 
@@ -1649,6 +1679,7 @@
         }
 
         function renderFollowedRoomsList(renderData, options = {}) {
+            if (followedRoomPointerDrag?.active) return;
             const { preserveScroll = false } = options;
             const container = document.getElementById('followed-rooms-container');
             const scrollState = preserveScroll ? captureFollowedRoomsScrollAnchor(container) : null;
@@ -1683,9 +1714,9 @@
                     ? '<div class="followed-pinned-divider" style="height: 1px; margin: 8px 8px; background: linear-gradient(90deg, transparent, rgba(64, 156, 255, 0.9), transparent); box-shadow: 0 0 10px rgba(64, 156, 255, 0.28);"></div>'
                     : '';
 
-                    const teamHtml = teamName
-                        ? `<span class="team-tag" style="font-size: 10px; padding: 0 6px; height: 16px; line-height: 14px; font-weight: 500; border-radius: 8px; ${colorStyle}">${escapeHtml(teamName)}</span>`
-                        : '';
+                const teamHtml = teamName ?
+                    `<span class="team-tag" style="font-size: 10px; padding: 0 6px; height: 16px; line-height: 14px; font-weight: 500; border-radius: 8px; ${colorStyle}">${escapeHtml(teamName)}</span>`
+                    : '';
 
                 const unreadHtml = item.unread > 0
                     ? `<span style="background:#ff4d4f; color:#fff; font-size:10px; padding:0 6px; border-radius:10px; margin-left:8px; font-weight:bold;">${item.unread}</span>`
@@ -1734,11 +1765,11 @@
                         </svg>
                     </button>` : '';
 
-                    const isActive = String(getActiveFollowedChannel()) === String(item.channelId) ? 'active' : '';
-                    const draggableAttr = isCustomSort ? 'draggable="true"' : '';
-                    const cursorStyle = isCustomSort ? 'cursor: grab;' : 'cursor: pointer;';
+                const isActive = String(getActiveFollowedChannel()) === String(item.channelId) ? 'active' : '';
+                const draggableAttr = !isWebRuntime() ? 'draggable="false"' : isCustomSort ? 'draggable="true"' : '';
+                const cursorStyle = !isWebRuntime() || isCustomSort ? 'cursor: grab;' : 'cursor: pointer;';
 
-                    return `
+                return `
         ${pinnedDividerHtml}
         <div class="session-card ${isActive}" id="session-card-${escapeHtml(item.channelId)}" data-channelid="${escapeHtml(item.channelId)}" data-small-channel-id="${escapeHtml(item.smallChannelId || item.yklzId || '')}" data-member-id="${escapeHtml(memberId)}" data-follow-source-id="${escapeHtml(followTarget.id)}" data-follow-source-type="${followTarget.type}" data-owner-name="${escapeHtml(item.bigDisplayName)}" data-server-id="${escapeHtml(item.serverId)}" data-avatar-url="${escapeHtml(notificationAvatarUrl)}" ${draggableAttr} style="padding: 12px 16px; border-bottom: 1px solid var(--border); transition: 0.2s; ${cursorStyle}">
             <div class="session-info" style="flex: 1; min-width: 0;">
@@ -1752,13 +1783,6 @@
                     </div>
                     <div style="display: flex; align-items: center; flex-shrink: 0; margin-left: 10px;">
                         ${teamHtml}
-                        <button class="session-card-popout-btn" type="button" title="独立小窗口打开" aria-label="独立小窗口打开" data-channelid="${escapeHtml(item.channelId)}" data-server-id="${escapeHtml(item.serverId)}" data-owner-name="${escapeHtml(item.bigDisplayName)}" data-member-id="${escapeHtml(memberId)}">
-                            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                                <polyline points="15 3 21 3 21 9"></polyline>
-                                <line x1="10" y1="14" x2="21" y2="3"></line>
-                            </svg>
-                        </button>
                     </div>
                 </div>
                 <div class="session-msg" style="font-size: 12px; color: var(--text-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
@@ -1767,8 +1791,7 @@
             </div>
         </div>
     `;
-                })
-                .join('');
+            }).join('');
 
             if (html === followedRoomsLastRenderHtml && container.querySelector('.session-card')) {
                 updateFollowedRoomNotificationButton();
@@ -1777,7 +1800,25 @@
             }
 
             container.classList.add('is-refreshing-list');
-            container.innerHTML = html;
+            const fragment = document.createRange().createContextualFragment(html);
+            const existingCards = new Map(Array.from(container.querySelectorAll('.session-card')).map(card => [card.id, card]));
+            const desired = Array.from(fragment.children).map(next => {
+                const card = next.id && existingCards.get(next.id);
+                if (!card) return next;
+                if (card.innerHTML !== next.innerHTML) card.innerHTML = next.innerHTML;
+                for (const attribute of Array.from(card.attributes)) {
+                    if (!next.hasAttribute(attribute.name)) card.removeAttribute(attribute.name);
+                }
+                for (const attribute of next.attributes) {
+                    if (card.getAttribute(attribute.name) !== attribute.value) card.setAttribute(attribute.name, attribute.value);
+                }
+                return card;
+            });
+            const keep = new Set(desired);
+            Array.from(container.childNodes).forEach(node => { if (!keep.has(node)) node.remove(); });
+            desired.forEach((node, index) => {
+                if (container.children[index] !== node) container.insertBefore(node, container.children[index] || null);
+            });
             followedRoomsLastRenderHtml = html;
             restoreFollowedRoomsScrollAnchor(container, scrollState);
             requestAnimationFrame(() => {
@@ -1789,8 +1830,17 @@
             });
 
             const cards = container.querySelectorAll('.session-card');
-            cards.forEach((card) => {
-                card.addEventListener('click', () => {
+            cards.forEach(card => {
+                if (boundRoomCards.has(card)) return;
+                boundRoomCards.add(card);
+                card.addEventListener('click', event => {
+                    if (followedRoomSuppressedClick?.card === card
+                        && followedRoomSuppressedClick.until > Date.now()) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        followedRoomSuppressedClick = null;
+                        return;
+                    }
                     hideFollowedRoomContextMenu();
                     window.openFollowedChat(card.dataset.ownerName, card.dataset.channelid, card.dataset.serverId, {
                         memberId: card.dataset.memberId
@@ -1801,8 +1851,11 @@
                     event.stopPropagation();
                     showFollowedRoomContextMenu(event, card);
                 });
+                if (!isWebRuntime()) card.addEventListener('pointerdown', beginFollowedRoomPointerDrag);
             });
             container.querySelectorAll('.followed-room-radio-listen').forEach(button => {
+                if (boundRadioButtons.has(button)) return;
+                boundRadioButtons.add(button);
                 button.addEventListener('click', event => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -1815,22 +1868,11 @@
                 });
                 button.addEventListener('mousedown', event => event.stopPropagation());
             });
-            container.querySelectorAll('.session-card-popout-btn').forEach(button => {
-                button.addEventListener('click', event => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    popoutFollowedRoom(
-                        button.dataset.channelid,
-                        button.dataset.serverId,
-                        button.dataset.ownerName,
-                        button.dataset.memberId
-                    );
-                });
-                button.addEventListener('mousedown', event => event.stopPropagation());
-            });
 
-            if (isCustomSort) {
-                cards.forEach((card) => {
+            if (isCustomSort && isWebRuntime()) {
+                cards.forEach(card => {
+                    if (boundDragCards.has(card)) return;
+                    boundDragCards.add(card);
                     card.addEventListener('dragstart', handleDragStart);
                     card.addEventListener('dragover', handleDragOver);
                     card.addEventListener('dragenter', handleDragEnter);
@@ -1844,8 +1886,181 @@
         }
 
         window.addEventListener('yaya-room-radio-scan-updated', () => {
-            if (currentFollowedData.length) sortFollowedRooms({ preserveScroll: true });
+            if (!currentFollowedData.length || radioListRefreshFrame !== null) return;
+            radioListRefreshFrame = requestAnimationFrame(() => {
+                radioListRefreshFrame = null;
+                const view = document.getElementById('view-followed-rooms');
+                if (view?.style.display !== 'none') sortFollowedRooms({ preserveScroll: true });
+            });
         });
+
+        function followedRoomWindowPayload(card) {
+            return {
+                ownerName: card.dataset.ownerName || '',
+                channelId: card.dataset.channelid || '',
+                mainChannelId: card.dataset.channelid || '',
+                smallChannelId: card.dataset.smallChannelId || '',
+                serverId: card.dataset.serverId || '',
+                memberId: card.dataset.memberId || '',
+                avatarUrl: card.dataset.avatarUrl || '',
+                roomType: 'big'
+            };
+        }
+
+        function beginFollowedRoomPointerDrag(event) {
+            if (event.button !== 0 || event.isPrimary === false || event.pointerType === 'touch'
+                || event.target.closest('button, input, textarea, select, a, [contenteditable="true"]')) return;
+            if (followedRoomPointerDrag) followedRoomPointerDrag.cancel();
+            hideFollowedRoomContextMenu();
+            const card = event.currentTarget;
+            const rect = card.getBoundingClientRect();
+            const state = {
+                card, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
+                clientX: event.clientX, clientY: event.clientY, frame: null,
+                offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top,
+                active: false, ghost: null, hint: null, target: null,
+                userSelect: card.style.userSelect, opacity: card.style.opacity,
+                cursor: document.body.style.cursor
+            };
+            followedRoomPointerDrag = state;
+            card.style.userSelect = 'none';
+
+            const clearTarget = () => {
+                state.target?.classList.remove('drag-over-target');
+                state.target = null;
+            };
+            const cleanup = () => {
+                if (followedRoomPointerDrag === state) followedRoomPointerDrag = null;
+                card.removeEventListener('pointermove', move);
+                card.removeEventListener('pointerup', finish);
+                card.removeEventListener('pointercancel', cancel);
+                card.removeEventListener('lostpointercapture', cancel);
+                document.removeEventListener('keydown', keydown, true);
+                window.removeEventListener('blur', cancel);
+                window.removeEventListener('pagehide', cancel);
+                if (state.frame !== null) cancelAnimationFrame(state.frame);
+                clearTarget();
+                state.ghost?.remove();
+                state.hint?.remove();
+                card.style.userSelect = state.userSelect;
+                card.style.opacity = state.opacity;
+                document.body.style.cursor = state.cursor;
+                if (card.hasPointerCapture?.(state.pointerId)) card.releasePointerCapture(state.pointerId);
+                if (state.active) followedRoomSuppressedClick = { card, until: Date.now() + 500 };
+            };
+            const cancel = () => cleanup();
+            state.cancel = cancel;
+            const keydown = keyEvent => {
+                if (keyEvent.key !== 'Escape') return;
+                keyEvent.preventDefault();
+                keyEvent.stopPropagation();
+                cancel();
+            };
+            const detachEligibleAt = (clientX, clientY) => {
+                const column = document.querySelector('#view-followed-rooms > div > div:first-child');
+                const bounds = column?.getBoundingClientRect();
+                if (!bounds || bounds.width <= 0 || bounds.height <= 0 || rect.width <= 0 || rect.height <= 0) return false;
+                const left = clientX - state.offsetX;
+                const top = clientY - state.offsetY;
+                const overlapWidth = Math.max(0, Math.min(left + rect.width, bounds.right) - Math.max(left, bounds.left));
+                const overlapHeight = Math.max(0, Math.min(top + rect.height, bounds.bottom) - Math.max(top, bounds.top));
+                return overlapWidth * overlapHeight < rect.width * rect.height / 2;
+            };
+            const updateDetachHint = () => {
+                const eligible = detachEligibleAt(state.clientX, state.clientY);
+                state.ghost.dataset.detachEligible = String(eligible);
+                state.ghost.style.outline = eligible ? '2px solid var(--primary)' : 'none';
+                state.hint.style.display = eligible ? 'block' : 'none';
+                state.hint.style.left = `${Math.max(8, Math.min(state.clientX - state.offsetX, window.innerWidth - 180))}px`;
+                state.hint.style.top = `${Math.max(8, state.clientY - state.offsetY - 34)}px`;
+            };
+            const updateTarget = () => {
+                clearTarget();
+                if (detachEligibleAt(state.clientX, state.clientY)) return;
+                const container = document.getElementById('followed-rooms-container');
+                const target = document.elementFromPoint(state.clientX, state.clientY)?.closest('.session-card');
+                if ((document.getElementById('followed-sort-value')?.value || 'default') === 'default'
+                    && target && target !== card && container?.contains(target)) {
+                    state.target = target;
+                    target.classList.add('drag-over-target');
+                }
+            };
+            const autoScroll = () => {
+                if (followedRoomPointerDrag !== state || !state.active) return;
+                const container = document.getElementById('followed-rooms-container');
+                const bounds = container?.getBoundingClientRect();
+                if (bounds && !detachEligibleAt(state.clientX, state.clientY)
+                    && state.clientX >= bounds.left && state.clientX <= bounds.right
+                    && state.clientY >= bounds.top && state.clientY <= bounds.bottom) {
+                    const edge = Math.min(32, bounds.height / 4);
+                    const distance = state.clientY < bounds.top + edge ? state.clientY - bounds.top - edge
+                        : state.clientY > bounds.bottom - edge ? state.clientY - bounds.bottom + edge : 0;
+                    if (distance) {
+                        container.scrollTop += Math.sign(distance) * Math.max(2, Math.min(14, Math.abs(distance) / 2));
+                        updateTarget();
+                    }
+                }
+                state.frame = requestAnimationFrame(autoScroll);
+            };
+            const move = moveEvent => {
+                if (moveEvent.pointerId !== state.pointerId) return;
+                state.clientX = moveEvent.clientX;
+                state.clientY = moveEvent.clientY;
+                if (!state.active) {
+                    if (Math.hypot(moveEvent.clientX - state.startX, moveEvent.clientY - state.startY) < 8) return;
+                    state.active = true;
+                    card.style.opacity = '0.4';
+                    document.body.style.cursor = 'grabbing';
+                    const ghost = card.cloneNode(true);
+                    ghost.removeAttribute('id');
+                    ghost.classList.remove('active', 'drag-over-target');
+                    ghost.setAttribute('aria-hidden', 'true');
+                    ghost.style.cssText += `;position:fixed;z-index:100000;pointer-events:none;opacity:0.85;width:${rect.width}px;height:${rect.height}px;margin:0 !important;box-sizing:border-box;transition:none;box-shadow:0 8px 24px rgba(0,0,0,0.2);`;
+                    document.body.appendChild(ghost);
+                    state.ghost = ghost;
+                    const hint = document.createElement('div');
+                    hint.textContent = '松开以独立窗口显示';
+                    hint.setAttribute('aria-hidden', 'true');
+                    hint.style.cssText = 'position:fixed;z-index:100001;pointer-events:none;padding:6px 10px;border-radius:6px;background:var(--primary);color:#fff;font-size:12px;line-height:18px;white-space:nowrap;box-shadow:0 3px 12px rgba(0,0,0,0.2);';
+                    document.body.appendChild(hint);
+                    state.hint = hint;
+                    state.frame = requestAnimationFrame(autoScroll);
+                }
+                moveEvent.preventDefault();
+                state.ghost.style.left = `${moveEvent.clientX - state.offsetX}px`;
+                state.ghost.style.top = `${moveEvent.clientY - state.offsetY}px`;
+                updateDetachHint();
+                updateTarget();
+            };
+            const finish = upEvent => {
+                if (upEvent.pointerId !== state.pointerId) return;
+                const wasActive = state.active;
+                const detachEligible = wasActive && detachEligibleAt(upEvent.clientX, upEvent.clientY);
+                const container = document.getElementById('followed-rooms-container');
+                const target = document.elementFromPoint(upEvent.clientX, upEvent.clientY)?.closest('.session-card');
+                const canSort = (document.getElementById('followed-sort-value')?.value || 'default') === 'default'
+                    && target && target !== card && container?.contains(target) && container.contains(card);
+                const room = followedRoomWindowPayload(card);
+                cleanup();
+                if (!wasActive) return;
+                upEvent.preventDefault();
+                if (!detachEligible && canSort) {
+                    const cards = Array.from(container.querySelectorAll('.session-card'));
+                    target.parentNode.insertBefore(card, cards.indexOf(card) < cards.indexOf(target) ? target.nextSibling : target);
+                    saveCustomRoomOrder();
+                }
+                void window.openFollowedRoomWindow?.(room, { fromDrag: true, detachEligible });
+            };
+            card.addEventListener('pointermove', move);
+            card.addEventListener('pointerup', finish);
+            card.addEventListener('pointercancel', cancel);
+            card.addEventListener('lostpointercapture', cancel);
+            document.addEventListener('keydown', keydown, true);
+            window.addEventListener('blur', cancel);
+            window.addEventListener('pagehide', cancel);
+            try { card.setPointerCapture(event.pointerId); }
+            catch (_) { cancel(); }
+        }
 
         function handleDragStart(e) {
             draggedCard = this;
@@ -1894,7 +2109,7 @@
 
         function handleDragEnd() {
             this.style.opacity = '1';
-            document.querySelectorAll('.session-card').forEach((c) => {
+            document.querySelectorAll('.session-card').forEach(c => {
                 c.classList.remove('drag-over-target');
             });
         }
@@ -1902,7 +2117,7 @@
         function saveCustomRoomOrder() {
             const container = document.getElementById('followed-rooms-container');
             const cards = container.querySelectorAll('.session-card');
-            const newOrder = Array.from(cards).map((card) => card.getAttribute('data-channelid'));
+            const newOrder = Array.from(cards).map(card => card.getAttribute('data-channelid'));
             writeSavedCustomOrder(newOrder);
         }
 
@@ -1912,24 +2127,34 @@
             const menu = document.createElement('div');
             menu.id = 'followed-room-context-menu';
             menu.className = 'yaya-context-menu';
-            menu.style.cssText = ['position: fixed', 'z-index: 99999', 'display: none', 'min-width: 132px'].join(';');
+            menu.style.cssText = [
+                'position: fixed',
+                'z-index: 99999',
+                'display: none',
+                'width: 144px',
+                'max-width: calc(100vw - 16px)',
+                'box-sizing: border-box'
+            ].join(';');
 
             menu.innerHTML = `
-                <button type="button" data-action="popout" class="yaya-context-menu-item">🗗 独立小窗口打开</button>
+                ${!isWebRuntime() ? '<button type="button" data-action="open-window" class="yaya-context-menu-item">独立窗口显示</button>' : ''}
                 <button type="button" data-action="notify" class="yaya-context-menu-item">开启通知</button>
                 <button type="button" data-action="pin" class="yaya-context-menu-item">置顶</button>
                 <button type="button" data-action="unfollow" class="yaya-context-menu-item yaya-context-menu-danger">取关</button>
             `;
 
-            menu.querySelectorAll('button').forEach((button) => {
-                button.addEventListener('click', (event) => {
+            menu.querySelectorAll('button').forEach(button => {
+                button.addEventListener('pointerdown', event => {
+                    if (event.button === 0) event.preventDefault();
+                });
+                button.addEventListener('click', event => {
                     event.stopPropagation();
                     const action = button.dataset.action;
                     const target = followedRoomContextTarget;
                     hideFollowedRoomContextMenu();
                     if (!target) return;
-                    if (action === 'popout') {
-                        popoutFollowedRoom(target.dataset.channelid, target.dataset.serverId, target.dataset.ownerName, target.dataset.memberId);
+                    if (action === 'open-window') {
+                        window.openFollowedRoomWindow?.(followedRoomWindowPayload(target));
                     } else if (action === 'notify') {
                         toggleFollowedRoomNotification(target);
                     } else if (action === 'pin') {
@@ -1944,7 +2169,7 @@
             document.addEventListener('click', hideFollowedRoomContextMenu);
             document.addEventListener('scroll', hideFollowedRoomContextMenu, true);
             window.addEventListener('resize', hideFollowedRoomContextMenu);
-            document.addEventListener('keydown', (event) => {
+            document.addEventListener('keydown', event => {
                 if (event.key === 'Escape') hideFollowedRoomContextMenu();
             });
 
@@ -1963,7 +2188,9 @@
                 pinButton.textContent = window.YayaRendererUtils.t(isPinned ? '取消置顶' : '置顶');
             }
             if (notificationButton) {
-                notificationButton.textContent = isFollowedRoomNotificationEnabled(channelId) ? '关闭通知' : '开启通知';
+                notificationButton.textContent = isFollowedRoomNotificationEnabled(channelId)
+                    ? '关闭通知'
+                    : '开启通知';
             }
 
             menu.style.display = 'block';
@@ -2012,7 +2239,7 @@
                 close();
                 if (typeof onConfirm === 'function') onConfirm();
             });
-            overlay.addEventListener('click', (event) => {
+            overlay.addEventListener('click', event => {
                 if (event.target === overlay) close();
             });
             document.body.appendChild(overlay);
@@ -2024,7 +2251,7 @@
 
             const pinnedIds = getPinnedChannelIds();
             if (pinnedIds.includes(channelId)) {
-                writePinnedChannelIds(pinnedIds.filter((id) => id !== channelId));
+                writePinnedChannelIds(pinnedIds.filter(id => id !== channelId));
                 sortFollowedRooms();
                 showToast(`已取消置顶 ${card.dataset.ownerName || '该房间'}`);
                 return;
@@ -2032,11 +2259,15 @@
 
             const currentOrder = getSavedCustomOrder();
             const visibleOrder = Array.from(document.querySelectorAll('#followed-rooms-container .session-card'))
-                .map((item) => item.dataset.channelid)
+                .map(item => item.dataset.channelid)
                 .filter(Boolean);
-            const mergedOrder = [channelId, ...currentOrder.filter((id) => id !== channelId), ...visibleOrder.filter((id) => id !== channelId)];
+            const mergedOrder = [
+                channelId,
+                ...currentOrder.filter(id => id !== channelId),
+                ...visibleOrder.filter(id => id !== channelId)
+            ];
 
-            writePinnedChannelIds([channelId, ...pinnedIds.filter((id) => id !== channelId)]);
+            writePinnedChannelIds([channelId, ...pinnedIds.filter(id => id !== channelId)]);
             writeSavedCustomOrder(mergedOrder);
             setFollowedCustomSortMode();
             sortFollowedRooms();
@@ -2071,6 +2302,7 @@
                     }
 
                     window.allFollowedIds.delete(sourceId);
+                    window.dispatchEvent(new CustomEvent('yaya:followed-rooms-changed'));
                     if (sourceType === 0) removeTeamRelation(sourceId);
                     currentFollowedData = currentFollowedData.filter(item => {
                         const target = getFollowedTarget(item);
@@ -2139,8 +2371,7 @@
                     <span style="font-weight:bold; font-size:12px; ${isInactive ? 'opacity:0.6' : ''}">${escapeHtml(m.ownerName)}</span>
                     <span class="team-tag" style="font-size:10px; padding:0 4px; height:16px; line-height:14px; ${colorStyle}">${target.isTeam ? '队伍' : escapeHtml(m.team)}</span>
                 </div>`;
-                    })
-                    .join('');
+                }).join('');
                 resultBox.innerHTML = html;
                 resultBox.querySelectorAll('.suggestion-item').forEach(item => {
                     item.addEventListener('click', () => selectQuickFollowMember(
@@ -2223,6 +2454,7 @@
                             return target.id === String(memberId) && target.type === sourceType;
                         });
                         window.allFollowedIds.delete(String(memberId));
+                        window.dispatchEvent(new CustomEvent('yaya:followed-rooms-changed'));
                         if (sourceType === 0) removeTeamRelation(memberId);
                         currentFollowedData = currentFollowedData.filter(item => {
                             const target = getFollowedTarget(item);
@@ -2233,6 +2465,7 @@
                         sortFollowedRooms();
                     } else {
                         window.allFollowedIds.add(String(memberId));
+                        window.dispatchEvent(new CustomEvent('yaya:followed-rooms-changed'));
                         setTimeout(loadFollowedRooms, 500);
                     }
 
@@ -2250,95 +2483,11 @@
             }
         }
 
-        async function popoutFollowedRoom(channelId, serverId, ownerName, memberId = '', roomType = 'big') {
-            const normalizedChannelId = String(channelId || '').trim();
-            if (!normalizedChannelId) return;
-
-            if (!window.desktop || !window.desktop.ipcRenderer) {
-                if (typeof showToast === 'function') showToast('独立小窗口仅支持桌面端');
-                return;
-            }
-
-            try {
-                const result = await window.desktop.ipcRenderer.invoke('open-room-window', {
-                    channelId: normalizedChannelId,
-                    serverId: String(serverId || '').trim(),
-                    ownerName: String(ownerName || '成员房间').trim(),
-                    memberId: String(memberId || '').trim(),
-                    roomType: String(roomType || 'big').trim()
-                });
-                if (result?.success) {
-                    if (typeof showToast === 'function') {
-                        showToast(result.alreadyOpen ? `已切换到 ${ownerName} 的窗口` : `已在独立小窗口打开 ${ownerName}`);
-                    }
-                }
-            } catch (err) {
-                console.error('[popout-room] 打开独立窗口失败:', err);
-                if (typeof showToast === 'function') showToast(`打开失败: ${err.message}`);
-            }
-        }
-
-        function popoutActiveFollowedRoom() {
-            const channelId = deps.getActiveFollowedChannel?.() || (typeof window.getActiveFollowedChannel === 'function' ? window.getActiveFollowedChannel() : '');
-            if (!channelId) {
-                if (typeof showToast === 'function') showToast('请先选择一个成员房间');
-                return;
-            }
-            const activeCard = document.querySelector(`.session-card[data-channelid="${channelId}"], .session-card[data-small-channel-id="${channelId}"]`);
-            const ownerName = activeCard?.dataset?.ownerName || document.getElementById('followed-chat-title')?.innerText || '成员房间';
-            const serverId = activeCard?.dataset?.serverId || '';
-            const memberId = activeCard?.dataset?.memberId || '';
-            popoutFollowedRoom(channelId, serverId, ownerName, memberId);
-        }
-
-        function toggleFollowedRoomsSidebarCollapse() {
-            const followedView = document.getElementById('view-followed-rooms');
-            if (!followedView) return;
-            const isCollapsed = followedView.classList.toggle('is-sidebar-collapsed');
-            const btn = document.getElementById('btn-toggle-followed-rooms-sidebar');
-            if (btn) {
-                btn.title = isCollapsed ? '展开房间列表' : '折叠房间列表';
-                btn.setAttribute('aria-label', btn.title);
-            }
-        }
-
-        function closeActiveFollowedChat() {
-            const followedView = document.getElementById('view-followed-rooms');
-            if (followedView) {
-                followedView.classList.remove('is-chat-open');
-            }
-            if (typeof window.backToFollowedRoomList === 'function') {
-                window.backToFollowedRoomList();
-            }
-            const header = document.getElementById('followed-chat-header');
-            if (header) {
-                header.style.visibility = 'hidden';
-            }
-            document.querySelectorAll('.session-card').forEach((card) => card.classList.remove('active'));
-            const messages = document.getElementById('followed-chat-messages');
-            if (messages) {
-                messages.innerHTML = `
-                    <div class="empty-state"
-                        style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--text-sub); font-size: 14px;">
-                        请选择成员房间
-                    </div>
-                `;
-            }
-        }
-
-        window.popoutFollowedRoom = popoutFollowedRoom;
-        window.popoutActiveFollowedRoom = popoutActiveFollowedRoom;
-        window.toggleFollowedRoomsSidebarCollapse = toggleFollowedRoomsSidebarCollapse;
-        window.closeActiveFollowedChat = closeActiveFollowedChat;
-
         return {
-            closeActiveFollowedChat,
             executeQuickAction,
             handleQuickFollowSearch,
             loadFollowedRooms,
             openFollowedRoomByChannelId,
-            popoutActiveFollowedRoom,
-            popoutFollowedRoom,
             resetFollowedRoomsState,
             selectFollowedSort,
             selectQuickFollowMember,
@@ -2349,7 +2498,6 @@
             sortFollowedRooms,
             toggleActiveFollowedRoomNotification,
             toggleAllFollowedRoomNotifications,
-            toggleFollowedRoomsSidebarCollapse,
             toggleFollowedSortDropdown,
             updateAllFollowedRoomNotificationsButton,
             updateFollowedRoomNotificationButton

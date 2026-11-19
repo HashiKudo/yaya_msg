@@ -1,12 +1,7 @@
-const { app, globalShortcut } = require('electron');
-const {
-    createWindow,
-    getMainWindow,
-    showMainWindow,
-    markAppQuitting
-} = require('./window');
+const { app, globalShortcut, ipcMain } = require('electron');
+const { createWindow, getMainWindow, showMainWindow: revealMainWindow, markAppQuitting, setDeepLinkHandler } = require('./window');
+const { registerDeepLinkProtocol, createDeepLinkController } = require('./services/deep-link-service');
 const { createTray, destroyTray } = require('./tray');
-const { ensureWasmLoaded } = require('./services/wasm-service');
 const {
     cleanupMediaTasks,
     finalizeLiveRecordingsBeforeQuit,
@@ -22,13 +17,12 @@ const { registerDanmakuIpc } = require('./ipc/danmaku-ipc');
 const { registerMemberRoomIpc } = require('./ipc/member-room-ipc');
 const { registerNetfaceIpc } = require('./ipc/netface-ipc');
 const { netfaceService } = require('./services/netface-service');
-const { closeMessageIndex, startMessageIndexWatcher } = require('./services/message-index-service');
+const { closeMessageIndex, startMessageIndexWatcher } = require('./services/message-index-client');
 const { closeAllLiveDanmakuConnections } = require('./services/danmaku-service');
 const { closeAllMemberRoomConnections } = require('./services/member-room-service');
 const roomNotificationService = require('./services/room-notification-service');
+const accountImService = require('./services/account-im-service');
 const { closeMemberRoomTransport } = require('./services/member-room-transport');
-const { closeAllRoomWindows } = require('./services/room-window-service');
-const { ensureWindowsNotificationRegistration } = require('./services/system-service');
 const { applyAppIcon } = require('./services/app-icon-service');
 const { ensureStoragePaths } = require('../common/storage-paths');
 
@@ -54,6 +48,11 @@ let quitCleanupFinished = false;
 let finalCleanupPerformed = false;
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
+function showMainWindow() {
+    if (!gotSingleInstanceLock || quitCleanupStarted) return;
+    return revealMainWindow();
+}
+
 function runLiveRecordingRecovery() {
     return recoverInterruptedLiveRecordings()
         .then((result) => {
@@ -73,13 +72,14 @@ function performFinalCleanup() {
     markAppQuitting();
     destroyTray();
     cleanupMediaTasks();
+    accountImService.closeAll();
     closeAllLiveDanmakuConnections();
     closeAllMemberRoomConnections();
-    closeAllRoomWindows();
     roomNotificationService.closeAll();
+    require('./services/room-voice-service').closeAll();
+    require('./services/live-start-service').closeAll();
     closeMemberRoomTransport();
     netfaceService.closeAll();
-    closeMessageIndex();
 }
 
 function sendMediaKeyAction(action) {
@@ -104,18 +104,22 @@ if (process.platform === 'linux') {
 }
 
 if (process.platform === 'win32') {
-    app.setAppUserModelId('com.yaya.message');
+    app.setAppUserModelId(app.isPackaged ? 'com.yaya.message' : 'electron.app.Electron');
 }
 
 if (!gotSingleInstanceLock) {
     app.quit();
 } else {
-    app.on('second-instance', showMainWindow);
+    const deepLinks = createDeepLinkController({ app, ipcMain, getMainWindow, showMainWindow });
+    setDeepLinkHandler(deepLinks.accept);
+    deepLinks.acceptArguments(process.argv);
+    app.on('second-instance', (_event, args) => {
+        if (!deepLinks.acceptArguments(args)) showMainWindow();
+    });
     app.whenReady().then(() => {
+        if (process.platform === 'darwin') applyAppIcon();
+        registerDeepLinkProtocol(app);
         ensureStoragePaths();
-        if (process.platform === 'win32') {
-            ensureWindowsNotificationRegistration();
-        }
         createWindow();
         createTray();
         startMessageIndexWatcher((result) => {
@@ -124,15 +128,10 @@ if (!gotSingleInstanceLock) {
             window.webContents.send('message-index-updated', result);
         });
         registerMediaKeyShortcuts();
-        ensureWasmLoaded();
         runLiveRecordingRecovery();
         setTimeout(runLiveRecordingRecovery, 20_000);
     });
 }
-
-app.on('activate', () => {
-    showMainWindow();
-});
 
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
@@ -147,7 +146,6 @@ app.on('activate', () => {
 app.on('before-quit', (event) => {
     if (!gotSingleInstanceLock) return;
 
-    markAppQuitting();
     if (quitCleanupFinished) {
         performFinalCleanup();
         return;
@@ -159,7 +157,8 @@ app.on('before-quit', (event) => {
 
     finalizeLiveRecordingsBeforeQuit()
         .catch(error => console.warn('[app-quit] live recording finalize failed:', error))
-        .finally(() => {
+        .finally(async () => {
+            await closeMessageIndex();
             quitCleanupFinished = true;
             performFinalCleanup();
             app.quit();

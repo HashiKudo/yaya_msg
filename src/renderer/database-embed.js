@@ -1,6 +1,4 @@
 (function initDatabaseEmbed() {
-    const DATABASE_STYLES_PATH = 'src/renderer/database/styles.css';
-    const DATABASE_TAILWIND_PATH = 'src/renderer/database/tailwind.css';
     const DESKTOP_DATABASE_RUNTIME_PATH = './database/runtime.js';
     const WEB_DATABASE_RUNTIME_PATH = '/src/renderer/database/runtime.js';
     const WEB_DATABASE_STYLES_PATH = '/src/renderer/database/styles.css';
@@ -9,6 +7,32 @@
 
     let runtimePromise = null;
     let mountPromise = null;
+    let databaseModule = null;
+    let releaseTimer = null;
+    let savedScroll = [];
+    function scrollElements(host) {
+        return [document.getElementById('view-database'), host, ...host.querySelectorAll('*')].filter(Boolean);
+    }
+    function captureDatabaseScroll() {
+        const host = getDatabaseHost();
+        if (!host) return;
+        savedScroll = scrollElements(host).flatMap((element, index) =>
+            element.scrollTop || element.scrollLeft ? [{ index, top: element.scrollTop, left: element.scrollLeft }] : []);
+    }
+    function restoreDatabaseScroll(host) {
+        if (!savedScroll.length) return;
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (host.dataset.databaseMounted !== 'true') return;
+            const elements = scrollElements(host);
+            for (const scroll of savedScroll) {
+                if (elements[scroll.index]) {
+                    elements[scroll.index].scrollTop = scroll.top;
+                    elements[scroll.index].scrollLeft = scroll.left;
+                }
+            }
+            savedScroll = [];
+        }));
+    }
 
     function getDatabaseHost() {
         return document.getElementById('database-root');
@@ -19,7 +43,8 @@
     }
 
     function getWebDatabaseRuntimeUrl() {
-        return getVersionedRuntimeUrl(WEB_DATABASE_RUNTIME_PATH);
+        return document.querySelector('meta[name="yaya-database-runtime"]')?.content
+            || getVersionedRuntimeUrl(WEB_DATABASE_RUNTIME_PATH);
     }
 
     function getDesktopDatabaseRuntimeUrl() {
@@ -42,34 +67,28 @@
         host.innerHTML = `<div class="${className}">${html}</div>`;
     }
 
-    async function ensureRuntime() {
+    function ensureRuntime() {
         if (runtimePromise) return runtimePromise;
-        runtimePromise = Promise.resolve();
+        runtimePromise = import(isWebRuntime() ? getWebDatabaseRuntimeUrl() : getDesktopDatabaseRuntimeUrl())
+            .catch(error => {
+                runtimePromise = null;
+                throw error;
+            });
         return runtimePromise;
     }
 
-    async function readDatabaseAsset(desktopPath, webPath) {
-        const desktop = window.desktop;
-        if (desktop && desktop.platform === 'web') {
-            const response = await fetch(webPath);
-            if (!response.ok) {
-                throw new Error(`数据库资源加载失败: ${response.status}`);
-            }
-            return response.text();
-        }
-
-        if (!desktop || !desktop.fs || !desktop.path || !desktop.appDir) {
-            throw new Error('数据库运行环境未准备好');
-        }
-
-        const assetPath = desktop.path.join(desktop.appDir, desktopPath);
-        return desktop.fs.readFileSync(assetPath, 'utf8');
+    async function readDatabaseAsset(url) {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('数据库资源加载失败: ' + response.status);
+        return response.text();
     }
 
     async function readDatabaseStyles() {
+        if (!isWebRuntime()) return window.desktop.database.readStyles();
+
         const [tailwindStyles, databaseStyles] = await Promise.all([
-            readDatabaseAsset(DATABASE_TAILWIND_PATH, WEB_DATABASE_TAILWIND_PATH),
-            readDatabaseAsset(DATABASE_STYLES_PATH, WEB_DATABASE_STYLES_PATH)
+            readDatabaseAsset(WEB_DATABASE_TAILWIND_PATH),
+            readDatabaseAsset(WEB_DATABASE_STYLES_PATH)
         ]);
         return `${tailwindStyles}\n${databaseStyles}`;
     }
@@ -93,20 +112,13 @@
 
         mountPromise = (async () => {
             try {
-                const styles = await readDatabaseStyles();
+                const [styles, runtime] = await Promise.all([readDatabaseStyles(), ensureRuntime()]);
                 injectDatabaseStyles(styles);
-                await ensureRuntime();
-
-                if (isWebRuntime()) {
-                    host.replaceChildren();
-                    await import(getWebDatabaseRuntimeUrl());
-                    host.dataset.databaseMounted = 'true';
-                    return;
-                }
-
                 host.replaceChildren();
-                await import(getDesktopDatabaseRuntimeUrl());
+                databaseModule = runtime;
+                databaseModule.mountDatabaseApp?.(host);
                 host.dataset.databaseMounted = 'true';
+                restoreDatabaseScroll(host);
             } catch (error) {
                 console.error('数据库页面挂载失败:', error);
                 setDatabaseState(`数据库加载失败<br>${error.message || error}`, 'database-error');
@@ -119,4 +131,26 @@
     }
 
     window.mountDatabaseView = mountDatabaseView;
+    function releaseInactiveDatabaseView() {
+        const host = getDatabaseHost();
+        const view = document.getElementById('view-database');
+        if (!host || !view || view.style.display !== 'none' || mountPromise
+            || host.dataset.databaseMounted !== 'true' || !databaseModule?.unmountDatabaseApp) return false;
+        if (host.querySelector('[role="dialog"], .fixed.inset-0')
+            || [...host.querySelectorAll('audio, video')].some(media => !media.paused)) return false;
+        if (!savedScroll.length) captureDatabaseScroll();
+        databaseModule.unmountDatabaseApp();
+        host.replaceChildren();
+        delete host.dataset.databaseMounted;
+        return true;
+    }
+    window.releaseInactiveDatabaseView = releaseInactiveDatabaseView;
+    window.captureDatabaseScroll = captureDatabaseScroll;
+    window.addEventListener('yaya:view-changed', () => {
+        if (releaseTimer) clearTimeout(releaseTimer);
+        releaseTimer = null;
+        if (document.getElementById('view-database')?.style.display === 'none') {
+            releaseTimer = setTimeout(releaseInactiveDatabaseView, 120_000);
+        }
+    });
 })();

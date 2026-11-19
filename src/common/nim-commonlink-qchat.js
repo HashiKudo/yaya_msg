@@ -3,12 +3,11 @@
 const crypto = require('node:crypto');
 const net = require('node:net');
 const zlib = require('node:zlib');
+const { createNimClientIdentity } = require('./nim-client-identity');
+const { normalizeRoomVoiceEvent } = require('./room-voice-event');
+const { createNimSubscriptionQueue } = require('./nim-subscription-queue');
 
 const DEFAULT_LBS_URL = 'https://lbs.netease.im/lbs/conf.jsp';
-const ANDROID_SDK_VERSION = 91701;
-const ANDROID_SDK_HUMAN_VERSION = '9.17.1';
-const ANDROID_USER_AGENT = 'Native/9.17.1.13231';
-const ANDROID_PACKAGE_NAME = 'com.seine48.app';
 const RSA_KEY_VERSION = 0;
 const RSA_PUBLIC_KEY = crypto.createPublicKey({
     key: Buffer.from(
@@ -209,12 +208,14 @@ class CommonlinkSession {
         this.loginCommandId = options.loginCommandId;
         this.onPacket = options.onPacket;
         this.onClose = options.onClose;
+        this.onDiagnostic = options.onDiagnostic;
         this.serial = 2;
         this.pendingRequests = new Map();
         this.connected = false;
     }
 
     async connect() {
+        this.#diagnostic('connect-start', { address: this.address });
         const encryptionKey = crypto.randomBytes(16);
         const handshake = makePacket(1, 1, 0, Buffer.concat([
             littleEndianInt32(RSA_KEY_VERSION),
@@ -223,12 +224,15 @@ class CommonlinkSession {
         this.encryptor = new Rc4Stream(encryptionKey);
         this.decryptor = new Rc4Stream(encryptionKey);
         this.receiveBuffer = Buffer.alloc(0);
+        this.closeError = null;
 
         await new Promise((resolve, reject) => {
             let loginSent = false;
             let settled = false;
             const timer = setTimeout(() => {
                 const error = new Error('云信连接超时');
+                error.code = 'ETIMEDOUT'; error.reason = 'connect-timeout';
+                this.closeError = error;
                 if (!settled) reject(error);
                 this.socket?.destroy();
             }, 20_000);
@@ -236,8 +240,13 @@ class CommonlinkSession {
 
             this.socket = net.createConnection(parseTcpAddress(this.address));
             this.socket.setKeepAlive(true, 15_000);
-            this.socket.setTimeout(45_000, () => this.socket?.destroy(new Error('云信心跳超时')));
-            this.socket.on('connect', () => this.socket.write(handshake));
+            this.socket.setTimeout(45_000, () => {
+                const error = new Error('云信心跳超时');
+                error.code = 'ETIMEDOUT'; error.reason = 'heartbeat-timeout';
+                this.closeError = error;
+                this.socket?.destroy(error);
+            });
+            this.socket.on('connect', () => { this.#diagnostic('tcp-connected', { address: this.address }); this.socket.write(handshake); });
             this.socket.on('data', chunk => {
                 try {
                     this.receiveBuffer = Buffer.concat([this.receiveBuffer, this.decryptor.apply(chunk)]);
@@ -254,6 +263,8 @@ class CommonlinkSession {
                             if (!embedded) continue;
                             response = embedded;
                         }
+                        this.#diagnostic('packet-received', { serviceId: response.serviceId, commandId: response.commandId,
+                            serial: response.serial, resultCode: response.resultCode, bodyBytes: response.body.length });
                         if (response.serviceId === 1 && response.commandId === 1) {
                             if (response.resultCode !== 200) throw protocolError('云信握手失败', response.resultCode);
                             if (!loginSent) {
@@ -284,11 +295,14 @@ class CommonlinkSession {
                         this.onPacket?.(response);
                     }
                 } catch (error) {
+                    this.closeError = error;
                     if (!settled) reject(error);
                     this.socket?.destroy(error);
                 }
             });
             this.socket.on('error', error => {
+                this.closeError = error;
+                this.#diagnostic('socket-error', { error });
                 if (!settled) reject(error);
             });
             this.socket.on('close', () => {
@@ -296,9 +310,12 @@ class CommonlinkSession {
                 clearInterval(this.heartbeatTimer);
                 const wasConnected = this.connected;
                 this.connected = false;
+                this.#diagnostic('socket-closed', { wasConnected, error: this.closeError,
+                    bytesRead: this.socket?.bytesRead, bytesWritten: this.socket?.bytesWritten });
                 this.#rejectPending(errorFromClose());
                 if (!settled) reject(errorFromClose());
-                if (wasConnected) this.onClose?.();
+                if (wasConnected) this.onClose?.({ code: this.closeError?.code,
+                    reason: this.closeError?.reason || (this.closeError ? typeof this.closeError.code === 'string' ? 'network-error' : 'protocol-error' : 'remote-close') });
             });
         });
     }
@@ -308,6 +325,7 @@ class CommonlinkSession {
             return Promise.reject(new Error('云信连接已断开'));
         }
         const serial = this.#nextSerial();
+        this.#diagnostic('packet-sent', { serviceId, commandId, serial, bodyBytes: body.length });
         const packet = makePacket(serviceId, commandId, serial, body);
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
@@ -340,6 +358,10 @@ class CommonlinkSession {
         return value;
     }
 
+    #diagnostic(phase, details) {
+        try { this.onDiagnostic?.({ phase, ...details }); } catch {}
+    }
+
     #startHeartbeat() {
         clearInterval(this.heartbeatTimer);
         this.heartbeatTimer = setInterval(() => {
@@ -362,36 +384,37 @@ function errorFromClose() {
     return new Error('云信连接已关闭');
 }
 
-function makeNimLoginPacket(appKey, account, token, deviceId) {
-    return makePacket(2, 2, 1, encodeProperties({
+function buildNimLoginProperties(appKey, account, token, identity) {
+    return {
         3: 1,
         4: '8.0.0',
-        6: ANDROID_SDK_VERSION,
+        6: identity.sdkVersion,
         8: 1,
         9: 1,
-        13: deviceId,
+        13: identity.deviceId,
         18: appKey,
         19: account,
-        25: ANDROID_PACKAGE_NAME,
-        40: ANDROID_SDK_HUMAN_VERSION,
-        42: ANDROID_USER_AGENT,
+        25: identity.packageName,
+        40: identity.sdkHumanVersion,
+        42: identity.userAgent,
         1000: token
-    }));
+    };
 }
 
-function makeQChatLoginPacket(appKey, account, token, deviceId) {
-    return makePacket(24, 2, 1, encodeProperties({
+function buildQChatLoginProperties(appKey, account, token, identity) {
+    return {
         1: appKey,
         2: account,
         3: 0,
         4: token,
         6: 1,
-        8: deviceId,
-        9: ANDROID_SDK_VERSION,
+        8: identity.deviceId,
+        9: identity.sdkVersion,
         10: 1,
-        11: ANDROID_USER_AGENT,
-        14: ANDROID_SDK_HUMAN_VERSION
-    }));
+        11: identity.userAgent,
+        14: identity.sdkHumanVersion,
+        32: identity.packageName
+    };
 }
 
 function buildQChatMessageProperties(options) {
@@ -443,6 +466,28 @@ function buildQChatSubscriptionBody(serverId, channelId, visitor = true, subscri
         encodeProperties({ 1: String(serverId), 2: String(channelId) })]);
 }
 
+function buildQChatServerSubscriptionBody(serverId, visitor = false, subscribe = true) {
+    if (!/^\d{1,32}$/.test(String(serverId || ''))) throw new Error('缺少有效的云信圈组 ID');
+    return Buffer.concat([encodeProperties({ 1: visitor ? 7 : 4, 2: subscribe ? 1 : 2 }),
+        encodeVarint(1), encodeProperties({ 1: String(serverId) })]);
+}
+
+function decodeVoiceEvents(response) {
+    if (response.serviceId !== 24 || !response.body.length) return [];
+    if (response.commandId === 11) {
+        const event = normalizeRoomVoiceEvent(normalizeIncomingMessage(response.body));
+        return event ? [event] : [];
+    }
+    if (![14, 24].includes(response.commandId)) return [];
+    const properties = response.commandId === 14 ? [decodeProperties(response.body)] : readPropertyList(response.body).values;
+    return properties.flatMap(p => {
+        if (Number(p.get(11)) !== 100) return [];
+        const event = normalizeRoomVoiceEvent({ serverId: p.get(2), channelId: p.get(3),
+            attach: p.get(15), time: p.get(9), msgIdServer: p.get(13), msgIdClient: p.get(12) }, true);
+        return event ? [event] : [];
+    });
+}
+
 function readPropertyList(buffer, offset = 0) {
     const count = readVarint(buffer, offset);
     if (!count || count.value > 10000) throw new Error('云信订阅响应无效');
@@ -471,11 +516,17 @@ class NimCommonlinkQChatClient {
         this.appKey = String(options.appKey || '').trim();
         this.account = String(options.account || '').trim();
         this.token = String(options.token || '').trim();
+        this.identity = createNimClientIdentity(options);
         this.lbsUrl = String(options.lbsUrl || DEFAULT_LBS_URL);
         this.fetchImpl = options.fetchImpl || globalThis.fetch;
         this.onConnected = options.onConnected;
         this.onDisconnected = options.onDisconnected;
         this.onMessage = options.onMessage;
+        this.onCustomNotification = options.onCustomNotification;
+        this.onDiagnostic = options.onDiagnostic;
+        this.onVoiceEvent = options.onVoiceEvent;
+        this.subscriptionTiming = options.subscriptionTiming;
+        this.subscriptionQueue = createNimSubscriptionQueue(this.subscriptionTiming);
         this.onError = options.onError;
         this.serverId = String(options.serverId || '');
         this.channelId = String(options.channelId || '');
@@ -487,15 +538,24 @@ class NimCommonlinkQChatClient {
         if (!this.appKey || !this.account || !this.token) throw new Error('缺少云信 AppKey、账号或令牌');
         if (typeof this.fetchImpl !== 'function') throw new Error('当前 Node.js 环境不支持云信地址请求');
         this.destroyed = false;
+        if (this.subscriptionQueue.closed) this.subscriptionQueue = createNimSubscriptionQueue(this.subscriptionTiming);
         const address = await this.#requestNimAddress();
         if (this.destroyed) throw new Error('成员房间连接已取消');
-        const nimDeviceId = crypto.randomUUID();
         this.nimSession = new CommonlinkSession({
             address,
-            loginPacket: makeNimLoginPacket(this.appKey, this.account, this.token, nimDeviceId),
+            loginPacket: makePacket(2, 2, 1, encodeProperties(buildNimLoginProperties(this.appKey, this.account, this.token, this.identity))),
             loginServiceId: 2,
             loginCommandId: 2,
-            onClose: () => this.#handleClose('NIM')
+            onClose: details => this.#handleClose('NIM', details),
+            onDiagnostic: details => this.onDiagnostic?.({ transport: 'NIM', ...details }),
+            onPacket: response => {
+                try {
+                    const notification = decodeNimCustomNotification(response);
+                    if (notification) this.onCustomNotification?.(notification);
+                } catch (error) {
+                    this.#reportError(error);
+                }
+            }
         });
         await this.nimSession.connect();
         if (this.destroyed) throw new Error('成员房间连接已取消');
@@ -509,17 +569,19 @@ class NimCommonlinkQChatClient {
         if (this.destroyed) throw new Error('成员房间连接已取消');
         if (!qchatAddresses.length) throw new Error('云信没有返回 QChat 连接地址');
 
-        const qchatDeviceId = crypto.randomUUID();
         this.qchatSession = new CommonlinkSession({
             address: qchatAddresses[0],
-            loginPacket: makeQChatLoginPacket(this.appKey, this.account, this.token, qchatDeviceId),
+            loginPacket: makePacket(24, 2, 1, encodeProperties(buildQChatLoginProperties(this.appKey, this.account, this.token, this.identity))),
             loginServiceId: 24,
             loginCommandId: 2,
-            onClose: () => this.#handleClose('QChat'),
+            onClose: details => this.#handleClose('QChat', details),
+            onDiagnostic: details => this.onDiagnostic?.({ transport: 'QChat', ...details }),
             onPacket: response => {
-                if (response.serviceId !== 24 || response.commandId !== 11 || !response.body.length) return;
                 try {
-                    this.onMessage?.(normalizeIncomingMessage(response.body));
+                    for (const event of decodeVoiceEvents(response)) this.onVoiceEvent?.(event);
+                    if (response.serviceId === 24 && response.commandId === 11 && response.body.length) {
+                        this.onMessage?.(normalizeIncomingMessage(response.body));
+                    }
                 } catch (error) {
                     this.#reportError(error);
                 }
@@ -527,6 +589,7 @@ class NimCommonlinkQChatClient {
         });
         await this.qchatSession.connect();
         if (this.destroyed) throw new Error('成员房间连接已取消');
+        if (!this.nimSession?.connected || !this.qchatSession?.connected) throw protocolError('云信连接在登录期间已断开', 'ECONNRESET');
         if (this.serverId && this.channelId) await this.subscribeChannel(this.serverId, this.channelId);
         if (this.destroyed) throw new Error('成员房间连接已取消');
         this.connected = true;
@@ -535,7 +598,7 @@ class NimCommonlinkQChatClient {
 
     async subscribeChannel(serverId, channelId) {
         const subscribe = async visitor => {
-            const response = await this.qchatSession.request(visitor ? 25 : 24, visitor ? 9 : 15,
+            const response = await this.#subscriptionRequest(visitor ? 25 : 24, visitor ? 9 : 15,
                 buildQChatSubscriptionBody(serverId, channelId, visitor), '订阅成员房间实时消息失败');
             const list = readPropertyList(response.body);
             const failed = visitor ? list.values : (list.offset < response.body.length ? readPropertyList(response.body, list.offset).values : []);
@@ -549,8 +612,26 @@ class NimCommonlinkQChatClient {
         }
     }
 
+    async subscribeVoiceServer(serverId) {
+        const subscribe = async visitor => {
+            const response = await this.#subscriptionRequest(visitor ? 25 : 24, visitor ? 9 : 15,
+                buildQChatServerSubscriptionBody(serverId, visitor), '订阅圈组语聊通知失败');
+            const list = readPropertyList(response.body);
+            const failed = visitor ? list.values : (list.offset < response.body.length ? readPropertyList(response.body, list.offset).values : []);
+            if (failed.some(item => item.get(1) === String(serverId))) throw protocolError('订阅圈组语聊通知被拒绝', 403);
+            return { visitor };
+        };
+        try { return await subscribe(false); }
+        catch (error) { if (![403, 404].includes(Number(error.code))) throw error; return subscribe(true); }
+    }
+
+    async unsubscribeVoiceServer(serverId, visitor) {
+        await this.#subscriptionRequest(visitor ? 25 : 24, visitor ? 9 : 15,
+            buildQChatServerSubscriptionBody(serverId, visitor, false), '取消圈组语聊订阅失败');
+    }
+
     async unsubscribeChannel(serverId, channelId, visitor = true) {
-        const response = await this.qchatSession.request(visitor ? 25 : 24, visitor ? 9 : 15,
+        const response = await this.#subscriptionRequest(visitor ? 25 : 24, visitor ? 9 : 15,
             buildQChatSubscriptionBody(serverId, channelId, visitor, false), '取消成员房间订阅失败');
         const list = readPropertyList(response.body);
         const failed = visitor ? list.values : (list.offset < response.body.length ? readPropertyList(response.body, list.offset).values : []);
@@ -579,6 +660,7 @@ class NimCommonlinkQChatClient {
 
     destroy() {
         this.destroyed = true;
+        this.subscriptionQueue.close();
         this.connected = false;
         this.qchatSession?.destroy();
         this.nimSession?.destroy();
@@ -586,12 +668,16 @@ class NimCommonlinkQChatClient {
         this.nimSession = null;
     }
 
+    #subscriptionRequest(...args) {
+        return this.subscriptionQueue.request(() => this.qchatSession.request(...args));
+    }
+
     async #requestNimAddress() {
         const url = new URL(this.lbsUrl);
         url.search = new URLSearchParams({
             k: this.appKey,
             id: this.account,
-            v: String(ANDROID_SDK_VERSION),
+            v: String(this.identity.sdkVersion),
             tp: '1',
             dt: '0'
         }).toString();
@@ -603,11 +689,11 @@ class NimCommonlinkQChatClient {
         return addresses[0];
     }
 
-    #handleClose(source) {
+    #handleClose(source, details) {
         if (this.destroyed) return;
         const wasConnected = this.connected;
         this.connected = false;
-        if (wasConnected) this.onDisconnected?.({ source });
+        if (wasConnected) this.onDisconnected?.({ ...details, source });
     }
 
     #reportError(error) {
@@ -622,10 +708,24 @@ function createNimCommonlinkQChatClient(options) {
     return new NimCommonlinkQChatClient(options);
 }
 
+function decodeNimCustomNotification(response) {
+    if (response.serviceId !== 7 || response.commandId !== 3) return null;
+    const properties = decodeProperties(response.body);
+    if (![100, 101, 103].includes(Number(properties.get(1)))) return null;
+    const content = properties.get(5);
+    if (!content) return null;
+    return { content, from: properties.get(3) || '', to: properties.get(2) || '', idServer: properties.get(6) || '' };
+}
+
 module.exports = {
     NimCommonlinkQChatClient,
+    buildNimLoginProperties,
+    buildQChatLoginProperties,
     buildQChatMessageProperties,
     buildQChatSubscriptionBody,
+    buildQChatServerSubscriptionBody,
+    decodeVoiceEvents,
+    decodeNimCustomNotification,
     createNimCommonlinkQChatClient,
     decodeProperties,
     encodeProperties
