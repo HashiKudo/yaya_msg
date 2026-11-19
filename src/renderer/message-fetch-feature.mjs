@@ -1505,9 +1505,15 @@ export function createMessageFetchFeature({
                                 const rText = info.replyText || '';
                                 txt = '';
 
+                                const safeVoiceUrl = window.YayaRendererUtils.escapeHtml(voiceUrl);
+                                const safeAudioFilename = window.YayaRendererUtils.escapeHtml(`AUDIO_REPLY_${m.msgTime || Date.now()}.mp3`);
                                 extraHtml = `
-    <div style="margin-bottom:8px;">
-        <audio controls src="${voiceUrl}" style="height:30px; max-width: 100%;"></audio>
+    <div style="margin-bottom:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <audio controls src="${safeVoiceUrl}" style="height:30px; max-width: 100%;"></audio>
+        <button type="button" class="btn btn-secondary media-inline-dl-btn" title="下载语音" aria-label="下载语音"
+            onclick="event.stopPropagation(); window.downloadMediaFileIconMode?.('${safeVoiceUrl}', '${safeAudioFilename}', this, this.innerHTML, 'media')">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        </button>
     </div>
     <div style="padding: 4px; color: #666; background: rgba(0,0,0,0.03); border-radius: 4px;">
         ${rName}: ${rText}

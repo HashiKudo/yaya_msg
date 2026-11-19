@@ -33,7 +33,8 @@ function normalizeRoomContext(payload = {}) {
         memberId: id(payload.memberId),
         avatarUrl: /^https?:\/\//i.test(String(payload.avatarUrl || ''))
             ? String(payload.avatarUrl).slice(0, 2048) : '',
-        allMessages: payload.allMessages === true
+        allMessages: payload.allMessages === true,
+        compact: payload.compact === true
     };
     if (!context.channelId || !context.serverId || !context.mainChannelId) {
         throw new Error('房间信息不完整，请重新打开房间后重试');
@@ -108,16 +109,18 @@ async function openDetachedWindow(context, key, { position } = {}) {
     try {
         if (settingsService.readSettings().theme === 'dark') backgroundColor = '#141a22';
     } catch (_) {                                                         }
+    const isCompact = !isLive && context.compact === true;
+    const defaultWidth = isLive ? 400 : isCompact ? 440 : 900;
+    const defaultHeight = isLive ? 800 : isCompact ? 720 : 760;
     const placement = {};
     if (position) {
         const area = screen.getDisplayNearestPoint(position).workArea;
-        const width = Math.min(900, area.width);
-        const height = Math.min(760, area.height);
+        const width = Math.min(defaultWidth, area.width);
+        const height = Math.min(defaultHeight, area.height);
         Object.assign(placement, {
             width,
             height,
-            minWidth: Math.min(isLive ? 320 : 640, width),
-            minHeight: Math.min(520, height),
+            minHeight: Math.min(360, height),
             x: Math.max(area.x, Math.min(position.x - 200, area.x + area.width - width)),
             y: Math.max(area.y, Math.min(position.y - 16, area.y + area.height - height))
         });
@@ -126,10 +129,9 @@ async function openDetachedWindow(context, key, { position } = {}) {
         show: false,
         backgroundColor,
         title: context.ownerName ? `${context.ownerName} - 牙牙消息` : '牙牙消息',
-        width: isLive ? 400 : 900,
-        height: isLive ? 800 : 760,
-        minWidth: isLive ? 320 : 640,
-        minHeight: 520,
+        width: defaultWidth,
+        height: defaultHeight,
+        minHeight: 360,
         ...placement,
         frame: isMac,
         titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
@@ -205,11 +207,29 @@ function getRoomWindowContext(sender) {
     return context ? { ...context } : null;
 }
 
+function toggleWindowAlwaysOnTop(sender) {
+    if (!isTrustedDesktopSender(sender)) return false;
+    const window = BrowserWindow.fromWebContents(sender);
+    if (!window || window.isDestroyed()) return false;
+    const nextState = !window.isAlwaysOnTop();
+    window.setAlwaysOnTop(nextState);
+    return nextState;
+}
+
+function isWindowAlwaysOnTop(sender) {
+    if (!isTrustedDesktopSender(sender)) return false;
+    const window = BrowserWindow.fromWebContents(sender);
+    if (!window || window.isDestroyed()) return false;
+    return window.isAlwaysOnTop();
+}
+
 module.exports = {
     openRoomWindow,
     openLiveWindow,
     openRoomWindowFromDrag,
     getRoomWindowContext,
+    toggleWindowAlwaysOnTop,
+    isWindowAlwaysOnTop,
     closeAllRoomWindows,
     isTrustedDesktopSender
 };

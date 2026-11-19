@@ -14,6 +14,59 @@ const artifactArg = '-c.artifactName=yaya_msg-' + versionLabel + '-${os}.${ext}'
 const DEFAULT_ELECTRON_MIRROR = 'https://npmmirror.com/mirrors/electron/';
 const DEFAULT_ELECTRON_BUILDER_BINARIES_MIRROR = 'https://github.com/electron-userland/electron-builder-binaries/releases/download/';
 
+function isWindowsBuild(args) {
+    const hasPlatformFlag = args.some((arg) => {
+        const normalized = String(arg).toLowerCase();
+        return normalized === '--win'
+            || normalized === '--windows'
+            || normalized === '-w'
+            || normalized.startsWith('--win=')
+            || normalized.startsWith('--windows=')
+            || normalized === '--mac'
+            || normalized === '--macos'
+            || normalized === '-m'
+            || normalized.startsWith('--mac=')
+            || normalized === '--linux'
+            || normalized === '-l'
+            || normalized.startsWith('--linux=');
+    });
+    if (!hasPlatformFlag) {
+        return process.platform === 'win32';
+    }
+    return args.some((arg) => {
+        const normalized = String(arg).toLowerCase();
+        return normalized === '--win'
+            || normalized === '--windows'
+            || normalized === '-w'
+            || normalized.startsWith('--win=')
+            || normalized.startsWith('--windows=');
+    });
+}
+
+function hasExplicitArchitecture(args) {
+    return args.some((arg) => {
+        const normalized = String(arg).toLowerCase();
+        return normalized === '--x64'
+            || normalized === '--ia32'
+            || normalized === '--arm64'
+            || normalized === '--universal'
+            || normalized === '--arch'
+            || normalized.startsWith('--arch=')
+            || /:(x64|ia32|arm64)$/.test(normalized);
+    });
+}
+
+function withDefaultWindowsArchitecture(args) {
+    if (!isWindowsBuild(args) || hasExplicitArchitecture(args)) {
+        return args;
+    }
+
+    console.log('[run-builder] No Windows architecture specified; defaulting to x64.');
+    return [...args, '--x64'];
+}
+
+const normalizedUserArgs = withDefaultWindowsArchitecture(userArgs);
+
 const builderEnv = {
     ...process.env,
     ELECTRON_MIRROR: process.env.ELECTRON_MIRROR || DEFAULT_ELECTRON_MIRROR,
@@ -26,7 +79,7 @@ console.log(`[run-builder] ELECTRON_BUILDER_BINARIES_MIRROR=${builderEnv.ELECTRO
 
 const result = spawnSync(
     process.execPath,
-    [cliPath, artifactArg, ...userArgs],
+    [cliPath, artifactArg, ...normalizedUserArgs],
     {
         cwd: projectRoot,
         stdio: 'inherit',

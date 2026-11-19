@@ -223,13 +223,13 @@
         }
 
         function reconnectMemberRoomFromComposer() {
+            if (!memberRoomConnected) return;
             const webSessionNeedsRefresh = window.desktop?.platform === 'web'
-                && memberRoomConnected
                 && memberRoomConnectedAt > 0
                 && Date.now() - memberRoomConnectedAt >= WEB_MEMBER_ROOM_RECONNECT_AFTER_MS;
-            if ((memberRoomConnected && !webSessionNeedsRefresh) || memberRoomComposerReconnectPromise) return;
+            if (!webSessionNeedsRefresh || memberRoomComposerReconnectPromise) return;
             if (!activeFollowedServer || !activeFollowedChannel) return;
-            if (webSessionNeedsRefresh) memberRoomConnected = false;
+            memberRoomConnected = false;
             memberRoomComposerReconnectPromise = Promise.resolve()
                 .then(() => ensureMemberRoomConnection())
                 .catch(error => {
@@ -245,6 +245,7 @@
                 form: document.getElementById('followed-room-composer'),
                 input: document.getElementById('followed-room-message-input'),
                 button: document.getElementById('followed-room-message-send'),
+                toggleBtn: document.getElementById('followed-room-connect-toggle'),
                 replyPreview: document.getElementById('followed-room-reply-preview'),
                 replyName: document.getElementById('followed-room-reply-name'),
                 replyText: document.getElementById('followed-room-reply-text')
@@ -255,22 +256,42 @@
             const elements = getMemberRoomComposerElements();
             if (!elements.form) return;
             elements.form.dataset.state = state;
-            const connectedMessage = '已连接';
+            const isConnected = state === 'connected';
+            const isConnecting = state === 'connecting';
+            const connectedMessage = '已连接，可输入消息';
             if (elements.input) {
-                let inlineMessage = message || (state === 'connected'
+                let inlineMessage = message || (isConnected
                     ? connectedMessage
-                    : (state === 'connecting' ? '正在连接成员房间' : '未连接'));
-                if (state === 'connected' && message === '正在发送') {
+                    : (isConnecting ? '正在连接成员房间' : '未连接发言'));
+                if (isConnected && message === '正在发送') {
                     inlineMessage = '正在发送';
-                } else if (state === 'connected' && message === '已发送') {
+                } else if (isConnected && message === '已发送') {
                     inlineMessage = '已发送';
                 }
                 elements.input.placeholder = inlineMessage;
                 elements.input.setAttribute('aria-label', inlineMessage);
+                elements.input.readOnly = !isConnected;
             }
             if (elements.button) {
-                elements.button.disabled = state !== 'connected' || memberRoomComposerSending;
+                elements.button.disabled = !isConnected || memberRoomComposerSending;
                 elements.button.textContent = memberRoomComposerSending ? '发送中' : '发送';
+                elements.button.style.display = isConnected ? '' : 'none';
+            }
+            if (elements.toggleBtn) {
+                elements.toggleBtn.disabled = isConnecting || memberRoomComposerSending;
+                if (isConnected) {
+                    elements.toggleBtn.textContent = '断开发言';
+                    elements.toggleBtn.className = 'btn btn-secondary followed-room-connect-btn followed-room-disconnect-active';
+                    elements.toggleBtn.title = '断开房间长连接';
+                } else if (isConnecting) {
+                    elements.toggleBtn.textContent = '连接中...';
+                    elements.toggleBtn.className = 'btn btn-secondary followed-room-connect-btn';
+                    elements.toggleBtn.title = '正在连接云信...';
+                } else {
+                    elements.toggleBtn.textContent = '连接发言';
+                    elements.toggleBtn.className = 'btn btn-secondary followed-room-connect-btn';
+                    elements.toggleBtn.title = '连接房间发言';
+                }
             }
         }
 
@@ -298,10 +319,12 @@
                     <div class="followed-room-message-field">
                         <textarea id="followed-room-message-input" class="followed-room-message-input"
                             rows="2" autocomplete="off"
-                            placeholder="正在连接成员房间"></textarea>
+                            placeholder="未连接发言" readonly></textarea>
                     </div>
+                    <button id="followed-room-connect-toggle" class="btn btn-secondary followed-room-connect-btn"
+                        type="button">连接发言</button>
                     <button id="followed-room-message-send" class="btn btn-primary followed-room-message-send"
-                        type="submit" disabled>发送</button>
+                        type="submit" disabled style="display: none;">发送</button>
                 </div>`;
             composerHost.appendChild(form);
             memberRoomGifts?.mount(form);
@@ -310,6 +333,18 @@
                 void sendActiveMemberRoomMessage();
             });
             const input = form.querySelector('.followed-room-message-input');
+            const toggleBtn = form.querySelector('#followed-room-connect-toggle');
+            toggleBtn?.addEventListener('click', () => {
+                if (memberRoomConnected) {
+                    void destroyMemberRoomConnections();
+                    setMemberRoomComposerState('disconnected', '已断开发言连接');
+                    showToast('已断开房间连接');
+                    return;
+                }
+                ensureMemberRoomConnection().catch(error => {
+                    showToast(formatMemberRoomError(error, '连接失败'));
+                });
+            });
             input?.addEventListener('keydown', event => {
                 if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
                 if (event.ctrlKey || event.metaKey) {
@@ -324,6 +359,11 @@
                 event.preventDefault();
                 if (!event.repeat && !form.querySelector('#followed-room-message-send')?.disabled) {
                     form.requestSubmit();
+                }
+            });
+            input?.addEventListener('click', () => {
+                if (!memberRoomConnected) {
+                    showToast('当前处于浏览只读模式。如需发消息，请点击右侧“连接发言”');
                 }
             });
             input?.addEventListener('pointerdown', reconnectMemberRoomFromComposer);
@@ -349,7 +389,11 @@
         function setMemberRoomReply(target) {
             memberRoomReplyTarget = target;
             renderMemberRoomReplyTarget();
-            getMemberRoomComposerElements().input?.focus();
+            if (!memberRoomConnected) {
+                showToast('已选定回复目标。请先点击“连接发言”开启连接后再发送');
+            } else {
+                getMemberRoomComposerElements().input?.focus();
+            }
         }
 
         function closeMemberRoomContextMenu() {
@@ -624,7 +668,14 @@
             if (memberRoomConnectPromise
                 && memberRoomTargetServer === serverId
                 && memberRoomTargetChannel === channelId) return memberRoomConnectPromise;
-            if (memberRoomConnectionId || memberRoomConnectPromise) {
+            const keepSession = isDesktopRoom && memberRoomConnected && Boolean(memberRoomConnectionId);
+            if (keepSession) {
+                memberRoomConnected = false;
+                memberRoomConnectedAt = 0;
+                memberRoomConnectPromise = null;
+                clearMemberRoomReply();
+                closeMemberRoomContextMenu();
+            } else if (memberRoomConnectionId || memberRoomConnectPromise) {
                 await destroyMemberRoomConnections();
             }
 
@@ -721,12 +772,24 @@
                 setMemberRoomComposerState('error', '当前房间缺少发送目标');
                 return;
             }
-            const requestRevision = followedChatRequestRevision;
-            void ensureMemberRoomConnection().catch(error => {
-                if (requestRevision !== followedChatRequestRevision) return;
-                console.warn('[成员房间] QChat 连接失败:', formatMemberRoomError(error));
-                scheduleMemberRoomReconnect();
-            });
+            // 默认不自动连接发言，需用户手动点击“连接发言”后连接
+            const serverId = String(activeFollowedServer || '');
+            const channelId = String(activeFollowedChannel || '');
+            const sameTarget = memberRoomTargetServer === serverId && memberRoomTargetChannel === channelId;
+            if (sameTarget && memberRoomConnected) {
+                setMemberRoomComposerState('connected', '已连接');
+            } else if (sameTarget && memberRoomConnectPromise) {
+                setMemberRoomComposerState('connecting', '正在连接成员房间');
+            } else if (isDesktopRoom && memberRoomConnected && memberRoomConnectionId) {
+                const requestRevision = followedChatRequestRevision;
+                void ensureMemberRoomConnection().catch(error => {
+                    if (requestRevision !== followedChatRequestRevision) return;
+                    console.warn('[成员房间] 切换房间连接失败:', formatMemberRoomError(error));
+                });
+            } else {
+                if (memberRoomConnectionId || memberRoomConnectPromise) void destroyMemberRoomConnections();
+                setMemberRoomComposerState('disconnected');
+            }
         }
 
         function hideMemberRoomComposer() {
@@ -812,12 +875,13 @@
             }
             memberRoomConnected = false;
             memberRoomConnectedAt = 0;
+            clearTimeout(memberRoomReconnectTimer);
+            memberRoomReconnectTimer = null;
             setMemberRoomComposerState('disconnected', payload.message || '成员房间连接已断开');
             if (supportsMemberRoomRealtime) {
                 memberRoomNeedsCatchup = true;
                 scheduleFollowedRoomPoll?.();
                 scheduleMemberRoomFallback(100);
-                scheduleMemberRoomReconnect();
             }
         });
 
@@ -1028,6 +1092,9 @@
                     });
                     text.appendChild(imageButton);
                 } else if (item.videoUrl) {
+                    const videoBox = document.createElement('div');
+                    videoBox.className = 'media-download-host';
+                    videoBox.style.cssText = 'position: relative; display: inline-block; max-width: 100%;';
                     const video = document.createElement('video');
                     video.className = 'followed-room-essence-detail-video';
                     video.src = item.videoUrl;
@@ -1042,7 +1109,12 @@
                         failure.textContent = '视频加载失败';
                         text.appendChild(failure);
                     }, { once: true });
-                    text.appendChild(video);
+                    videoBox.appendChild(video);
+                    window.attachMediaDownloadOverlay?.(videoBox, item.videoUrl, 'video', {
+                        filename: `ESSENCE_VIDEO_${item.id || Date.now()}_${activeFollowedName || item.sender || '口袋房间'}.mp4`,
+                        subFolder: activeFollowedName || ''
+                    });
+                    text.appendChild(videoBox);
                 } else {
                     text.textContent = item.text;
                 }
@@ -1517,7 +1589,13 @@
 
             const slot = modal.querySelector('.followed-profile-video-slot');
             if (!slot) return;
-            slot.innerHTML = `<video class="followed-profile-video-player" src="${escapeFollowedHtml(safeUrl)}" controls autoplay playsinline></video>`;
+            slot.innerHTML = `<div class="media-download-host" style="position: relative; display: inline-flex; max-width: 100%; max-height: 100%;"><video class="followed-profile-video-player" src="${escapeFollowedHtml(safeUrl)}" controls autoplay playsinline></video></div>`;
+            const host = slot.querySelector('.media-download-host');
+            const profileName = followedUserProfileCurrentEntry?.name || activeFollowedName || '口袋动态';
+            window.attachMediaDownloadOverlay?.(host, safeUrl, 'video', {
+                filename: `PROFILE_VIDEO_${Date.now()}_${profileName}.mp4`,
+                subFolder: profileName
+            });
             modal.style.display = 'flex';
         }
 
@@ -3707,11 +3785,13 @@
             const hydrate = el => {
                 const type = el.getAttribute('data-type');
                 const src = el.getAttribute('data-src');
+                const filename = el.getAttribute('data-filename') || '';
+                const subFolder = activeFollowedName || '';
                 if (src) {
                     if (type === 'audio' && typeof createCustomAudioPlayer === 'function') {
-                        el.appendChild(createCustomAudioPlayer(src));
+                        el.appendChild(createCustomAudioPlayer(src, 0, { filename, subFolder }));
                     } else if (type === 'video' && typeof createCustomVideoPlayer === 'function') {
-                        el.appendChild(createCustomVideoPlayer(src));
+                        el.appendChild(createCustomVideoPlayer(src, { filename, subFolder }));
                     }
                 }
                 el.classList.remove('preview-media-placeholder');
@@ -4515,10 +4595,12 @@
                                    </blockquote>`;
                         } else if (msgType === 'AUDIO') {
                             let mediaUrl = json.url.startsWith('http') ? json.url : `https://mp4.48.cn${json.url.startsWith('/') ? '' : '/'}${json.url}`;
-                        txt = `<div class="mb-2 preview-media-placeholder" data-type="audio" data-src="${escapeFollowedHtml(mediaUrl)}"></div>`;
+                            const dlFilename = `AUDIO_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.mp3`;
+                            txt = `<div class="mb-2 preview-media-placeholder" data-type="audio" data-src="${escapeFollowedHtml(mediaUrl)}" data-filename="${escapeFollowedHtml(dlFilename)}"></div>`;
                         } else if (msgType === 'VIDEO') {
                             let mediaUrl = json.url.startsWith('http') ? json.url : `https://mp4.48.cn${json.url.startsWith('/') ? '' : '/'}${json.url}`;
-                        txt = `<div class="mb-2 preview-media-placeholder" data-type="video" data-src="${escapeFollowedHtml(mediaUrl)}"></div>`;
+                            const dlFilename = `VIDEO_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.mp4`;
+                            txt = `<div class="mb-2 preview-media-placeholder" data-type="video" data-src="${escapeFollowedHtml(mediaUrl)}" data-filename="${escapeFollowedHtml(dlFilename)}"></div>`;
                         } else if (['GIFT_TEXT', 'CHANNEL_PRESENT_TEXT', 'PRESENT_TEXT'].includes(jsonType)
                             || ['GIFT_TEXT', 'CHANNEL_PRESENT_TEXT', 'PRESENT_TEXT'].includes(msgType)) {
                             const info = json.giftInfo || json;
@@ -4546,7 +4628,8 @@
                                     if (ansObj && ansObj.url) {
                                         let mediaUrl = ansObj.url.startsWith('http') ? ansObj.url : `https://mp4.48.cn${ansObj.url.startsWith('/') ? '' : '/'}${ansObj.url}`;
                                         const mType = (msgType.includes('AUDIO') || jsonType.includes('AUDIO')) ? 'audio' : 'video';
-                                        ansHtml = `<div class="preview-media-placeholder" data-type="${mType}" data-src="${mediaUrl}"></div>`;
+                                        const dlFilename = `FLIP_${mType.toUpperCase()}_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.${mType === 'audio' ? 'mp3' : 'mp4'}`;
+                                        ansHtml = `<div class="preview-media-placeholder" data-type="${mType}" data-src="${mediaUrl}" data-filename="${escapeFollowedHtml(dlFilename)}"></div>`;
                                     }
                                 } catch (e) { window.YayaRendererUtils.reportIgnoredError(e, 'src/renderer/followed-chat-feature.js'); }
                             }
@@ -4658,7 +4741,8 @@
                             const rName = safeStr(info.replyName || '未知用户');
                             const rText = safeStr(info.replyText || '');
                             txt = '';
-                            extraHtml = `<div class="preview-media-placeholder" data-type="audio" data-src="${voiceUrl}" style="margin: 0 0 12px 0;"></div>
+                            const dlFilename = `AUDIO_REPLY_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.mp3`;
+                            extraHtml = `<div class="preview-media-placeholder" data-type="audio" data-src="${voiceUrl}" data-filename="${escapeFollowedHtml(dlFilename)}" style="margin: 0 0 12px 0;"></div>
                                     <div style="background: var(--blockquote-bg); padding: 8px 12px; border-radius: 6px; border-left: 3px solid var(--border); margin: 0 0 8px 0; color: var(--text-sub); font-size: 13px; line-height: 1.5;">
                                         ${rName}：${rText}
                                     </div>`;

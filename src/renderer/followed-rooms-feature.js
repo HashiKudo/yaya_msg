@@ -32,6 +32,7 @@
         let followedRoomsLastRenderHtml = '';
         const boundRoomCards = new WeakSet();
         const boundRadioButtons = new WeakSet();
+        const boundPopoutButtons = new WeakSet();
         const boundDragCards = new WeakSet();
         let radioListRefreshFrame = null;
         let followedRoomContextMenu = null;
@@ -1783,6 +1784,13 @@
                     </div>
                     <div style="display: flex; align-items: center; flex-shrink: 0; margin-left: 10px;">
                         ${teamHtml}
+                        ${!isWebRuntime() ? `<button class="session-card-popout-btn" type="button" title="独立小窗口打开" aria-label="独立小窗口打开" draggable="false">
+                            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                <polyline points="15 3 21 3 21 9"></polyline>
+                                <line x1="10" y1="14" x2="21" y2="3"></line>
+                            </svg>
+                        </button>` : ''}
                     </div>
                 </div>
                 <div class="session-msg" style="font-size: 12px; color: var(--text-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
@@ -1866,6 +1874,20 @@
                         );
                     }
                 });
+                button.addEventListener('mousedown', event => event.stopPropagation());
+            });
+            container.querySelectorAll('.session-card-popout-btn').forEach(button => {
+                if (boundPopoutButtons.has(button)) return;
+                boundPopoutButtons.add(button);
+                button.addEventListener('click', event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const card = button.closest('.session-card');
+                    if (card) {
+                        window.openFollowedRoomWindow?.({ ...followedRoomWindowPayload(card), compact: true });
+                    }
+                });
+                button.addEventListener('pointerdown', event => event.stopPropagation());
                 button.addEventListener('mousedown', event => event.stopPropagation());
             });
 
@@ -2137,6 +2159,7 @@
             ].join(';');
 
             menu.innerHTML = `
+                ${!isWebRuntime() ? '<button type="button" data-action="popout-window" class="yaya-context-menu-item">独立小窗口打开</button>' : ''}
                 ${!isWebRuntime() ? '<button type="button" data-action="open-window" class="yaya-context-menu-item">独立窗口显示</button>' : ''}
                 <button type="button" data-action="notify" class="yaya-context-menu-item">开启通知</button>
                 <button type="button" data-action="pin" class="yaya-context-menu-item">置顶</button>
@@ -2153,7 +2176,9 @@
                     const target = followedRoomContextTarget;
                     hideFollowedRoomContextMenu();
                     if (!target) return;
-                    if (action === 'open-window') {
+                    if (action === 'popout-window') {
+                        window.openFollowedRoomWindow?.({ ...followedRoomWindowPayload(target), compact: true });
+                    } else if (action === 'open-window') {
                         window.openFollowedRoomWindow?.(followedRoomWindowPayload(target));
                     } else if (action === 'notify') {
                         toggleFollowedRoomNotification(target);
@@ -2483,11 +2508,46 @@
             }
         }
 
+        function popoutActiveFollowedRoom() {
+            if (isWebRuntime()) {
+                showToast?.('独立小窗口仅支持桌面端');
+                return;
+            }
+            const active = window.getActiveFollowedRoomWindowContext?.();
+            if (active?.channelId && active?.serverId) {
+                window.openFollowedRoomWindow?.({ ...active, compact: true });
+                return;
+            }
+            const channelId = String(getActiveFollowedChannel() || '').trim();
+            const activeCard = channelId
+                ? document.querySelector(`.session-card[data-channelid="${channelId}"], .session-card[data-small-channel-id="${channelId}"]`)
+                : null;
+            if (activeCard) {
+                window.openFollowedRoomWindow?.({ ...followedRoomWindowPayload(activeCard), compact: true });
+                return;
+            }
+            showToast?.('请先选择一个成员房间');
+        }
+
+        function toggleFollowedRoomsSidebarCollapse() {
+            const followedView = document.getElementById('view-followed-rooms');
+            if (!followedView) return;
+            const isCollapsed = followedView.classList.toggle('is-sidebar-collapsed');
+            const btn = document.getElementById('btn-toggle-followed-rooms-sidebar');
+            if (btn) {
+                const label = isCollapsed ? '展开房间列表' : '折叠房间列表';
+                btn.title = label;
+                btn.setAttribute('aria-label', label);
+                btn.setAttribute('aria-pressed', isCollapsed ? 'true' : 'false');
+            }
+        }
+
         return {
             executeQuickAction,
             handleQuickFollowSearch,
             loadFollowedRooms,
             openFollowedRoomByChannelId,
+            popoutActiveFollowedRoom,
             resetFollowedRoomsState,
             selectFollowedSort,
             selectQuickFollowMember,
@@ -2498,6 +2558,7 @@
             sortFollowedRooms,
             toggleActiveFollowedRoomNotification,
             toggleAllFollowedRoomNotifications,
+            toggleFollowedRoomsSidebarCollapse,
             toggleFollowedSortDropdown,
             updateAllFollowedRoomNotificationsButton,
             updateFollowedRoomNotificationButton

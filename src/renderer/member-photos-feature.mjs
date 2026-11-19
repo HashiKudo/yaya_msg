@@ -334,7 +334,7 @@ export function createMemberPhotosFeature(deps) {
     }
 
     function renderAudioPhoto(mediaContainer, safeUrl) {
-        const audioPlayer = createCustomAudioPlayer(safeUrl);
+        const audioPlayer = createCustomAudioPlayer(safeUrl, 0, { showDownload: false });
         mediaContainer.style.flexDirection = 'column';
         mediaContainer.style.background = 'linear-gradient(145deg, var(--input-bg) 0%, rgba(155, 106, 156, 0.06) 100%)';
         mediaContainer.innerHTML = `

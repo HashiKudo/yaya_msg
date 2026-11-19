@@ -57,8 +57,7 @@ function createWindow() {
         show: false,
         width: 1100,
         height: 790,
-        minWidth: 1100,
-        minHeight: 790,
+        minHeight: 420,
         frame: isMac,
         titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
         trafficLightPosition: isMac ? { x: 14, y: 10 } : undefined,
@@ -133,8 +132,14 @@ function createWindow() {
         return { action: 'deny' };
     });
     mainWindow.on('close', (event) => {
+        if (isAppQuitting || mainWindow.webContents.isDestroyed()) return;
+        if (process.platform === 'darwin') {
+            event.preventDefault();
+            mainWindow.hide();
+            return;
+        }
         const supportsMinimizeToTray = process.platform === 'win32' || process.platform === 'linux';
-        if (isAppQuitting || !supportsMinimizeToTray || mainWindow.webContents.isDestroyed()) return;
+        if (!supportsMinimizeToTray) return;
         event.preventDefault();
         if (getWindowCloseBehavior() === 'quit') {
             app.quit();

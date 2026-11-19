@@ -486,17 +486,24 @@
                 showPrivateMessageContextMenu(event, wrapper);
             });
 
+            const pmName = String(privateMessageDetailState.title || '私信').trim();
             wrapper.querySelectorAll('.private-message-audio-slot').forEach(slot => {
                 const src = slot.getAttribute('data-audio-src');
                 const duration = Number(slot.getAttribute('data-audio-duration') || 0);
                 if (!src) return;
-                slot.replaceChildren(createCustomAudioPlayer(src, duration));
+                slot.replaceChildren(createCustomAudioPlayer(src, duration, {
+                    filename: `PM_AUDIO_${Date.now()}_${pmName}.mp3`,
+                    subFolder: pmName
+                }));
             });
 
             wrapper.querySelectorAll('.private-message-video-slot').forEach(slot => {
                 const src = slot.getAttribute('data-video-src');
                 if (!src) return;
-                slot.replaceChildren(createCustomVideoPlayer(src));
+                slot.replaceChildren(createCustomVideoPlayer(src, {
+                    filename: `PM_VIDEO_${Date.now()}_${pmName}.mp4`,
+                    subFolder: pmName
+                }));
             });
 
             return wrapper;

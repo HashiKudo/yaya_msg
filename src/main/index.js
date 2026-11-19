@@ -23,6 +23,7 @@ const { closeAllMemberRoomConnections } = require('./services/member-room-servic
 const roomNotificationService = require('./services/room-notification-service');
 const accountImService = require('./services/account-im-service');
 const { closeMemberRoomTransport } = require('./services/member-room-transport');
+const { ensureWindowsNotificationRegistration } = require('./services/system-service');
 const { applyAppIcon } = require('./services/app-icon-service');
 const { ensureStoragePaths } = require('../common/storage-paths');
 
@@ -104,7 +105,7 @@ if (process.platform === 'linux') {
 }
 
 if (process.platform === 'win32') {
-    app.setAppUserModelId(app.isPackaged ? 'com.yaya.message' : 'electron.app.Electron');
+    app.setAppUserModelId('com.yaya.message');
 }
 
 if (!gotSingleInstanceLock) {
@@ -120,6 +121,9 @@ if (!gotSingleInstanceLock) {
         if (process.platform === 'darwin') applyAppIcon();
         registerDeepLinkProtocol(app);
         ensureStoragePaths();
+        if (process.platform === 'win32') {
+            ensureWindowsNotificationRegistration();
+        }
         createWindow();
         createTray();
         startMessageIndexWatcher((result) => {
@@ -146,6 +150,7 @@ app.on('activate', () => {
 app.on('before-quit', (event) => {
     if (!gotSingleInstanceLock) return;
 
+    markAppQuitting();
     if (quitCleanupFinished) {
         performFinalCleanup();
         return;

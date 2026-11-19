@@ -47,6 +47,7 @@
         root.dataset.liveWindow = 'true';
         const brand = document.querySelector('.title-info > span');
         if (brand) brand.textContent = '牙牙消息 · 直播';
+        window.installDetachedWindowPinButton?.();
         const player = document.getElementById('live-player-view');
         const back = player.querySelector('button[onclick="backToLiveList()"]');
         back?.remove();

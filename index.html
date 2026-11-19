@@ -390,12 +390,12 @@
         <main class="main-content home-mode" id="mainContentArea">
             <div id="view-home" class="web-home-view"></div>
 
-            <div id="view-followed-rooms"
+            <div id="view-followed-rooms" class="view-followed-rooms"
                 style="height: 100%; overflow: hidden; display: none; padding: 20px 40px; box-sizing: border-box;">
-                <div
+                <div id="followed-rooms-card-container" class="followed-rooms-card-container"
                     style="display: flex; height: 100%; gap: 0; background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); overflow: hidden;">
 
-                    <div
+                    <div id="followed-rooms-sidebar" class="followed-rooms-sidebar"
                         style="width: 280px; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--input-bg); flex-shrink: 0;">
                         <div
                             style="padding: 15px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: var(--sidebar-bg);">
@@ -470,14 +470,24 @@
                         <div id="followed-chat-header"
                             style="padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--sidebar-bg); display: flex; justify-content: space-between; align-items: center; visibility: hidden; flex-shrink: 0;">
 
-                            <div
+                            <div class="followed-chat-header-info"
                                 style="flex: 1; min-width: 0; margin-right: 15px; display: flex; align-items: center; gap: 12px;">
                                 <button type="button" class="followed-chat-mobile-back"
                                     onclick="backToFollowedRoomList(event)">‹ 聚聚</button>
+                                <button id="btn-toggle-followed-rooms-sidebar" type="button"
+                                    class="followed-notification-toggle followed-collapse-sidebar-button"
+                                    onclick="toggleFollowedRoomsSidebarCollapse()" title="折叠/展开房间列表"
+                                    aria-label="折叠/展开房间列表" aria-pressed="false">
+                                    <svg class="followed-sidebar-toggle-icon" aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                        <line x1="9" y1="3" x2="9" y2="21"></line>
+                                        <polyline points="14 9 11 12 14 15"></polyline>
+                                    </svg>
+                                </button>
                                 <img id="followed-chat-avatar" src="./icon.png" data-avatar-fallback
                                     style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 1.5px solid var(--primary); display: block; flex: 0 0 40px; visibility: hidden; opacity: 0;">
 
-                                <div style="flex: 1; min-width: 0;">
+                                <div class="followed-chat-meta" style="flex: 1; min-width: 0;">
                                     <div id="followed-chat-title"
                                         style="font-weight: bold; font-size: 16px; line-height: 20px; min-height: 20px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                                         成员房间</div>
@@ -485,6 +495,17 @@
                                         style="font-size: 11px; color: var(--text-sub); margin-top: 2px;">Channel ID: --
                                     </div>
                                 </div>
+
+                                <button id="btn-popout-followed-room" type="button"
+                                    class="followed-notification-toggle followed-popout-button"
+                                    onclick="popoutActiveFollowedRoom()" title="在独立小窗口中打开"
+                                    aria-label="在独立小窗口中打开">
+                                    <svg class="followed-popout-icon" aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                        <polyline points="15 3 21 3 21 9"></polyline>
+                                        <line x1="10" y1="14" x2="21" y2="3"></line>
+                                    </svg>
+                                </button>
                             </div>
 
                             <div class="followed-chat-header-actions"
@@ -1511,6 +1532,16 @@
                                     type="button" onclick="toggleOfficialSiteMusicLyricsPanel()" title="展开歌词" aria-label="展开歌词">
                                     <span class="official-site-music-lyrics-glyph" aria-hidden="true">词</span>
                                 </button>
+                                <button id="official-site-music-download-btn" class="player-mini-btn player-mode-btn"
+                                    type="button"
+                                    onclick="window.downloadPlayerElementMedia?.('official-site-music-audio', 'official-site-music-current-title', 'audio', '官网曲库', this)"
+                                    title="下载当前音频" aria-label="下载当前音频">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                        <polyline points="7 10 12 15 17 10" />
+                                        <line x1="12" y1="15" x2="12" y2="3" />
+                                    </svg>
+                                </button>
                                 <div class="official-site-music-volume">
                                     <span id="official-site-music-volume-icon" title="静音/恢复"
                                         onclick="toggleOfficialSiteMusicMute()"></span>
@@ -1970,6 +2001,15 @@
                                                 <circle cx="18" cy="17" r="1.4" fill="currentColor" stroke="none" />
                                             </svg>
                                         </button>
+                                        <button id="audio-program-download-btn" class="player-mini-btn player-mode-btn" type="button"
+                                            onclick="window.downloadPlayerElementMedia?.('native-audio-player', 'audio-player-title', 'audio', '官方音频', this)"
+                                            title="下载当前音频" aria-label="下载当前音频">
+                                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                                <polyline points="7 10 12 15 17 10" />
+                                                <line x1="12" y1="15" x2="12" y2="3" />
+                                            </svg>
+                                        </button>
 
                                         <div class="official-site-music-volume">
                                             <span id="audio-volume-icon" title="静音/恢复">
@@ -2079,6 +2119,16 @@
 
                     <div id="video-player-modal"
                         style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 2000; align-items: center; justify-content: center; flex-direction: column;">
+                        <button id="video-player-download-btn" type="button"
+                            onclick="event.stopPropagation(); window.downloadPlayerElementMedia?.('main-video-player', 'video-playing-title', 'video', '官方视频', this)"
+                            title="下载当前视频" aria-label="下载当前视频"
+                            style="position: absolute; top: 68px; right: 64px; z-index: 2001; width: 34px; height: 34px; padding: 0; border-radius: 50%; border: 1px solid rgba(255,255,255,0.28); background: rgba(255,255,255,0.12); color: white; display: inline-flex; align-items: center; justify-content: center; cursor: pointer;">
+                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="7 10 12 15 17 10" />
+                                <line x1="12" y1="15" x2="12" y2="3" />
+                            </svg>
+                        </button>
                         <button onclick="closeVideoPlayer()"
                             style="position: absolute; top: 64px; right: 20px; z-index: 2001; padding: 0; background: none; border: none; color: white; font-size: 34px; line-height: 1; cursor: pointer;">&times;</button>
                         <video id="main-video-player" controls
@@ -2227,6 +2277,15 @@
                                             <path d="M8 12h10" />
                                             <path d="M8 18h10" />
                                             <path d="M4 7v10" />
+                                        </svg>
+                                    </button>
+                                    <button id="music-library-download-btn" class="player-mini-btn player-mode-btn" type="button"
+                                        onclick="window.downloadPlayerElementMedia?.('music-native-audio', 'music-player-title', 'audio', '官方音乐', this)"
+                                        title="下载当前音乐" aria-label="下载当前音乐">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                            <polyline points="7 10 12 15 17 10" />
+                                            <line x1="12" y1="15" x2="12" y2="3" />
                                         </svg>
                                     </button>
 

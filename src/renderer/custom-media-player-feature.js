@@ -37,7 +37,83 @@
             return true;
         }
 
-        function createCustomAudioPlayer(url, knownDuration = 0) {
+        const DOWNLOAD_ICON_SVG = `<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
+
+        function resolveSafeMediaFilename(url, type, rawFilename = '') {
+            const isAudio = type === 'audio';
+            const allowedExt = isAudio ? /\.(mp3|m4a|aac|wav)$/i : /\.(mp4|webm|mov)$/i;
+            const defaultExt = isAudio ? '.mp3' : '.mp4';
+            let candidate = String(rawFilename || '').trim();
+            if (!candidate) {
+                try {
+                    const pathname = new URL(url, window.location.href).pathname;
+                    const lastSegment = decodeURIComponent(pathname.split('/').filter(Boolean).pop() || '');
+                    candidate = lastSegment;
+                } catch (_) {}
+            }
+            candidate = candidate
+                .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
+                .replace(/\s+/g, '_')
+                .replace(/^[._]+|[._ ]+$/g, '');
+            if (!candidate) {
+                candidate = `${isAudio ? 'AUDIO' : 'VIDEO'}_${Date.now()}${defaultExt}`;
+            } else if (!allowedExt.test(candidate)) {
+                candidate = `${candidate.replace(/\.[a-z0-9]{1,8}$/i, '')}${defaultExt}`;
+            }
+            return candidate;
+        }
+
+        function attachMediaDownloadOverlay(container, url, type = 'audio', options = {}) {
+            if (!container || !url || options.showDownload === false) return null;
+            if (container.querySelector(':scope > .media-dl-btn-overlay')) return null;
+            if (!container.style.position) {
+                container.style.position = 'relative';
+            }
+            const dlBtn = document.createElement('button');
+            dlBtn.type = 'button';
+            dlBtn.className = `media-dl-btn-overlay ${type === 'video' ? 'video-dl' : 'audio-dl'}`;
+            dlBtn.innerHTML = DOWNLOAD_ICON_SVG;
+            const label = type === 'video' ? '下载视频' : '下载音频';
+            dlBtn.title = typeof window.YayaRendererUtils?.t === 'function' ? window.YayaRendererUtils.t(label) : label;
+            dlBtn.setAttribute('aria-label', dlBtn.title);
+            const filename = resolveSafeMediaFilename(url, type, options.filename);
+            const dlType = options.dlType || 'media';
+            const subFolder = String(options.subFolder || '').trim();
+            dlBtn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (typeof window.downloadMediaFileIconMode === 'function') {
+                    window.downloadMediaFileIconMode(url, filename, dlBtn, DOWNLOAD_ICON_SVG, dlType, subFolder);
+                } else {
+                    showToast?.('下载功能暂不可用');
+                }
+            };
+            container.appendChild(dlBtn);
+            return dlBtn;
+        }
+
+        function downloadPlayerElementMedia(mediaElementId, titleElementId, type = 'audio', subFolder = '', btnElement = null) {
+            const mediaEl = document.getElementById(mediaElementId);
+            const src = String(mediaEl?.currentSrc || mediaEl?.getAttribute('src') || mediaEl?.src || '').trim();
+            if (!src || src === window.location.href) {
+                showToast?.(type === 'video' ? '当前没有可下载的视频' : '当前没有可下载的音频');
+                return;
+            }
+            const titleText = String(document.getElementById(titleElementId)?.textContent || '').trim();
+            const rawName = titleText && titleText !== '未播放' ? titleText : '';
+            const filename = resolveSafeMediaFilename(src, type, rawName);
+            const originalIcon = btnElement ? btnElement.innerHTML : DOWNLOAD_ICON_SVG;
+            if (typeof window.downloadMediaFileIconMode === 'function') {
+                window.downloadMediaFileIconMode(src, filename, btnElement, originalIcon, 'media', subFolder);
+            } else {
+                showToast?.('下载功能暂不可用');
+            }
+        }
+
+        window.attachMediaDownloadOverlay = attachMediaDownloadOverlay;
+        window.downloadPlayerElementMedia = downloadPlayerElementMedia;
+
+        function createCustomAudioPlayer(url, knownDuration = 0, options = {}) {
             const wrapper = document.createElement('div');
             wrapper.className = 'audio-wrapper';
             wrapper.innerHTML = `<div class="audio-control-icon is-play"><span class="audio-icon-play"></span><span class="audio-icon-pause"><span></span><span></span></span></div><div class="audio-wave-box"><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div></div><span class="audio-duration">语音</span><audio style="display:none" preload="metadata" src="${url}"></audio>`;
@@ -115,6 +191,8 @@
                 icon.classList.add('is-play');
                 if (getCurrentPlayingAudio() === audio) setCurrentPlayingAudio(null);
             };
+
+            attachMediaDownloadOverlay(wrapper, url, 'audio', options);
 
             return wrapper;
         }
@@ -676,6 +754,8 @@
 
                 playInline();
             };
+
+            attachMediaDownloadOverlay(wrapper, playbackUrl, 'video', options);
 
             return wrapper;
         }

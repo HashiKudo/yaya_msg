@@ -1,7 +1,14 @@
 const { ipcMain, BrowserWindow } = require('electron');
 const { handleDesktop, onDesktop } = require('./desktop-sender');
 const { getMainWindow, requestWindowClose } = require('../window');
-const { openRoomWindow, openLiveWindow, openRoomWindowFromDrag, getRoomWindowContext } = require('../room-window');
+const {
+    openRoomWindow,
+    openLiveWindow,
+    openRoomWindowFromDrag,
+    getRoomWindowContext,
+    toggleWindowAlwaysOnTop,
+    isWindowAlwaysOnTop
+} = require('../room-window');
 
 function getSenderWindow(event) {
     return BrowserWindow.fromWebContents(event.sender);
@@ -56,6 +63,12 @@ function registerWindowIpc() {
         } catch (error) {
             return { success: false, msg: error.message || '打开独立窗口失败' };
         }
+    });
+    handleDesktop(ipcMain, 'toggle-window-always-on-top', event => {
+        return toggleWindowAlwaysOnTop(event.sender);
+    });
+    handleDesktop(ipcMain, 'is-window-always-on-top', event => {
+        return isWindowAlwaysOnTop(event.sender);
     });
 }
 

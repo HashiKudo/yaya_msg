@@ -20,9 +20,10 @@
 
 .followed-room-composer {
     flex: 0 0 auto;
-    padding: 10px 14px 9px;
+    padding: 8px 12px;
     border-top: 1px solid var(--border);
     background: var(--sidebar-bg);
+    box-sizing: border-box;
 }
 
 .followed-chat-message-stage {
@@ -279,9 +280,34 @@
     text-align: center;
 }
 
-.followed-room-composer .member-room-gift-toggle { display: grid; place-items: center; flex: 0 0 60px; width: 60px; height: 60px; box-sizing: border-box; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--input-bg); color: var(--text-sub); }
-.member-room-gift-toggle svg { display: block; width: 22px; height: 22px; }
-.followed-room-composer .member-room-gift-toggle:hover, .followed-room-composer .member-room-gift-toggle[aria-expanded="true"] { border-color: var(--text-sub); background: var(--input-bg); color: var(--text); }
+.followed-room-composer .member-room-gift-toggle {
+    display: grid;
+    place-items: center;
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--input-bg);
+    color: var(--text-sub);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.member-room-gift-toggle svg {
+    display: block;
+    width: 17px;
+    height: 17px;
+}
+
+.followed-room-composer .member-room-gift-toggle:hover,
+.followed-room-composer .member-room-gift-toggle[aria-expanded="true"] {
+    border-color: var(--primary);
+    background: var(--card);
+    color: var(--primary);
+}
 .member-room-gift-host { position: relative; }
 .member-room-gift-panel { position: absolute; z-index: 30; left: 14px; bottom: calc(100% + 8px); display: flex; flex-direction: column; width: min(600px, calc(100% - 28px)); box-sizing: border-box; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text); box-shadow: 0 8px 28px rgba(0, 0, 0, .2); overflow: hidden; animation: member-room-gift-enter 140ms ease-out; }
 @keyframes member-room-gift-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
@@ -410,11 +436,13 @@
     align-items: center;
     min-width: 0;
     flex: 1;
-    height: 60px;
+    height: 36px;
+    min-height: 36px;
     box-sizing: border-box;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--input-bg, var(--card-bg));
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .followed-room-message-field:focus-within {
@@ -425,35 +453,69 @@
 .followed-room-message-input {
     display: block;
     width: 100%;
-    height: 58px;
+    height: 34px;
+    min-height: 34px;
     min-width: 0;
     box-sizing: border-box;
-    padding: 8px 11px;
+    padding: 7px 10px;
     border: 0;
     color: var(--text);
     background: transparent;
     font: inherit;
-    line-height: 20px;
+    font-size: 13px;
+    line-height: 18px;
     outline: none;
     overflow-y: auto;
     resize: none;
 }
 
-.followed-room-composer[data-state="connected"] .followed-room-message-input::placeholder {
-    color: var(--text-sub);
-    opacity: 0.52;
+.followed-room-message-input::placeholder {
+    font-size: 11px !important;
+    line-height: 16px !important;
+    color: var(--text-sub) !important;
 }
 
-.followed-room-composer[data-state="error"] .followed-room-message-input::placeholder,
+.followed-room-composer[data-state="connected"] .followed-room-message-input::placeholder {
+    color: var(--text-sub) !important;
+    opacity: 0.52 !important;
+}
+
+.followed-room-composer[data-state="error"] .followed-room-message-input::placeholder {
+    color: var(--danger, #d64545) !important;
+    opacity: 1 !important;
+}
+
 .followed-room-composer[data-state="disconnected"] .followed-room-message-input::placeholder {
+    color: var(--text-sub) !important;
+    opacity: 0.65 !important;
+}
+
+.followed-room-composer .followed-room-connect-btn {
+    height: 36px;
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 8px;
+    white-space: nowrap;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.followed-room-composer .followed-room-disconnect-active {
+    border-color: rgba(220, 53, 69, 0.45);
     color: var(--danger, #d64545);
-    opacity: 1;
 }
 
 .followed-room-composer .followed-room-message-send {
-    width: 68px;
-    height: 60px;
-    flex: 0 0 68px;
+    width: 52px;
+    height: 36px;
+    padding: 0 8px;
+    flex: 0 0 52px;
+    font-size: 12px;
+    border-radius: 8px;
 }
 
 [data-theme="dark"] .danmu-row.active {
@@ -1580,7 +1642,7 @@ body {
     line-height: 1.2;
     text-align: center;
     word-break: break-word;
-    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
+    text-shadow: none;
     transition: color 0.35s ease;
 }
 
@@ -2437,7 +2499,7 @@ body.desktop-workspace .app-icon-setting-summary {
     font-weight: 800;
     line-height: 1.05;
     letter-spacing: 0.02em;
-    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.14);
+    text-shadow: none;
     white-space: nowrap;
 }
 
@@ -12526,7 +12588,7 @@ button.live-danmu-list-nick:focus-visible {
 
 .msg-item .template-pre,
 #followed-chat-title {
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    text-shadow: none;
 }
 
 .followed-notification-toggle {
@@ -15676,4 +15738,157 @@ body:has(.main-content.home-mode) .title-info > span {
     .home-section-heading { padding-right: 18px; padding-left: 18px; }
     .home-feature-grid, .home-tools-row { margin-right: 18px; margin-left: 18px; }
     .home-site-links { padding-right: 18px; padding-left: 18px; }
+}
+
+/* --- Global Embedded Audio/Video Download Overlay --- */
+.media-dl-btn-overlay {
+    position: absolute;
+    z-index: 10;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #ffffff;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    opacity: 0;
+}
+
+.media-dl-btn-overlay:hover {
+    background: var(--primary);
+    border-color: var(--primary);
+    transform: scale(1.1);
+    opacity: 1 !important;
+}
+
+.audio-wrapper .media-dl-btn-overlay {
+    top: -8px;
+    right: -8px;
+    width: 22px;
+    height: 22px;
+    background: var(--primary);
+    opacity: 0.88;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.audio-wrapper:hover .media-dl-btn-overlay {
+    opacity: 1;
+    transform: scale(1.1);
+}
+
+.video-wrapper .media-dl-btn-overlay,
+.media-download-host .media-dl-btn-overlay {
+    top: 10px;
+    right: 10px;
+}
+
+.video-wrapper:hover .media-dl-btn-overlay,
+.media-download-host:hover .media-dl-btn-overlay,
+.media-dl-btn-overlay:focus-visible {
+    opacity: 1;
+}
+
+.media-dl-btn-overlay svg {
+    pointer-events: none;
+}
+
+.media-dl-btn-overlay[disabled] {
+    cursor: not-allowed;
+    opacity: 0.8 !important;
+    background: #666 !important;
+}
+
+.media-inline-dl-btn {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+/* --- Followed Rooms Sidebar Collapse & Popout Controls --- */
+.session-card-popout-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    margin-left: 6px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: var(--text-sub);
+    cursor: pointer;
+    opacity: 0.55;
+    transition: all 0.18s ease;
+    flex-shrink: 0;
+}
+
+.session-card:hover .session-card-popout-btn,
+.session-card-popout-btn:focus-visible {
+    opacity: 1;
+    color: var(--primary);
+    border-color: var(--primary);
+}
+
+.session-card-popout-btn:hover {
+    background: var(--primary);
+    color: #ffffff !important;
+    border-color: var(--primary);
+    transform: scale(1.08);
+}
+
+.followed-collapse-sidebar-button,
+.followed-popout-button {
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: var(--text-sub);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.followed-collapse-sidebar-button:hover,
+.followed-popout-button:hover {
+    color: var(--primary) !important;
+    border-color: var(--primary) !important;
+    background: var(--card) !important;
+}
+
+.view-followed-rooms.is-sidebar-collapsed #followed-rooms-sidebar,
+.view-followed-rooms.is-sidebar-collapsed > div > div:first-child {
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    flex: 0 0 0 !important;
+    padding: 0 !important;
+    border-right: none !important;
+    overflow: hidden !important;
+    opacity: 0;
+    pointer-events: none;
+    transition: width 0.22s ease, opacity 0.18s ease;
+}
+
+.view-followed-rooms.is-sidebar-collapsed .desktop-contact-splitter {
+    display: none !important;
+}
+
+.view-followed-rooms.is-sidebar-collapsed .followed-sidebar-toggle-icon {
+    transform: scaleX(-1);
 }

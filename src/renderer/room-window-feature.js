@@ -11,8 +11,9 @@
             ...room, ...active,
             smallChannelId: active.smallChannelId || room.smallChannelId,
             memberId: active.memberId || room.memberId,
-            avatarUrl: active.avatarUrl || room.avatarUrl
-        } : { ...room };
+            avatarUrl: active.avatarUrl || room.avatarUrl,
+            compact: room.compact === true || options.compact === true
+        } : { ...room, compact: room.compact === true || options.compact === true };
         if (options.fromDrag) context.dragOutsideHalf = options.detachEligible === true;
         try {
             const result = await ipc.invoke(options.fromDrag ? 'open-room-window-from-drag' : 'open-room-window', context);
@@ -24,6 +25,47 @@
             window.showToast?.('独立窗口打开失败，请重试');
             return { success: false };
         }
+    };
+
+    window.installDetachedWindowPinButton = function installDetachedWindowPinButton() {
+        const customTitleBar = document.querySelector('.custom-title-bar');
+        if (!customTitleBar || document.getElementById('btn-popup-pin')) return null;
+        const pinContainer = document.createElement('div');
+        pinContainer.className = 'room-popup-top-actions';
+        pinContainer.innerHTML = `
+            <button id="btn-popup-pin" class="popup-top-btn" type="button" title="窗口置顶" aria-label="窗口置顶" aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <line x1="12" y1="17" x2="12" y2="22"></line>
+                    <path d="M5 17h14v-2l-3-3V5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v7l-3 3v2z"></path>
+                </svg>
+                <span class="popup-pin-text">置顶</span>
+            </button>
+        `;
+        const windowControls = customTitleBar.querySelector('.window-controls');
+        if (windowControls) customTitleBar.insertBefore(pinContainer, windowControls);
+        else customTitleBar.appendChild(pinContainer);
+
+        const pinBtn = document.getElementById('btn-popup-pin');
+        const applyPinState = isPinned => {
+            const pinned = Boolean(isPinned);
+            pinBtn.classList.toggle('is-pinned', pinned);
+            pinBtn.setAttribute('aria-pressed', pinned ? 'true' : 'false');
+            pinBtn.title = pinned ? '取消置顶' : '窗口置顶';
+            pinBtn.setAttribute('aria-label', pinBtn.title);
+        };
+        if (pinBtn) {
+            pinBtn.addEventListener('click', async event => {
+                event.stopPropagation();
+                try {
+                    const isPinned = await ipc.invoke('toggle-window-always-on-top');
+                    applyPinState(isPinned);
+                } catch (err) {
+                    console.warn('[room-window] 置顶切换失败:', err);
+                }
+            });
+            ipc.invoke('is-window-always-on-top').then(applyPinState).catch(() => {});
+        }
+        return pinBtn;
     };
 
     if (!window.desktop.isRoomWindow || window.desktop.isLiveWindow) return;
@@ -49,6 +91,7 @@
         back.hidden = true;
         back.addEventListener('click', () => window.switchView('followed-rooms'));
         document.querySelector('.custom-title-bar').appendChild(back);
+        window.installDetachedWindowPinButton?.();
         window.addEventListener('yaya:view-changed', event => {
             const view = event.detail?.view || 'followed-rooms';
             body.dataset.desktopView = view;
@@ -74,6 +117,7 @@
             const context = await ipc.invoke('get-room-window-context');
             if (!context?.channelId || !context.serverId) throw new Error('房间信息已失效，请关闭窗口后重新打开');
             if (!window.getAppToken?.()) throw new Error('请先在主窗口登录，然后重新打开房间');
+            if (context.compact === true) root.dataset.roomPopup = 'true';
             window.switchView('followed-rooms');
             window.openFollowedChat(context.ownerName, context.channelId, context.serverId, context);
             void Promise.resolve(window.loadMemberData?.()).catch(() => {});

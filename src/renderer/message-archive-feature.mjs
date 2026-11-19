@@ -987,7 +987,10 @@ export function createMessageArchive({
             content.querySelectorAll('a, .temp-audio-placeholder').forEach(el => {
                 let src = el.tagName === 'SPAN' ? el.getAttribute('data-src') : (/\.(mp3|aac|m4a)$/i.test(el.href) ? el.href : '');
                 if (src) {
-                    const player = createCustomAudioPlayer(src);
+                    const player = createCustomAudioPlayer(src, 0, {
+                        filename: `ARCHIVE_AUDIO_${post.sortTime || Date.now()}_${post.nameStr || '归档'}.mp3`,
+                        subFolder: post.nameStr || ''
+                    });
                     player.style.display = 'inline-flex';
                     player.style.margin = '4px 0';
                     if (el.tagName === 'A') el.parentNode.replaceChild(player, el);
@@ -1012,11 +1015,17 @@ export function createMessageArchive({
         content.querySelectorAll('video').forEach(rawVideo => {
             const src = rawVideo.src || rawVideo.querySelector('source')?.src;
             if (src) {
-                rawVideo.parentNode.replaceChild(createCustomVideoPlayer(src), rawVideo);
+                rawVideo.parentNode.replaceChild(createCustomVideoPlayer(src, {
+                    filename: `ARCHIVE_VIDEO_${post.sortTime || Date.now()}_${post.nameStr || '归档'}.mp4`,
+                    subFolder: post.nameStr || ''
+                }), rawVideo);
                 hasVideoTag = true;
             }
         });
-        if (post.videoUrl && !hasVideoTag) content.appendChild(createCustomVideoPlayer(post.videoUrl));
+        if (post.videoUrl && !hasVideoTag) content.appendChild(createCustomVideoPlayer(post.videoUrl, {
+            filename: `ARCHIVE_VIDEO_${post.sortTime || Date.now()}_${post.nameStr || '归档'}.mp4`,
+            subFolder: post.nameStr || ''
+        }));
         if (post.liveId) {
             const card = document.createElement('div');
             card.className = 'vod-card-row';
@@ -1711,7 +1720,10 @@ export function createMessageArchive({
                 content.querySelectorAll('a, .temp-audio-placeholder').forEach(el => {
                     let src = el.tagName === 'SPAN' ? el.getAttribute('data-src') : (/\.(mp3|aac|m4a)$/i.test(el.href) ? el.href : '');
                     if (src) {
-                        const player = createCustomAudioPlayer(src);
+                        const player = createCustomAudioPlayer(src, 0, {
+                            filename: `ARCHIVE_AUDIO_${post.sortTime || Date.now()}_${post.nameStr || '归档'}.mp3`,
+                            subFolder: post.nameStr || ''
+                        });
                         player.style.display = 'inline-flex';
                         player.style.margin = '4px 0';
                         if (el.tagName === 'A') el.parentNode.replaceChild(player, el);
@@ -1727,11 +1739,17 @@ export function createMessageArchive({
             content.querySelectorAll('video').forEach(rawV => {
                 const src = rawV.src || rawV.querySelector('source')?.src;
                 if (src) {
-                    rawV.parentNode.replaceChild(createCustomVideoPlayer(src), rawV);
+                    rawV.parentNode.replaceChild(createCustomVideoPlayer(src, {
+                        filename: `ARCHIVE_VIDEO_${post.sortTime || Date.now()}_${post.nameStr || '归档'}.mp4`,
+                        subFolder: post.nameStr || ''
+                    }), rawV);
                     hasVTag = true;
                 }
             });
-            if (post.videoUrl && !hasVTag) content.appendChild(createCustomVideoPlayer(post.videoUrl));
+            if (post.videoUrl && !hasVTag) content.appendChild(createCustomVideoPlayer(post.videoUrl, {
+                filename: `ARCHIVE_VIDEO_${post.sortTime || Date.now()}_${post.nameStr || '归档'}.mp4`,
+                subFolder: post.nameStr || ''
+            }));
             if (post.liveId) {
                 const card = document.createElement('div');
                 card.className = 'vod-card-row';

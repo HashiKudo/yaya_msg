@@ -617,7 +617,25 @@ body.desktop-workspace .openlive-participant-rank { order: -1; width: 24px; heig
 body.desktop-workspace .openlive-participant-avatar { width: 32px; height: 32px; flex-basis: 32px; border: 1px solid rgba(0, 0, 0, .05); }
 body.desktop-workspace .openlive-participant-details { justify-content: flex-start; }
 body.desktop-workspace .openlive-participant-team { margin-left: 0; }
-body.desktop-workspace .openlive-participant-score { display: block; white-space: nowrap; color: #fa8c16; font-size: 14px; font-weight: 700; text-align: right; text-shadow: 0 0 10px rgba(250, 140, 22, .1); }
+body.desktop-workspace .openlive-participant-score { display: block; white-space: nowrap; color: #fa8c16; font-size: 14px; font-weight: 700; text-align: right; text-shadow: none; }
 body.desktop-workspace .openlive-participant-score-value { font-size: 14px; font-weight: 700; }
 body.desktop-workspace .openlive-participant-score-label { margin-left: 6px; color: var(--text-sub); opacity: .6; font-size: 11px; font-weight: 400; }
 body.desktop-workspace .performance-team-name { color: var(--text-sub); font-size: 11px; }
+body.desktop-workspace #view-followed-rooms.is-sidebar-collapsed > div > div:first-child,
+body.desktop-workspace[data-desktop-view="followed-rooms"] #view-followed-rooms.is-sidebar-collapsed > div > div:first-child,
+body.desktop-workspace #view-followed-rooms.is-sidebar-collapsed #followed-rooms-sidebar {
+    width: 0 !important; min-width: 0 !important; max-width: 0 !important; flex: 0 0 0 !important; flex-basis: 0 !important;
+    padding: 0 !important; border-right: 0 !important; overflow: hidden !important; opacity: 0; pointer-events: none;
+}
+body.desktop-workspace #view-followed-rooms.is-sidebar-collapsed .desktop-contact-splitter { display: none !important; }
+@media (max-width: 720px) {
+    body.desktop-workspace #followed-chat-header {
+        flex-wrap: wrap; gap: 8px; padding: 10px 12px !important;
+    }
+    body.desktop-workspace .followed-chat-header-info {
+        margin-right: 0 !important; width: 100%;
+    }
+    body.desktop-workspace .followed-chat-header-actions {
+        width: 100%; justify-content: space-between;
+    }
+}

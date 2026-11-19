@@ -7,6 +7,8 @@ html[data-room-window="true"] body.desktop-workspace {
 html[data-room-window="true"] body.desktop-workspace .app-container > :is(.home-app-rail, .home-conversation-pane, .sidebar),
 html[data-room-window="true"] body.desktop-workspace #view-followed-rooms > div > div:first-child,
 html[data-room-window="true"] .followed-chat-mobile-back,
+html[data-room-window="true"] #btn-toggle-followed-rooms-sidebar,
+html[data-room-window="true"] #btn-popout-followed-room,
 html[data-room-window="true"] #btn-toggle-followed-notification,
 html[data-room-window="true"] .desktop-contact-splitter,
 html[data-room-window="true"] .desktop-page-heading { display: none !important; }
@@ -32,17 +34,92 @@ html[data-room-window="true"] body.desktop-workspace .title-info {
 html[data-room-window="true"] .title-info > .control-btn { display: none; }
 html[data-room-window="true"] .title-info > span { overflow: hidden; text-overflow: ellipsis; }
 html[data-room-window="true"] .room-window-back {
-    position: absolute; right: 148px; top: 3px; height: 26px; padding: 0 10px;
+    position: absolute; right: 214px; top: 3px; height: 26px; padding: 0 10px;
     border: 0; border-radius: 4px; color: var(--desk-ink); background: transparent;
     font-size: 12px; cursor: pointer; -webkit-app-region: no-drag;
 }
 html[data-room-window="true"] .room-window-back:hover { background: var(--desk-hover); }
-html[data-room-window="true"][data-platform="darwin"] .room-window-back { right: 12px; }
+html[data-room-window="true"][data-platform="darwin"] .room-window-back { right: 78px; }
+html[data-room-window="true"] .room-popup-top-actions {
+    display: flex; align-items: center; margin-left: auto; margin-right: 8px;
+    -webkit-app-region: no-drag; app-region: no-drag; pointer-events: auto; flex-shrink: 0;
+}
+html[data-room-window="true"][data-platform="darwin"] .room-popup-top-actions {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%); margin: 0;
+}
+html[data-room-window="true"] .popup-top-btn {
+    display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px;
+    border-radius: 6px; border: 1px solid var(--border); background: var(--input-bg);
+    color: var(--text-sub); font-size: 11px; font-weight: 600; cursor: pointer;
+    transition: all 0.15s ease; white-space: nowrap;
+}
+html[data-room-window="true"] .popup-top-btn:hover {
+    background: var(--card); color: var(--primary); border-color: var(--primary);
+}
+html[data-room-window="true"] .popup-top-btn.is-pinned {
+    background: var(--primary); color: #ffffff; border-color: var(--primary);
+}
 html[data-room-window="true"] #followed-chat-header { gap: 8px; padding: 12px 16px !important; }
 html[data-room-window="true"] .followed-chat-header-actions,
 html[data-room-window="true"] .followed-chat-icon-actions,
 html[data-room-window="true"] .followed-chat-mode-actions { gap: 6px !important; }
 html[data-room-window="true"] .room-window-error { padding: 32px; color: var(--text-sub); }
+html[data-room-popup="true"] #followed-chat-header {
+    flex-direction: column !important; align-items: stretch !important; min-height: auto !important;
+    padding: 8px 12px !important; gap: 7px !important;
+}
+html[data-room-popup="true"] .followed-chat-header-info {
+    width: 100% !important; margin-right: 0 !important; gap: 8px !important;
+}
+html[data-room-popup="true"] #followed-chat-avatar {
+    width: 34px !important; height: 34px !important; flex: 0 0 34px !important;
+}
+html[data-room-popup="true"] #followed-chat-title {
+    font-size: 14px !important; line-height: 18px !important; min-height: 18px !important;
+}
+html[data-room-popup="true"] #followed-chat-subtitle {
+    font-size: 11px !important; line-height: 13px !important; margin-top: 1px !important;
+}
+html[data-room-popup="true"] .followed-chat-header-actions {
+    width: 100% !important; justify-content: space-between !important; align-items: center !important;
+    padding-top: 6px !important; border-top: 1px solid var(--border) !important;
+}
+html[data-room-popup="true"] .followed-notification-toggle {
+    width: 30px !important; height: 30px !important; flex-basis: 30px !important;
+}
+html[data-room-popup="true"] #btn-toggle-room-type {
+    height: 28px !important; padding: 0 8px !important; font-size: 11px !important;
+}
+html[data-room-popup="true"] #btn-toggle-followed-mode {
+    width: auto !important; min-width: 68px !important; height: 28px !important;
+    padding: 0 6px !important; font-size: 11px !important;
+}
+@media (max-width: 560px) {
+    html[data-room-window="true"] #followed-chat-header {
+        flex-direction: column !important; align-items: stretch !important; min-height: auto !important;
+        padding: 8px 12px !important; gap: 7px !important;
+    }
+    html[data-room-window="true"] .followed-chat-header-info {
+        width: 100% !important; margin-right: 0 !important; gap: 8px !important;
+    }
+    html[data-room-window="true"] #followed-chat-avatar {
+        width: 34px !important; height: 34px !important; flex: 0 0 34px !important;
+    }
+    html[data-room-window="true"] .followed-chat-header-actions {
+        width: 100% !important; justify-content: space-between !important; align-items: center !important;
+        padding-top: 6px !important; border-top: 1px solid var(--border) !important;
+    }
+    html[data-room-window="true"] .followed-notification-toggle {
+        width: 30px !important; height: 30px !important; flex-basis: 30px !important;
+    }
+    html[data-room-window="true"] #btn-toggle-room-type {
+        height: 28px !important; padding: 0 8px !important; font-size: 11px !important;
+    }
+    html[data-room-window="true"] #btn-toggle-followed-mode {
+        width: auto !important; min-width: 68px !important; height: 28px !important;
+        padding: 0 6px !important; font-size: 11px !important;
+    }
+}
 html[data-live-window="true"] #mainContentArea .media-playback-page {
     padding: 0 !important; height: 100% !important; min-height: 0 !important; overflow: hidden !important;
 }
@@ -74,7 +151,7 @@ html[data-live-window="true"] #live-announcement-bar { flex: 0 0 auto; max-heigh
 html[data-live-window="true"] #live-gift-container { flex: 0 0 auto; }
 html[data-live-window="true"] #live-gift-panel { max-height: 28vh; overflow-y: auto; }
 html[data-live-window="true"][data-platform="darwin"] body.desktop-workspace .custom-title-bar {
-    padding-left: 80px; padding-right: 8px; box-sizing: border-box;
+    padding-left: 80px; padding-right: 74px; box-sizing: border-box;
 }
 html[data-live-window="true"][data-platform="darwin"] body.desktop-workspace .title-info {
     min-width: 0; max-width: 100% !important; overflow: hidden;

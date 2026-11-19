@@ -23,6 +23,7 @@ function registerSystemIpc() {
         const result = await appIconService.chooseAppIcon(getMainWindow());
         if (result.success && !result.canceled) {
             updateTrayIcon();
+            systemService.ensureWindowsNotificationRegistration();
         }
         return result;
     });
@@ -30,6 +31,7 @@ function registerSystemIpc() {
         const result = appIconService.resetAppIcon();
         if (result.success) {
             updateTrayIcon();
+            systemService.ensureWindowsNotificationRegistration();
         }
         return result;
     });

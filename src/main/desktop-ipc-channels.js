@@ -34,6 +34,7 @@ const invokeChannels = new Set([
     'get-bilibili-live-statuses',
     'get-default-download-path',
     'get-room-window-context',
+    'is-window-always-on-top',
     'load-live-gift-animation',
     'message-index-analyze',
     'message-index-context',
@@ -65,6 +66,7 @@ const invokeChannels = new Set([
     'stop-live-proxy',
     'switch-netface-room',
     'sync-gift-prices',
+    'toggle-window-always-on-top',
     'write-netface-log',
 ]);
 

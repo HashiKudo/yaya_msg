@@ -466,7 +466,7 @@
                             audioRow.style.cssText = 'display: flex; align-items: center; gap: 12px; flex-wrap: wrap;';
 
                             if (typeof createCustomAudioPlayer === 'function') {
-                                audioRow.appendChild(createCustomAudioPlayer(url));
+                                audioRow.appendChild(createCustomAudioPlayer(url, 0, { showDownload: false }));
                             } else {
                                 const audioEl = document.createElement('audio');
                                 audioEl.src = url;
@@ -511,7 +511,8 @@
 
                             if (typeof createCustomVideoPlayer === 'function') {
                                 videoRow.appendChild(createCustomVideoPlayer(url, {
-                                    useWebMediaProxy: true
+                                    useWebMediaProxy: true,
+                                    showDownload: false
                                 }));
                             } else {
                                 const video = document.createElement('video');
