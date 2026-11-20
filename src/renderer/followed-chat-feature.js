@@ -4780,13 +4780,12 @@
 
                 const timeStr = fallbackTimeStr;
 
-                const nameColorVar = String(senderId) === '121569667'
-                    ? '#056de8'
-                    : (isMember ? 'var(--msg-name-member)' : 'var(--msg-name-fan)');
-
                 const currentIdentityIds = getCurrentMemberRoomIdentityIds();
                 const isOwnMessage = [...senderIdentityIds]
                     .some(identityId => currentIdentityIds.has(identityId));
+                const nameColorVar = (String(senderId) === '121569667' || isOwnMessage)
+                    ? '#056de8'
+                    : (isMember ? 'var(--msg-name-member)' : 'var(--msg-name-fan)');
                 const matchedOwnIdentity = isOwnMessage
                     ? [...senderIdentityIds].find(identityId => currentIdentityIds.has(identityId))
                     : '';

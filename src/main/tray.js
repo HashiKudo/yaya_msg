@@ -180,6 +180,7 @@ ipcMain.on('tray-menu-action', (event, action) => {
 });
 
 function createTray() {
+    if (process.platform === 'darwin') return null;
     if (tray && !tray.isDestroyed()) return tray;
     const icon = createTrayIcon();
     if (!icon) return null;
