@@ -131,6 +131,7 @@ async function openDetachedWindow(context, key, { position } = {}) {
         title: context.ownerName ? `${context.ownerName} - 牙牙消息` : '牙牙消息',
         width: defaultWidth,
         height: defaultHeight,
+        minWidth: isLive ? 320 : isCompact ? 360 : 560,
         minHeight: 360,
         ...placement,
         frame: isMac,

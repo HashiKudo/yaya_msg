@@ -13,6 +13,9 @@ function setDeepLinkHandler(handler) { deepLinkHandler = handler; }
 const preloadPath = path.join(__dirname, 'preload.js');
 const SAFE_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
 const PAGE_ZOOM_FACTOR = 1;
+// 低于该尺寸时侧栏 + 聊天区无法再保持可用布局，因此限制主窗口的最小尺寸。
+const MAIN_WINDOW_MIN_WIDTH = 800;
+const MAIN_WINDOW_MIN_HEIGHT = 520;
 
 function getWindowCloseBehavior() {
     try {
@@ -57,7 +60,8 @@ function createWindow() {
         show: false,
         width: 1100,
         height: 790,
-        minHeight: 420,
+        minWidth: MAIN_WINDOW_MIN_WIDTH,
+        minHeight: MAIN_WINDOW_MIN_HEIGHT,
         frame: isMac,
         titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
         trafficLightPosition: isMac ? { x: 14, y: 10 } : undefined,

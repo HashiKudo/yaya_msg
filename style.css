@@ -15908,3 +15908,88 @@ body:has(.main-content.home-mode) .title-info > span {
 .view-followed-rooms.is-sidebar-collapsed .followed-sidebar-toggle-icon {
     transform: scaleX(-1);
 }
+
+/* --- Followed chat header: adaptive layout (wide: single row / narrow: info row + action row) --- */
+html:not([data-room-window="true"]) #followed-chat-header {
+    container: followed-chat-header / inline-size;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 16px;
+    row-gap: 8px;
+    min-width: 0;
+    padding: 10px 20px !important;
+}
+
+html:not([data-room-window="true"]) #followed-chat-header .followed-chat-header-info {
+    flex: 1 1 260px !important;
+    min-width: 0;
+    margin-right: 0 !important;
+    gap: 10px !important;
+}
+
+html:not([data-room-window="true"]) #followed-chat-header .followed-chat-header-actions {
+    flex: 0 1 auto !important;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px !important;
+    min-width: 0;
+}
+
+html:not([data-room-window="true"]) #followed-chat-header .followed-chat-icon-actions {
+    gap: 6px !important;
+    flex-shrink: 0;
+}
+
+html:not([data-room-window="true"]) #followed-chat-header .followed-chat-mode-actions {
+    gap: 8px !important;
+    flex-shrink: 0;
+}
+
+html:not([data-room-window="true"]) #followed-chat-header .followed-chat-mode-actions .btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+html:not([data-room-window="true"]) #followed-chat-header #btn-toggle-room-type {
+    min-width: 64px;
+}
+
+html:not([data-room-window="true"]) #followed-chat-header #btn-toggle-followed-mode {
+    width: auto !important;
+    min-width: 80px;
+    padding: 0 12px !important;
+}
+
+html:not([data-room-window="true"]) #followed-chat-header .followed-chat-meta {
+    min-width: 0;
+}
+
+html:not([data-room-window="true"]) #followed-chat-subtitle,
+#private-message-detail-subtitle {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+#private-message-detail-avatar {
+    flex: 0 0 auto;
+}
+
+@container followed-chat-header (max-width: 560px) {
+    .followed-chat-header-info {
+        flex: 1 1 100% !important;
+    }
+
+    .followed-chat-header-actions {
+        flex: 1 1 100% !important;
+        justify-content: space-between;
+        padding-top: 8px;
+        border-top: 1px solid var(--border);
+    }
+}
+
+@media (max-width: 768px) {
+    html:not([data-room-window="true"]) #btn-toggle-followed-rooms-sidebar {
+        display: none !important;
+    }
+}

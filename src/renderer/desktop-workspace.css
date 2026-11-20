@@ -732,3 +732,17 @@ body.desktop-workspace #view-followed-rooms.is-sidebar-collapsed .desktop-contac
         width: 100%; justify-content: space-between;
     }
 }
+
+/* Compact desktop widths (window min-width is 800px) */
+@media (max-width: 920px) {
+    body.desktop-workspace #mainContentArea .desktop-page { padding: 14px 16px !important; }
+    body.desktop-workspace[data-desktop-view="messages"] .app-container > .desktop-message-sidebar {
+        width: 232px; min-width: 232px; flex-basis: 232px; padding: 12px 10px;
+    }
+    body.desktop-workspace .invoice-grid { grid-template-columns: minmax(0, 1fr); }
+    body.desktop-workspace :is(.invoice-orders-panel, .invoice-apply-panel) { max-height: none; }
+    body.desktop-workspace .desktop-tool-header { grid-template-columns: minmax(0, 1fr); gap: 10px !important; }
+    body.desktop-workspace .desktop-tool-action { justify-self: start; }
+    body.desktop-workspace :is(.desktop-background-transparency-row, .desktop-update-row) { flex-wrap: wrap; }
+    body.desktop-workspace .desktop-background-transparency-controls { width: min(320px, 100%); }
+}
