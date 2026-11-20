@@ -300,6 +300,9 @@
 
         const settingsContent = document.querySelector('#view-settings > .list-container');
         const backgroundSettings = window.YayaDesktopBackground;
+        const homeImageController = window.YayaRendererFeatures.createDesktopCustomHome?.({
+            homeView: document.getElementById('view-home')
+        });
         const appearanceCard = settingsContent?.querySelector('.Box-row');
         appearanceCard?.querySelectorAll(':scope > div > div:first-child').forEach(copy => {
             copy.classList.add('desktop-setting-copy');
@@ -337,6 +340,95 @@
             sync();
             controls.append(slider, value);
             row.append(copy, controls);
+            appearanceCard.appendChild(row);
+        }
+        if (appearanceCard && homeImageController) {
+            const row = document.createElement('div');
+            row.id = 'desktop-home-image-setting';
+            row.className = 'desktop-home-image-row';
+            const summary = document.createElement('div');
+            summary.className = 'desktop-home-image-summary';
+            const preview = document.createElement('img');
+            preview.id = 'desktop-home-image-preview';
+            preview.className = 'desktop-home-image-preview';
+            preview.width = 48;
+            preview.height = 48;
+            preview.alt = '主页图片预览';
+            preview.hidden = true;
+            const copy = document.createElement('div');
+            copy.className = 'desktop-setting-copy';
+            const label = document.createElement('label');
+            label.textContent = '主页展示图片';
+            const status = document.createElement('span');
+            status.id = 'desktop-home-image-status';
+            status.setAttribute('role', 'status');
+            status.setAttribute('aria-live', 'polite');
+            copy.append(label, status);
+            summary.append(preview, copy);
+
+            const actions = document.createElement('div');
+            actions.className = 'desktop-home-image-actions';
+            const fitGroup = document.createElement('div');
+            fitGroup.className = 'desktop-home-image-fit-group';
+            fitGroup.setAttribute('role', 'group');
+            fitGroup.setAttribute('aria-label', '主页图片显示模式');
+            const fitButtons = homeImageController.FIT_MODES.map(mode => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'desktop-home-image-fit-btn';
+                button.dataset.fitMode = mode.value;
+                button.textContent = mode.shortLabel;
+                button.title = mode.label;
+                button.addEventListener('click', () => {
+                    void homeImageController.setFitMode(mode.value);
+                });
+                fitGroup.appendChild(button);
+                return button;
+            });
+
+            const chooseButton = document.createElement('button');
+            chooseButton.id = 'desktop-home-image-choose';
+            chooseButton.type = 'button';
+            chooseButton.className = 'btn btn-secondary';
+            chooseButton.addEventListener('click', () => {
+                void homeImageController.chooseImage();
+            });
+
+            const clearButton = document.createElement('button');
+            clearButton.id = 'desktop-home-image-clear';
+            clearButton.type = 'button';
+            clearButton.className = 'btn btn-secondary desktop-home-image-clear-btn';
+            clearButton.textContent = '恢复空白';
+            clearButton.addEventListener('click', () => {
+                void homeImageController.clearImage();
+            });
+
+            function syncHomeImageSetting(state = homeImageController.getState()) {
+                const hasImage = Boolean(state?.custom && state?.url);
+                if (hasImage) {
+                    if (preview.getAttribute('src') !== state.url) preview.src = state.url;
+                    preview.hidden = false;
+                    status.textContent = `当前展示：${state.fileName || '自定义图片'}`;
+                    chooseButton.textContent = '更换图片';
+                } else {
+                    preview.hidden = true;
+                    preview.removeAttribute('src');
+                    status.textContent = '当前为空白页，可在主页拖入、右键或点击此处选择图片';
+                    chooseButton.textContent = '选择图片';
+                }
+                fitGroup.hidden = !hasImage;
+                clearButton.disabled = !hasImage;
+                fitButtons.forEach(button => {
+                    const active = button.dataset.fitMode === state?.fitMode;
+                    button.classList.toggle('is-active', active);
+                    button.setAttribute('aria-pressed', String(active));
+                });
+            }
+
+            window.addEventListener('yaya:home-image-changed', event => syncHomeImageSetting(event.detail));
+            syncHomeImageSetting();
+            actions.append(fitGroup, chooseButton, clearButton);
+            row.append(summary, actions);
             appearanceCard.appendChild(row);
         }
         const effectSettings = window.YayaGiftEffectSettings;
@@ -715,7 +807,7 @@
         }
 
         const groups = [
-            ['home', '主页', [['home', '主页', '全部功能与快捷入口']]],
+            ['home', '主页', [['home', '主页', '空白主页与自定义图片展示']]],
             ['message-tools', '消息', [['messages', '检索', '历史消息与条件搜索'], ['fetch', '抓取', '手动刷新与重扫']]],
             ['messages', '房间与消息', [['followed-rooms', '房间', '关注成员与实时房间']]],
             ['private', '私信', [['private-messages', '私信', '口袋私信会话']]],
@@ -1010,7 +1102,6 @@
         window.addEventListener('yaya:view-changed', event => syncNavigation(event.detail || {}));
         syncNavigation({ view: 'home' });
         requestAnimationFrame(() => railIndicator.classList.add('is-ready'));
-        window.YayaRendererFeatures.createDesktopCloudHome?.({ homeView: document.getElementById('view-home') });
         return { filter: filterNavigation };
     }
 

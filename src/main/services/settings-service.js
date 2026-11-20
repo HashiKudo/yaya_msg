@@ -54,6 +54,39 @@ function normalizeSettings(rawSettings) {
         }
     }
 
+    if (Object.prototype.hasOwnProperty.call(safeSettings, 'customHomeImageFile')) {
+        if (typeof safeSettings.customHomeImageFile !== 'string') {
+            delete safeSettings.customHomeImageFile;
+        } else {
+            safeSettings.customHomeImageFile = safeSettings.customHomeImageFile.trim();
+            if (!/^custom-home-image-[a-f0-9-]+\.[a-z0-9]{1,8}$/i.test(safeSettings.customHomeImageFile)) {
+                delete safeSettings.customHomeImageFile;
+            }
+        }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(safeSettings, 'customHomeImageName')) {
+        if (typeof safeSettings.customHomeImageName !== 'string') {
+            delete safeSettings.customHomeImageName;
+        } else {
+            safeSettings.customHomeImageName = safeSettings.customHomeImageName
+                .replace(/[\u0000-\u001f\u007f]/g, '')
+                .trim()
+                .slice(0, 255);
+            if (!safeSettings.customHomeImageName) {
+                delete safeSettings.customHomeImageName;
+            }
+        }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(safeSettings, 'desktopHomeImageFit')) {
+        safeSettings.desktopHomeImageFit = safeSettings.desktopHomeImageFit === 'cover'
+            ? 'cover'
+            : safeSettings.desktopHomeImageFit === 'original'
+                ? 'original'
+                : 'contain';
+    }
+
     if (Object.prototype.hasOwnProperty.call(safeSettings, 'meet48Auth')) {
         const auth = safeSettings.meet48Auth;
         if (!auth || typeof auth !== 'object' || Array.isArray(auth)) {

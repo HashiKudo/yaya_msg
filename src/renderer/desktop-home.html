@@ -1,8 +1,12 @@
 <div id="view-home" class="home-view desktop-page" style="height:100%;overflow:hidden;display:flex;box-sizing:border-box;">
-    <section class="desktop-cloud-home" aria-label="主页" aria-busy="true">
-        <div class="desktop-cloud-home-status" role="status" aria-live="polite" hidden>
-            <p class="desktop-cloud-home-message">正在加载主页…</p>
-            <button type="button" class="btn btn-secondary desktop-cloud-home-retry" hidden>重新加载</button>
+    <section class="desktop-custom-home" aria-label="主页">
+        <img class="desktop-custom-home-image" alt="主页展示图片" draggable="false" hidden>
+        <div class="desktop-custom-home-toolbar" role="toolbar" aria-label="主页图片操作">
+            <button type="button" class="desktop-custom-home-btn" data-home-action="choose">选择图片</button>
+            <button type="button" class="desktop-custom-home-btn" data-home-action="fit" hidden>适应页面</button>
+            <button type="button" class="desktop-custom-home-btn desktop-custom-home-btn-danger" data-home-action="clear" hidden>清除</button>
         </div>
+        <div class="desktop-custom-home-drop-hint" hidden aria-hidden="true">松开以在主页展示该图片</div>
+        <div class="desktop-custom-home-menu" role="menu" aria-label="主页图片菜单" hidden></div>
     </section>
 </div>

@@ -6,6 +6,7 @@ const { checkForUpdates, createUpdateDownloader } = require('../services/app-upd
 const { createUpdateInstaller } = require('../services/app-update-installer');
 const { getMainWindow } = require('../window');
 const appIconService = require('../services/app-icon-service');
+const homeImageService = require('../services/home-image-service');
 const { updateTrayIcon } = require('../tray');
 
 function registerSystemIpc() {
@@ -35,6 +36,11 @@ function registerSystemIpc() {
         }
         return result;
     });
+    handleDesktop(ipcMain, 'get-home-image', () => homeImageService.getHomeImageInfo());
+    handleDesktop(ipcMain, 'choose-home-image', () => homeImageService.chooseHomeImage(getMainWindow()));
+    handleDesktop(ipcMain, 'save-home-image', (_event, payload) => homeImageService.saveHomeImage(payload));
+    handleDesktop(ipcMain, 'set-home-image-fit', (_event, payload) => homeImageService.setHomeImageFitMode(payload?.fitMode));
+    handleDesktop(ipcMain, 'clear-home-image', () => homeImageService.clearHomeImage());
     onDesktopSync(ipcMain, 'settings-sync', (event, payload) => {
         if (['list-pocket-accounts', 'remember-pocket-account', 'get-pocket-account', 'activate-pocket-account', 'forget-pocket-account'].includes(payload?.action)
             && event.sender !== getMainWindow()?.webContents) {

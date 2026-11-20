@@ -170,6 +170,33 @@ function clearBackgroundSync() {
     return '';
 }
 
+function getHomeImageInfoSync() {
+    const settings = readSettingsSync();
+    const fitMode = settings.desktopHomeImageFit === 'cover'
+        ? 'cover'
+        : settings.desktopHomeImageFit === 'original'
+            ? 'original'
+            : 'contain';
+    const fileName = settings.customHomeImageFile;
+    if (typeof fileName !== 'string' || !/^custom-home-image-[a-f0-9-]+\.[a-z0-9]{1,8}$/i.test(fileName)) {
+        return { custom: false, url: '', fileName: '', fitMode };
+    }
+
+    const filePath = path.join(storagePaths.internalDataDir, fileName);
+    if (!fs.existsSync(filePath)) {
+        invokeSettingsSync('remove', { key: 'customHomeImageFile' });
+        invokeSettingsSync('remove', { key: 'customHomeImageName' });
+        return { custom: false, url: '', fileName: '', fitMode };
+    }
+
+    return {
+        custom: true,
+        url: getBackgroundFileUrl(filePath, Math.floor(fs.statSync(filePath).mtimeMs)),
+        fileName: String(settings.customHomeImageName || '').trim() || '自定义图片',
+        fitMode
+    };
+}
+
 function getTokenSync() {
     return invokeSettingsSync('get-token') || '';
 }
@@ -377,6 +404,22 @@ contextBridge.exposeInMainWorld('desktop', {
         getBackgroundUrlSync,
         saveBackgroundFromDataUrlSync,
         clearBackgroundSync,
+        getHomeImageInfoSync,
+        getHomeImage() {
+            return ipcRenderer.invoke('get-home-image');
+        },
+        chooseHomeImage() {
+            return ipcRenderer.invoke('choose-home-image');
+        },
+        saveHomeImage(payload) {
+            return ipcRenderer.invoke('save-home-image', payload);
+        },
+        setHomeImageFit(fitMode) {
+            return ipcRenderer.invoke('set-home-image-fit', { fitMode });
+        },
+        clearHomeImage() {
+            return ipcRenderer.invoke('clear-home-image');
+        },
         getAppIcon() {
             return ipcRenderer.invoke('get-app-icon');
         },

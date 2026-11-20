@@ -44,7 +44,7 @@ const buildDesktopRuntimeOnly = process.argv.includes('--database-runtime-only')
 const excludedWebScripts = new Set([
     'src/renderer/invoice-feature.js', 'src/renderer/pocket-social-login-feature.js',
     'src/renderer/deep-link-feature.js', 'src/renderer/desktop-live-gift-animation.js',
-    'src/renderer/desktop-cloud-home-feature.js',
+    'src/renderer/desktop-custom-home-feature.js',
     'src/renderer/home-workspace-feature.js',
     'src/renderer/private-message-notifications.js', 'src/renderer/desktop-startup-features.mjs',
     'src/renderer/room-radio-feature.js', 'src/renderer/live-gift-feature.js',
