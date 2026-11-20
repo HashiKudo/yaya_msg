@@ -15788,6 +15788,22 @@ body:has(.main-content.home-mode) .title-info > span {
     right: 10px;
 }
 
+.media-download-host .media-dl-btn-overlay.image-dl {
+    top: 8px;
+    right: 8px;
+}
+
+.archive-image-download-host {
+    margin: 10px 0;
+}
+
+.archive-image-download-host > img,
+.media-download-host > .template-media,
+.media-download-host > .template-image-express-image {
+    margin: 0 !important;
+    display: block;
+}
+
 .video-wrapper:hover .media-dl-btn-overlay,
 .media-download-host:hover .media-dl-btn-overlay,
 .media-dl-btn-overlay:focus-visible {

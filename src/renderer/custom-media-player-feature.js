@@ -37,28 +37,39 @@
             return true;
         }
 
-        const DOWNLOAD_ICON_SVG = `<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
+        const DOWNLOAD_ICON_SVG = `<svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
 
         function resolveSafeMediaFilename(url, type, rawFilename = '') {
             const isAudio = type === 'audio';
-            const allowedExt = isAudio ? /\.(mp3|m4a|aac|wav)$/i : /\.(mp4|webm|mov)$/i;
-            const defaultExt = isAudio ? '.mp3' : '.mp4';
+            const isImage = type === 'image';
+            const allowedExt = isAudio
+                ? /\.(mp3|m4a|aac|wav)$/i
+                : (isImage ? /\.(jpg|jpeg|png|gif|webp|bmp|avif|svg)$/i : /\.(mp4|webm|mov)$/i);
+            let defaultExt = isAudio ? '.mp3' : (isImage ? '.jpg' : '.mp4');
+            let urlLastSegment = '';
+            try {
+                const pathname = new URL(url, window.location.href).pathname;
+                urlLastSegment = decodeURIComponent(pathname.split('/').filter(Boolean).pop() || '');
+                const extMatch = urlLastSegment.match(/\.[a-z0-9]{1,8}$/i);
+                if (extMatch && allowedExt.test(extMatch[0])) {
+                    defaultExt = extMatch[0].toLowerCase();
+                }
+            } catch (_) {}
             let candidate = String(rawFilename || '').trim();
             if (!candidate) {
-                try {
-                    const pathname = new URL(url, window.location.href).pathname;
-                    const lastSegment = decodeURIComponent(pathname.split('/').filter(Boolean).pop() || '');
-                    candidate = lastSegment;
-                } catch (_) {}
+                candidate = urlLastSegment;
             }
             candidate = candidate
                 .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
                 .replace(/\s+/g, '_')
                 .replace(/^[._]+|[._ ]+$/g, '');
+            const prefix = isAudio ? 'AUDIO' : (isImage ? 'IMAGE' : 'VIDEO');
             if (!candidate) {
-                candidate = `${isAudio ? 'AUDIO' : 'VIDEO'}_${Date.now()}${defaultExt}`;
+                candidate = `${prefix}_${Date.now()}${defaultExt}`;
             } else if (!allowedExt.test(candidate)) {
                 candidate = `${candidate.replace(/\.[a-z0-9]{1,8}$/i, '')}${defaultExt}`;
+            } else if (isImage && defaultExt !== '.jpg' && /\.jpg$/i.test(candidate)) {
+                candidate = `${candidate.replace(/\.jpg$/i, '')}${defaultExt}`;
             }
             return candidate;
         }
@@ -71,9 +82,10 @@
             }
             const dlBtn = document.createElement('button');
             dlBtn.type = 'button';
-            dlBtn.className = `media-dl-btn-overlay ${type === 'video' ? 'video-dl' : 'audio-dl'}`;
+            const typeClass = type === 'video' ? 'video-dl' : (type === 'image' ? 'image-dl' : 'audio-dl');
+            dlBtn.className = `media-dl-btn-overlay ${typeClass}`;
             dlBtn.innerHTML = DOWNLOAD_ICON_SVG;
-            const label = type === 'video' ? '下载视频' : '下载音频';
+            const label = type === 'video' ? '下载视频' : (type === 'image' ? '下载图片' : '下载音频');
             dlBtn.title = typeof window.YayaRendererUtils?.t === 'function' ? window.YayaRendererUtils.t(label) : label;
             dlBtn.setAttribute('aria-label', dlBtn.title);
             const filename = resolveSafeMediaFilename(url, type, options.filename);
@@ -96,10 +108,12 @@
             const mediaEl = document.getElementById(mediaElementId);
             const src = String(mediaEl?.currentSrc || mediaEl?.getAttribute('src') || mediaEl?.src || '').trim();
             if (!src || src === window.location.href) {
-                showToast?.(type === 'video' ? '当前没有可下载的视频' : '当前没有可下载的音频');
+                const emptyLabel = type === 'video' ? '当前没有可下载的视频' : (type === 'image' ? '当前没有可下载的图片' : '当前没有可下载的音频');
+                showToast?.(emptyLabel);
                 return;
             }
-            const titleText = String(document.getElementById(titleElementId)?.textContent || '').trim();
+            const titleEl = titleElementId ? document.getElementById(titleElementId) : null;
+            const titleText = String(titleEl?.textContent || '').trim();
             const rawName = titleText && titleText !== '未播放' ? titleText : '';
             const filename = resolveSafeMediaFilename(src, type, rawName);
             const originalIcon = btnElement ? btnElement.innerHTML : DOWNLOAD_ICON_SVG;

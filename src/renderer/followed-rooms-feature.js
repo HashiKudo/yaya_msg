@@ -621,30 +621,12 @@
                 && state.token === String(getAppToken() || '').trim();
         }
 
-        function syncNotificationRealtime(rooms) {
-            if (isWebRuntime()) return;
-            const signature = rooms.map(room => `${room.serverId}:${room.channelId}`).sort().join(',');
-            if (notificationRealtime?.signature === signature && isCurrentNotificationRealtime(notificationRealtime)) return;
+        function syncNotificationRealtime() {
             const previous = notificationRealtime;
             notificationRealtime = null;
-            if (previous) void ipcRenderer.invoke('disconnect-room-notifications', { requestId: previous.id }).catch(() => {});
-            if (!rooms.length) return;
-            const cursors = readJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, {});
-            const state = {
-                id: `notify_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-                signature, generation: followedRoomNotificationGeneration,
-                account: getFollowedNotificationAccountSuffix(), token: String(getAppToken() || '').trim(),
-                healthy: false, ownerFiltersReady: rooms.every(room => !!room.ownerId),
-                floors: new Map(rooms.map(room => [room.channelId, Number(cursors[room.channelId]?.msgTime) || Date.now()]))
-            };
-            notificationRealtime = state;
-            void ipcRenderer.invoke('configure-room-notifications', {
-                requestId: state.id, rooms: rooms.map(({ serverId, channelId }) => ({ serverId, channelId }))
-            }).then(result => {
-                if (result?.success === false && isCurrentNotificationRealtime(state)) notificationRealtime = null;
-            }).catch(() => {
-                if (isCurrentNotificationRealtime(state)) notificationRealtime = null;
-            });
+            if (previous) {
+                void ipcRenderer.invoke('disconnect-room-notifications', { requestId: previous.id }).catch(() => {});
+            }
         }
 
         ipcRenderer?.on?.('room-notification-status', (_event, payload = {}) => {
@@ -767,7 +749,6 @@
 
                 followedRoomNotificationRunning = true;
                 notificationCatchupPending = false;
-                let pollSucceeded = false;
                 try {
                     const pa = window.getPA ? window.getPA() : null;
                     const serverIdList = [...new Set(rooms.map(room => room.serverId).filter(Boolean))];
@@ -988,8 +969,6 @@
                         writeJsonSetting(FOLLOWED_NOTIFICATION_CURSORS_KEY, cursors);
                     }
                     silentInitialSyncPending = false;
-                    syncNotificationRealtime(rooms);
-                    pollSucceeded = ![...detailFetchesByChannel.values()].some(result => result.error);
                 } catch (error) {
                     console.warn('[口袋通知] 后台检查失败:', error);
                 } finally {
@@ -997,11 +976,8 @@
                     followedRoomNotificationRunning = false;
                     const elapsed = Date.now() - pollStartedAt;
                     if (notificationCatchupPending) scheduleNext(0);
-                    else if (!pollSucceeded || !isCurrentNotificationRealtime(notificationRealtime) || !notificationRealtime.healthy) {
+                    else {
                         scheduleNext(Math.max(100, FOLLOWED_NOTIFICATION_POLL_INTERVAL - elapsed));
-                    } else {
-                        clearTimeout(followedRoomNotificationTimer);
-                        followedRoomNotificationTimer = null;
                     }
                 }
             });
@@ -1469,10 +1445,28 @@
 
                 const memberData = getMemberData();
                 const membersById = new Map();
+                const membersByChannelId = new Map();
                 memberData.forEach(member => {
                     const id = String(member.id || member.userId || '');
-                    if (!membersById.has(id)) membersById.set(id, member);
+                    if (id && !membersById.has(id)) membersById.set(id, member);
+                    const chId = String(member.channelId || '');
+                    if (chId && !membersByChannelId.has(chId)) membersByChannelId.set(chId, member);
                 });
+                if (friendsRes.fallbackFromConversationPage) {
+                    const localChannelIds = new Set([
+                        ...readJsonSetting(FOLLOWED_CUSTOM_ORDER_KEY, []),
+                        ...getPinnedChannelIds(),
+                        ...getFollowedNotificationConfigs().map(cfg => cfg.channelId)
+                    ].map(id => String(id || '').trim()).filter(Boolean));
+                    localChannelIds.forEach(chId => {
+                        const member = membersByChannelId.get(chId);
+                        const memberId = String(member?.id || member?.userId || '').trim();
+                        if (memberId) memberFollowedIds.push(memberId);
+                    });
+                    getFollowedNotificationConfigs().forEach(cfg => {
+                        if (cfg.memberId) memberFollowedIds.push(String(cfg.memberId));
+                    });
+                }
                 const teamRelations = getSavedTeamRelations();
                 const teamFollowedIds = teamRelations.map(item => String(item.teamId));
                 const followedIds = [...new Set([...memberFollowedIds, ...teamFollowedIds])];

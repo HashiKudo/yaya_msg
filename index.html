@@ -3420,6 +3420,16 @@
     </div>
     <div class="modal-overlay" id="imageModal" onclick="closeImageModal()"
         style="background: rgba(0,0,0,0.9); z-index: 2001;">
+        <button id="image-modal-download-btn" type="button"
+            onclick="event.stopPropagation(); window.downloadPlayerElementMedia?.('modalImg', '', 'image', '', this)"
+            title="下载当前图片" aria-label="下载当前图片"
+            style="position: absolute; top: 48px; right: 24px; z-index: 2002; width: 36px; height: 36px; padding: 0; border-radius: 50%; border: 1px solid rgba(255,255,255,0.28); background: rgba(255,255,255,0.14); color: white; display: inline-flex; align-items: center; justify-content: center; cursor: pointer;">
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+        </button>
         <div
             style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 20px;">
             <img id="modalImg" src=""

@@ -1679,11 +1679,6 @@ export function createPocketAuthFeature({
             if (res.success) {
                 savePocketClientProfile(clientProfile, !savedAccount);
                 if (clientProfile) updateLoginClientProfile(clientProfile);
-                if (!isWebRuntimeForAccountUi()) {
-                    void ipcRenderer.invoke('connect-account-im').catch(error => {
-                        window.YayaRendererUtils.reportIgnoredError(error, 'src/renderer/pocket-auth-feature.mjs:connect-account-im');
-                    });
-                }
                 if (panelInput) panelInput.style.display = 'none';
                 if (panelSuccess) panelSuccess.style.display = 'block';
 

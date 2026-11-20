@@ -1069,6 +1069,9 @@
             if (text) {
                 text.replaceChildren();
                 if (item.imageUrl) {
+                    const imageBox = document.createElement('div');
+                    imageBox.className = 'media-download-host';
+                    imageBox.style.cssText = 'position: relative; display: inline-block; max-width: 100%;';
                     const imageButton = document.createElement('button');
                     imageButton.type = 'button';
                     imageButton.className = 'followed-room-essence-detail-image';
@@ -1090,7 +1093,12 @@
                             window.openImageModal(item.imageUrl);
                         }
                     });
-                    text.appendChild(imageButton);
+                    imageBox.appendChild(imageButton);
+                    window.attachMediaDownloadOverlay?.(imageBox, item.imageUrl, 'image', {
+                        filename: `ESSENCE_IMAGE_${item.id || Date.now()}_${activeFollowedName || item.sender || '口袋房间'}.jpg`,
+                        subFolder: activeFollowedName || ''
+                    });
+                    text.appendChild(imageBox);
                 } else if (item.videoUrl) {
                     const videoBox = document.createElement('div');
                     videoBox.className = 'media-download-host';
@@ -3782,6 +3790,16 @@
             roomFlipUsers?.observe(container);
             if (!container) return;
 
+            container.querySelectorAll('.media-download-host[data-download-src]').forEach(host => {
+                const src = host.getAttribute('data-download-src');
+                const type = host.getAttribute('data-download-type') || 'image';
+                const filename = host.getAttribute('data-download-filename') || '';
+                const subFolder = host.getAttribute('data-download-subfolder') || activeFollowedName || '';
+                if (src) {
+                    window.attachMediaDownloadOverlay?.(host, src, type, { filename, subFolder });
+                }
+            });
+
             const hydrate = el => {
                 const type = el.getAttribute('data-type');
                 const src = el.getAttribute('data-src');
@@ -4579,10 +4597,13 @@
                             txt = `<p class="mb-2 template-pre">${safeStr(json.text || json.bodys || body)}</p>`;
                         } else if (msgType === 'IMAGE') {
                             const url = json.url.startsWith('http') ? json.url : `https://source3.48.cn${json.url}`;
-                        txt = `<div class="mb-2"><img class="template-media" src="${escapeFollowedHtml(url)}" loading="lazy" style="max-height: 250px; border-radius: 8px; cursor: zoom-in;" onclick="openImageModal(${toFollowedInlineArg(url)})"></div>`;
+                            const dlFilename = `IMAGE_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.jpg`;
+                            txt = `<div class="mb-2"><div class="media-download-host" data-download-type="image" data-download-src="${escapeFollowedHtml(url)}" data-download-filename="${escapeFollowedHtml(dlFilename)}" style="position: relative; display: inline-block; max-width: 100%;"><img class="template-media" src="${escapeFollowedHtml(url)}" alt="图片消息" loading="lazy" style="max-height: 250px; border-radius: 8px; cursor: zoom-in; display: block; margin: 0;" onclick="openImageModal(${toFollowedInlineArg(url)})"></div></div>`;
                         } else if (msgType === 'EXPRESSIMAGE') {
-                            const url = json.expressImgInfo ? json.expressImgInfo.emotionRemote : json.url;
-                        txt = `<div class="mb-2"><img class="template-image-express-image" src="${escapeFollowedHtml(url.startsWith('http') ? url : 'https://source3.48.cn' + url)}"></div>`;
+                            const rawUrl = json.expressImgInfo ? json.expressImgInfo.emotionRemote : json.url;
+                            const url = rawUrl.startsWith('http') ? rawUrl : `https://source3.48.cn${rawUrl}`;
+                            const dlFilename = `EXPRESS_${m.msgTime || Date.now()}_${activeFollowedName || '口袋房间'}.gif`;
+                            txt = `<div class="mb-2"><div class="media-download-host" data-download-type="image" data-download-src="${escapeFollowedHtml(url)}" data-download-filename="${escapeFollowedHtml(dlFilename)}" style="position: relative; display: inline-block; max-width: 100%;"><img class="template-image-express-image" src="${escapeFollowedHtml(url)}" alt="表情图片" loading="lazy" style="display: block;"></div></div>`;
                         } else if (msgType === 'REPLY' || msgType === 'GIFTREPLY') {
                             let info = json.replyInfo || json.giftReplyInfo || (json.bodys && (json.bodys.replyInfo || json.bodys.giftReplyInfo));
                             const rName = safeStr(info?.replyName || '用户');

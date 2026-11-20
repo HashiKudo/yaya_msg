@@ -478,12 +478,20 @@ async function postPocketContent(url, payload, options = {}) {
         errorMessage = 'API 错误',
         largeNumbers = false
     } = options;
-    const response = await postJson(
+    let response = await postJson(
         url,
         payload || {},
         headersFactory(token, pa),
         { largeNumbers }
     );
+    if (token && Number(response.data?.status) === 401005 && url.includes('/live/api/')) {
+        response = await postJson(
+            url,
+            payload || {},
+            headersFactory(null, pa),
+            { largeNumbers }
+        );
+    }
     if (response.status === 200 && (response.data?.status === 200 || response.data?.success)) {
         return { success: true, content: response.data.content, data: response.data };
     }
@@ -541,10 +549,18 @@ async function postJson(url, payload, headers, options = {}) {
             data = options.largeNumbers ? parseJsonPreservingLargeNumbers(text) : JSON.parse(text);
         } catch (error) {
             const isHtml = /^\s*</.test(text);
-            const preview = text.replace(/\s+/g, ' ').slice(0, 160);
+            const requestUrl = new URL(url);
+            console.error('[Pocket API] 响应 JSON 解析失败', {
+                endpoint: `${requestUrl.origin}${requestUrl.pathname}`,
+                httpStatus: response.status,
+                contentType: response.headers?.get?.('content-type') || '',
+                responseChars: text.length,
+                responseType: isHtml ? 'html' : 'invalid-json',
+                parserError: error?.name || 'Error'
+            });
             throw new Error(isHtml
                 ? `口袋 API 返回了 HTML 页面 (${response.status})，可能请求被拦截`
-                : `口袋 API 返回内容不是 JSON (${response.status}): ${preview}`);
+                : `口袋 API 返回内容不是 JSON (${response.status})`);
         }
     }
     return { status: response.status, data };
@@ -687,17 +703,61 @@ async function loginByThirdParty(payload = {}) {
     return pocketSocialLogin.socialLoginResult(payload.provider, response.data || {}, response.status);
 }
 
-async function loginCheckToken({ token, pa }) {
+async function loginCheckToken({ token, pa, clientProfile }) {
+    const tokenValue = String(token || '');
+    const effectiveClientProfile = pocketClientProfiles.normalizePocketClientProfile(clientProfile) || 'default-ios';
+    console.info('[Pocket Auth] Token 验证开始', {
+        effectiveClientProfile,
+        tokenLength: tokenValue.length,
+        hasOuterWhitespace: tokenValue !== tokenValue.trim(),
+        hasBearerPrefix: /^Bearer\s/i.test(tokenValue.trim())
+    });
     const response = await postJson(
         'https://pocketapi.48.cn/user/api/v1/user/info/reload',
         { from: 'appstart' },
         createHeaders(token, pa)
     );
+    const responseMessage = String(response.data?.message || response.data?.msg || '').trim();
+    console.info('[Pocket Auth] Token 验证响应', {
+        effectiveClientProfile,
+        httpStatus: response.status,
+        apiStatus: response.data?.status ?? response.data?.code ?? response.data?.errCode ?? null,
+        apiSuccess: response.data?.success === true,
+        responseParsed: response.data !== null,
+        message: (tokenValue ? responseMessage.split(tokenValue).join('[redacted]') : responseMessage).slice(0, 160)
+    });
     if (response.status === 200 && response.data?.success) {
         const content = response.data.content;
         const finalInfo = content.userInfo || content;
         if (content.bigSmallInfo) finalInfo.bigSmallInfo = content.bigSmallInfo;
         return { success: true, userInfo: finalInfo };
+    }
+    if (token && Number(response.data?.status) === 401005) {
+        try {
+            const imResponse = await postJson(
+                'https://pocketapi.48.cn/im/api/v1/im/userinfo',
+                {},
+                createModernHeaders(token, pa)
+            );
+            const imUserId = imResponse.data?.content?.userId;
+            if (imResponse.status === 200 && imResponse.data?.status === 200 && imUserId) {
+                const fallbackNickname = `口袋用户 ${imUserId}`;
+                return {
+                    success: true,
+                    userInfo: {
+                        userId: imUserId,
+                        nickname: fallbackNickname,
+                        baseUserInfo: {
+                            userId: imUserId,
+                            nickname: fallbackNickname,
+                            avatar: ''
+                        }
+                    }
+                };
+            }
+        } catch (error) {
+            reportIgnoredError(error, 'src/common/pocket-runtime.mjs:loginCheckTokenFallback');
+        }
     }
     return { success: false, msg: response.data?.message || 'Token 无效' };
 }
@@ -969,11 +1029,18 @@ async function fetchOpenLive({ token, pa, memberId, nextTime }) {
 
 async function fetchOpenLiveOne({ token, pa, liveId }) {
     if (!token) return missingToken();
-    const response = await postJson(
+    let response = await postJson(
         'https://pocketapi.48.cn/live/api/v1/live/getOpenLiveOne',
         { liveId: String(liveId) },
         createHeaders(token, pa)
     );
+    if (Number(response.data?.status) === 401005) {
+        response = await postJson(
+            'https://pocketapi.48.cn/live/api/v1/live/getOpenLiveOne',
+            { liveId: String(liveId) },
+            createHeaders(null, pa)
+        );
+    }
     if (response.status === 200 && response.data?.status === 200) return { success: true, content: response.data.content };
     return apiError(response);
 }
@@ -981,11 +1048,18 @@ async function fetchOpenLiveOne({ token, pa, liveId }) {
 async function fetchOpenLivePublicList({ token, pa, groupId = 0, next = 0, record = false, debug = false }) {
     if (!token) return missingToken();
 
-    const response = await postJson(
+    let response = await postJson(
         'https://pocketapi.48.cn/live/api/v1/live/getOpenLiveList',
         { groupId, debug: !!debug, next, record: !!record },
         createHeaders(token, pa)
     );
+    if (Number(response.data?.status) === 401005) {
+        response = await postJson(
+            'https://pocketapi.48.cn/live/api/v1/live/getOpenLiveList',
+            { groupId, debug: !!debug, next, record: !!record },
+            createHeaders(null, pa)
+        );
+    }
     if (response.status === 200 && response.data?.status === 200) return { success: true, content: response.data.content };
     return apiError(response);
 }
@@ -2080,6 +2154,35 @@ async function fetchFriendsIds({ token, pa }) {
         {},
         createFriendshipHeaders(token, pa)
     );
+    if (response.status === 200 && response.data?.status === 200 && Array.isArray(response.data?.content?.data)) {
+        return response.data;
+    }
+    if (token && Number(response.data?.status) === 401005) {
+        try {
+            const convResponse = await postJson(
+                'https://pocketapi.48.cn/im/api/v1/conversation/page',
+                { targetType: 0 },
+                createModernHeaders(token, pa)
+            );
+            const conversations = convResponse.data?.content?.conversations;
+            if (convResponse.status === 200 && convResponse.data?.status === 200 && Array.isArray(conversations)) {
+                const ownerIds = [...new Set(
+                    conversations
+                        .filter(item => Number(item?.targetType) === 0 && item?.ownerId)
+                        .map(item => Number(item.ownerId) || String(item.ownerId))
+                )];
+                return {
+                    status: 200,
+                    success: true,
+                    message: 'OK',
+                    fallbackFromConversationPage: true,
+                    content: { data: ownerIds }
+                };
+            }
+        } catch (error) {
+            reportIgnoredError(error, 'src/common/pocket-runtime.mjs:fetchFriendsIdsFallback');
+        }
+    }
     return response.data;
 }
 

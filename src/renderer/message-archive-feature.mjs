@@ -873,6 +873,53 @@ export function createMessageArchive({
         });
     }
 
+    function isDownloadableArchiveImage(img) {
+        if (!img) return false;
+        const src = String(img.getAttribute('src') || img.src || '').trim();
+        if (!src) return false;
+        if (img.classList.contains('avatar')
+            || img.classList.contains('pocket-gift-image')
+            || img.classList.contains('vod-row-cover')
+            || img.classList.contains('archive-flip-question-user-avatar')) {
+            return false;
+        }
+        if (img.closest('.vod-card-row') || img.closest('[data-gift-name]')) {
+            return false;
+        }
+        if (img.style?.width === '34px' && img.style?.height === '34px') {
+            return false;
+        }
+        return true;
+    }
+
+    function attachArchiveImageDownloads(content, post, attachZoomClick = false) {
+        let imgIndex = 0;
+        content.querySelectorAll('img').forEach(img => {
+            img.loading = 'lazy';
+            img.decoding = 'async';
+            if (!isDownloadableArchiveImage(img)) return;
+            if (img.parentElement?.classList.contains('media-download-host')) return;
+            const src = String(img.getAttribute('src') || img.src || '').trim();
+            if (!src) return;
+            imgIndex += 1;
+            if (attachZoomClick) {
+                img.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    openImageModal(img.src || src);
+                });
+            }
+            const host = document.createElement('div');
+            host.className = 'media-download-host archive-image-download-host';
+            host.style.cssText = 'position: relative; display: inline-block; max-width: 100%;';
+            img.parentNode.insertBefore(host, img);
+            host.appendChild(img);
+            window.attachMediaDownloadOverlay?.(host, src, 'image', {
+                filename: `ARCHIVE_IMAGE_${post.sortTime || Date.now()}_${imgIndex}_${post.nameStr || '归档'}.jpg`,
+                subFolder: post.nameStr || ''
+            });
+        });
+    }
+
     function createMessageListRow(post) {
         const div = document.createElement('div');
         div.className = 'Box-row';
@@ -977,10 +1024,7 @@ export function createMessageArchive({
         }
         const content = document.createElement('div');
         content.innerHTML = replaceTencentEmoji(post.contentHtml);
-        content.querySelectorAll('img').forEach(img => {
-            img.loading = 'lazy';
-            img.decoding = 'async';
-        });
+        attachArchiveImageDownloads(content, post, false);
         try {
             const audioRegex = /(?:音频[\s\u00A0]*[-–—][\s\u00A0]*)?(https?:\/\/[^\s<"']+\.(?:mp3|aac|m4a))/gi;
             if (audioRegex.test(content.innerHTML)) content.innerHTML = content.innerHTML.replace(audioRegex, '<span class="temp-audio-placeholder" data-src="$1"></span>');
@@ -1714,6 +1758,7 @@ export function createMessageArchive({
             header.innerHTML = `${post.avatarHtml}<div class="user-info-col"><div><span class="username">${escapeHtml(post.nameStr)}</span></div><span class="timestamp">${escapeHtml(post.timeStr)}</span></div>`;
             const content = document.createElement('div');
             content.innerHTML = replaceTencentEmoji(post.contentHtml);
+            attachArchiveImageDownloads(content, post, true);
             try {
                 const audioRegex = /(?:音频[\s\u00A0]*[-–—][\s\u00A0]*)?(https?:\/\/[^\s<"']+\.(?:mp3|aac|m4a))/gi;
                 if (audioRegex.test(content.innerHTML)) content.innerHTML = content.innerHTML.replace(audioRegex, '<span class="temp-audio-placeholder" data-src="$1"></span>');

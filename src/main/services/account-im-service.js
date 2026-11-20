@@ -107,26 +107,9 @@ function createAccountImService({ readAuth, resolveCredentials, createClient, on
         return pending;
     }
 
-    function connect(sender) {
-        const auth = readAuth();
-        if (!auth.token || sender.isDestroyed()) {
-            if (!auth.token) closeAll();
-            return Promise.resolve({ success: false, status: 'disconnected' });
-        }
-        const key = keyOf(auth);
-        if (current && current.key !== key) closeAll({ notify: true });
-        owners.set(sender.id, sender);
-        if (!observed.has(sender)) {
-            observed.add(sender);
-            sender.once('destroyed', () => {
-                owners.delete(sender.id);
-                if (!owners.size) stopCurrent();
-            });
-        }
-        if (!current) current = { key, auth: { ...auth }, client: null, pending: null, timer: null, attempt: 0 };
-        if (current.client?.connected) return Promise.resolve({ success: true, status: 'connected' });
-        if (current.timer) return Promise.resolve({ success: false, status: 'reconnecting' });
-        return connectState(current);
+    function connect() {
+        stopCurrent();
+        return Promise.resolve({ success: true, status: 'disconnected' });
     }
 
     return { connect, closeAll };

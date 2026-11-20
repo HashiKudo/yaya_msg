@@ -506,6 +506,15 @@
                 }));
             });
 
+            wrapper.querySelectorAll('.private-message-image-slot').forEach(slot => {
+                const src = slot.getAttribute('data-image-src');
+                if (!src) return;
+                window.attachMediaDownloadOverlay?.(slot, src, 'image', {
+                    filename: `PM_IMAGE_${Date.now()}_${pmName}.jpg`,
+                    subFolder: pmName
+                });
+            });
+
             return wrapper;
         }
 

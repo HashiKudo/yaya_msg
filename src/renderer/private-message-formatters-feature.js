@@ -636,7 +636,7 @@
                     height > 0 ? `height="${Math.round(height)}"` : ''
                 ].filter(Boolean).join(' ');
                 const safeUrl = escapePrivateMessageHtml(imageInfo.url);
-                return `<button type="button" class="private-message-image-button" onclick="openImageModal('${safeUrl}')"><img class="private-message-image" src="${safeUrl}" ${sizeAttrs} alt="图片消息" loading="lazy"></button>`;
+                return `<div class="media-download-host private-message-image-slot" data-image-src="${safeUrl}" style="position: relative; display: inline-block; max-width: 100%;"><button type="button" class="private-message-image-button" onclick="openImageModal('${safeUrl}')"><img class="private-message-image" src="${safeUrl}" ${sizeAttrs} alt="图片消息" loading="lazy"></button></div>`;
             }
             return escapePrivateMessageHtml(formatPrivateMessageContent(message));
         }
